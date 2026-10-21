@@ -59,7 +59,7 @@ Done so far: <criteria table, as above>
 Verification debt: <blocked cmd → reason → where to rerun>
 ```
 
-A denied command keeps its exact form in the Needs-you block; the user decides.
+A denied command keeps its exact form in the Needs-you block; the user decides. A command that prompts for a password (`sudo`, interactive logins) goes under "Run in your own terminal:" instead of `!`. The blocked report's verdict is "blocked" throughout; the done branch's "done except" wording stays out of it.
 
 ## Verification debt
 

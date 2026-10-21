@@ -1,6 +1,6 @@
 ---
 name: failure-triage
-description: Classify a red test, check, or CI job before editing code to fix it. Use when a test fails, a check goes red, or CI fails.
+description: Classify a red test, check, or CI job before editing code to fix it. Use when a test, build, or CI job fails, or the user pastes a failure and asks for cause or plan.
 ---
 
 A red result is a claim about the code only once ruled in. Classify each failure into one class, with **evidence**, before any code edit. Loaded once per session: on later failures, classify against this, without re-invoking.
@@ -10,7 +10,7 @@ A red result is a claim about the code only once ruled in. Classify each failure
 Check them in this order; the first that fits wins.
 
 1. **sandbox/env**: EPERM, EROFS, "Operation not permitted", read-only `.git`, listen EPERM, docker.sock, DNS resolve failure, missing tool.
-   → Leave code as is. Rerun once unsandboxed or escalated. Record "passed only unsandboxed", or log it as **verification debt** (finish skill).
+   → Leave code and config as is; the next action is the same command rerun once outside the sandbox (Claude Code: Bash with `dangerouslyDisableSandbox: true`, which asks the user; Codex: request escalation). Record "passed only unsandboxed". If the rerun is denied or impossible, log it as **verification debt** (finish skill). Missing tool: use the preflight fallback.
 2. **stale**: the test expects old text or an old seam; a stale server holds the port; local main is behind origin; the CI SHA ≠ HEAD; task docs are out of date.
    → Follow [stale.md](stale.md).
 3. **flaky**: passes and fails on the same code.
