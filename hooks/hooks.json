@@ -1,0 +1,8 @@
+{
+  "hooks": {
+    "SessionStart": [{ "hooks": [{ "type": "command", "command": "python3 -I \"${CLAUDE_PLUGIN_ROOT}/scripts/session-start.py\"" }] }],
+    "PostToolUseFailure": [{ "matcher": "Bash", "hooks": [{ "type": "command", "command": "python3 -I \"${CLAUDE_PLUGIN_ROOT}/scripts/failure-match.py\"" }] }],
+    "Stop": [{ "hooks": [{ "type": "command", "command": "python3 -I \"${CLAUDE_PLUGIN_ROOT}/scripts/finish-gate.py\"" }] }],
+    "SubagentStop": [{ "hooks": [{ "type": "command", "command": "python3 -I \"${CLAUDE_PLUGIN_ROOT}/scripts/finish-gate.py\"" }] }]
+  }
+}

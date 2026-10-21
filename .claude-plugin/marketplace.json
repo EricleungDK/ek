@@ -1,0 +1,5 @@
+{
+  "name": "ek",
+  "owner": { "name": "EricleungDK" },
+  "plugins": [{ "name": "ek", "source": "./", "description": "Agent workflow kit" }]
+}
