@@ -167,4 +167,27 @@ mk slow 'sleep 30'
 out="$(EK_SCENARIO_TIMEOUT=1 sc can-fail "$BASE")"
 eq "$(git -C "$R" worktree list | wc -l)" "1" "worktree removed after timeout"
 
+# results live with the repo (no EK_STATE): sandbox-shaped read-only HOME, and hook env (CLAUDE_PLUGIN_DATA) ≠ Bash env
+D="$T/def"; mkdir -p "$D/home" "$D/.ek/scenarios/ok"; git -C "$D" init -q; echo /home/ > "$D/.gitignore"
+echo true > "$D/.ek/scenarios/ok/run.sh"; echo "# ok" > "$D/.ek/scenarios/ok/SCENARIO.md"
+git -C "$D" add -A; git -C "$D" -c user.email=t@t -c user.name=t commit -qm init
+chmod 555 "$D/home"
+dsc() { (cd "$D" && env -u EK_STATE -u CLAUDE_PLUGIN_DATA HOME="$D/home" python3 -I "$SC" "$@"); }
+out="$(dsc run 2>&1)"; rc=$?
+eq "$rc" "0" "read-only HOME → run still exit 0"
+lacks "$out" "Error" "read-only HOME → no traceback"
+eq "$(dsc check; echo $?)" "0" "read-only HOME → check fresh PASS"
+eq "$(cd "$D" && env -u EK_STATE CLAUDE_PLUGIN_DATA="$T/pdata" HOME="$T/home2" python3 -I "$SC" check; echo $?)" "0" "hook env (CLAUDE_PLUGIN_DATA, other HOME) sees runner PASS"
+[[ -f "$D/.git/ek/results.json" ]] && ok "results under .git/ek" || fail "results under .git/ek"
+eq "$(git -C "$D" status --porcelain)" "" "results not in git status"
+chmod 755 "$D/home"
+
+# sandbox (bwrap) mounts /dev/null over absent config paths (.mcp.json, .zshrc…): must not change the tree hash
+if command -v bwrap >/dev/null && bwrap --bind / / true 2>/dev/null; then
+  h1="$(dsc tree-hash)"
+  h2="$(cd "$D" && bwrap --bind / / --dev /dev --ro-bind /dev/null "$D/.mcp.json" env -u EK_STATE python3 -I "$SC" tree-hash)"
+  rm -f "$D/.mcp.json"
+  eq "$h2" "$h1" "sandbox /dev/null mounts ignored by tree hash"
+else ok "sandbox /dev/null mounts ignored by tree hash (skipped: no bwrap)"; fi
+
 done_tests
