@@ -38,7 +38,15 @@ if compgen -G "$dir/Dockerfile" >/dev/null || compgen -G "$dir/*compose*.y*ml" >
   fi
 fi
 
-if in_file package.json playwright || in_file pyproject.toml playwright || in_file requirements.txt playwright; then
+scenarios=0; [[ -d $dir/.ek/scenarios ]] && scenarios=1
+
+if (( scenarios )); then
+  for t in tmux expect curl; do
+    have "$t" && good "$t" || warn "$t: missing → scenarios needing $t can't run here → human verdict / verification debt"
+  done
+fi
+
+if (( scenarios )) || in_file package.json playwright || in_file pyproject.toml playwright || in_file requirements.txt playwright; then
   if [[ -x ${CHROME_BIN:-} ]] || compgen -G "$HOME/.cache/ms-playwright/chromium-*/chrome-linux*/chrome" >/dev/null; then good playwright
   else warn "playwright: no chromium in ~/.cache/ms-playwright or \$CHROME_BIN → npx playwright install chromium"
   fi
