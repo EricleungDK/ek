@@ -1,6 +1,6 @@
 {
   "name": "ek",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Agent workflow kit: orchestrate-agent, failure-triage, taste-it, finish, plus preflight/failure/finish-gate hooks.",
   "author": { "name": "EricleungDK" }
 }

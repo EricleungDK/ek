@@ -60,7 +60,7 @@ Name the scenarios read and the files created or edited before writing any.
 | `RUN can-fail <baseline-ref>` | `CAN-FAIL ✓ <id>` or `CANNOT FAIL <id>`: passes at baseline |
 | `RUN tree-hash` | current tree hash |
 
-Evidence is the runner's `PASS`/`FAIL` lines and results.json, never the taster's say-so. Any edit makes the PASS stale; the Stop gate wants a **fresh PASS**. Missing driver tool (preflight warns) → scenario unrunnable: verification debt (finish skill), not skipped.
+Evidence is the runner's `PASS`/`FAIL` lines and results.json (`<git dir>/ek/`, transcripts beside it), never the taster's say-so. Any edit makes the PASS stale; the Stop gate wants a **fresh PASS**. Missing driver tool (preflight warns) → scenario unrunnable: verification debt (finish skill), not skipped.
 
 ## 4. Quality bar
 

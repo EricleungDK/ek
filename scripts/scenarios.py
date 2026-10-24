@@ -1,19 +1,18 @@
 """Scenario runner: `scenarios.py [--repo DIR] run [ID]|tree-hash|check|can-fail REF`.
 
-Runs .ek/scenarios/<slug>/run.sh in fresh temp dirs; evidence goes to the ek state dir.
+Runs .ek/scenarios/<slug>/run.sh in fresh temp dirs; evidence goes to <git dir>/ek/ (or $EK_STATE/scenarios/<repo key>/).
+Repo-local so the Stop hook (plugin env) and sandboxed Bash (read-only HOME) agree on one location.
 """
 import hashlib
 import json
 import os
 import shutil
+import stat
 import subprocess
 import sys
 import tempfile
 import time
 
-STATE = os.environ.get("EK_STATE") or os.path.join(
-    os.environ.get("CLAUDE_PLUGIN_DATA") or os.path.expanduser("~/.cache/ek"), "state"
-)
 LAYOUT = ".ek/scenarios/<slug>/SCENARIO.md + run.sh"
 NODOC = "missing SCENARIO.md — document it (story, covers, steps, expected)"
 
@@ -36,15 +35,30 @@ def blob(p):
         return "err:" + e.strerror
 
 
+def special(p):
+    """device/fifo/socket: e.g. /dev/null the sandbox mounts over absent config paths; not real work."""
+    try:
+        m = os.lstat(p).st_mode
+    except OSError:
+        return False
+    return not (stat.S_ISREG(m) or stat.S_ISDIR(m) or stat.S_ISLNK(m))
+
+
 def tree_hash(repo):
-    blobs = "".join(f"{u}\0{blob(os.path.join(repo, u))}\0" for u in git(repo, "ls-files", "-o", "--exclude-standard").splitlines())
-    parts = [git(repo, "rev-parse", "HEAD"), git(repo, "status", "--porcelain=v1", "-uall"), git(repo, "diff", "HEAD"), blobs]
+    untracked = [u for u in git(repo, "ls-files", "-z", "-o", "--exclude-standard").split("\0") if u]
+    skip = {u for u in untracked if special(os.path.join(repo, u))}
+    status = [e for e in git(repo, "status", "--porcelain=v1", "-z", "-uall").split("\0") if e and not (e[:2] == "??" and e[3:] in skip)]
+    blobs = "".join(f"{u}\0{blob(os.path.join(repo, u))}\0" for u in untracked if u not in skip)
+    parts = [git(repo, "rev-parse", "HEAD"), "\0".join(status), git(repo, "diff", "HEAD"), blobs]
     return hashlib.sha1("\0".join(parts).encode()).hexdigest()
 
 
 def outdir(repo):
-    key = hashlib.sha1(os.path.realpath(repo).encode()).hexdigest()[:12]
-    return os.path.join(STATE, "scenarios", key)
+    if os.environ.get("EK_STATE"):
+        key = hashlib.sha1(os.path.realpath(repo).encode()).hexdigest()[:12]
+        return os.path.join(os.environ["EK_STATE"], "scenarios", key)
+    gd = git(repo, "rev-parse", "--absolute-git-dir").strip()
+    return os.path.join(gd or os.path.join(repo, ".git"), "ek")
 
 
 def root(repo):
