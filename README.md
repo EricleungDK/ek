@@ -6,6 +6,8 @@ Agent workflow kit for Claude Code: one plugin, same setup on every machine and 
 |---|---|
 | `skills/orchestrate-agent` | `/ek:orchestrate-agent`: divide, delegate, verify acceptance |
 | `skills/failure-triage` | classify a red result (sandbox/env, stale, flaky, unowned, real bug) before editing code |
+| `skills/taste-it` | `/ek:taste-it`: verify by using it. Black-box taster, `.ek/scenarios/` regression suite, fix/human verdicts |
+| `scripts/scenarios.py` | scenario runner: `run [ID]`, `check`, `can-fail REF`, `tree-hash`; path shown in the SessionStart `[ek] Scenario runner:` line |
 | `skills/finish` | end-of-work report: done (evidence per criterion) or blocked (Needs-you block) |
 | `SessionStart` hook | preflight warnings + working rules into context |
 | `PostToolUseFailure` hook | known Bash failure signatures → one context line |

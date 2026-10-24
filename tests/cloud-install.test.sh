@@ -7,7 +7,7 @@ git -C "$R" add .; git -C "$R" -c user.email=t@t -c user.name=t commit -qm init
 
 bash "$IN" "$R" >/dev/null
 S="$R/.claude/settings.json"
-for s in failure-triage finish orchestrate-agent; do
+for s in failure-triage finish orchestrate-agent taste-it; do
   [[ -f $R/.claude/skills/$s/SKILL.md ]] && ok "skill $s copied" || fail "skill $s copied"
 done
 [[ -f $R/.claude/skills/failure-triage/flaky.md ]] && ok "sibling files copied" || fail "sibling files copied"
@@ -17,6 +17,7 @@ has "$(jq -c '.hooks.Stop' "$S")" "$ROOT/scripts/finish-gate.py" "kit Stop hook 
 has "$(jq -c '.hooks.SessionStart' "$S")" "session-start.py" "SessionStart added"
 has "$(jq -c '.hooks.PostToolUseFailure' "$S")" "failure-match.py" "PostToolUseFailure added"
 has "$(jq -c '.hooks.SubagentStop' "$S")" "finish-gate.py" "SubagentStop added"
+[[ -f $R/.claude/skills/taste-it/drivers.md ]] && ok "taste-it sibling copied" || fail "taste-it sibling copied"
 lacks "$(cat "$S")" "CLAUDE_PLUGIN_ROOT" "no unresolved plugin var"
 
 bash "$IN" "$R" >/dev/null
