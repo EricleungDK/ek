@@ -27,7 +27,7 @@ Done when: you know the branch, HEAD, owner rules, and the spec.
 
 ## 3. Acceptance checklist
 
-Write the checklist: each spec outcome (issue criterion or derived outcome), plus the repo gates (tests red-first, typecheck, the test suites the change touches, CI green, docs updated). Show it to the user before dispatching, together with the division of labor (step 4). Each item will later be ticked with **evidence** (a command and its result, a commit, a CI job), never with an agent's say-so.
+Write the checklist: each spec outcome (issue criterion or derived outcome), plus the repo gates (tests red-first, typecheck, the test suites the change touches, CI green, docs updated). In a repo with `.ek/scenarios/`, or when the deliverable is something a user runs, map each criterion to scenario ids (taste-it skill; `covers` field); an unmapped criterion is a gap to fill. Show it to the user before dispatching, together with the division of labor (step 4). Each item will later be ticked with **evidence** (a command and its result, a commit, a CI job), never with an agent's say-so.
 
 Done when: the user has seen the checklist.
 
@@ -58,6 +58,16 @@ Review stays inside the subagent's own implement flow; only the dispatch moves t
 4. The agent fixes, re-verifies, and either finishes its flow or sends a new review request. Each review-fix cycle counts as one of its 3 rounds.
 
 Several agents may request review at once: run each review separately, scoped to that agent's diff, and route findings back to the right agent.
+
+### Taste
+
+Subagents cannot spawn, so the orchestrator owns taste-it. After the review relay is clean, run the taste-it skill: dispatch the taster with its black-box brief (criteria and install steps only, no diff). Then:
+
+1. `RUN run`; evidence is the runner verdict, never the taster's say-so.
+2. **fix** verdict: SendMessage the implementer with the failing scenario id and its transcript as repro. After its fix, full `RUN run` again.
+3. **human** verdict: Needs-you block (human gates, step 7).
+4. Each taste-fix cycle counts toward the same 3 rounds as review-fix.
+5. Done when `RUN check` exits 0. The Stop gate only judges; the orchestrator drives the loop.
 
 ## 5. Coordinate
 

@@ -70,4 +70,32 @@ B="$T/b10"; fakebin "$B" jq; stub "$B" python3 '[[ "$*" == *bind* ]] && { echo "
 out="$(run "$B" "$T/p1")"
 has "$out" "loopback: bind 127.0.0.1 blocked (sandbox) → server/e2e tests need unsandboxed run" "loopback blocked"
 
+# scenarios marker: missing driver tools warn
+P="$T/p11"; mkdir -p "$P/.ek/scenarios/a"
+out="$(run "$T/b2" "$P")"
+for t in tmux expect curl; do
+  has "$out" "$t: missing → scenarios needing $t can't run here → human verdict / verification debt" "scenarios + no $t"
+done
+B="$T/b11"; fakebin "$B" python3 jq; for t in tmux expect curl; do stub "$B" $t "exit 0"; done
+out="$(run "$B" "$P")"
+lacks "$out" "tmux:" "tmux present → no warning"
+lacks "$out" "expect:" "expect present → no warning"
+lacks "$out" "curl:" "curl present → no warning"
+out="$(run "$T/b2" "$T/p1")"
+lacks "$out" "tmux:" "no scenarios → no tmux check"
+lacks "$out" "curl:" "no scenarios → no curl check"
+out="$(PATH="$B" HOME="$T/home" bash "$PF" --quiet "$P" 2>&1)"
+lacks "$out" "ok tmux" "--quiet hides ok driver lines"
+out="$(run "$B" "$P")"
+has "$out" "ok tmux" "driver present → ok line"
+
+# playwright check also applies when scenarios exist (no playwright dep)
+rm -rf "$T/home/.cache"
+P="$T/p12"; mkdir -p "$P/.ek/scenarios/a"
+out="$(run "$T/b2" "$P")"
+has "$out" "playwright: no chromium" "scenarios trigger playwright check"
+P="$T/p13"; mkdir -p "$P"
+out="$(run "$T/b2" "$P")"
+lacks "$out" "playwright:" "no marker → no playwright check"
+
 done_tests

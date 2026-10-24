@@ -10,6 +10,7 @@ Read first: <AGENTS.md, repo docs index, the specific docs/reports for this area
 Owner rules: <TDD red-first, commit style, attribution trailer text, docs to update>.
 
 Work: <outcome to build (behaviour, interface, acceptance) / or the exact failure: assertion, CI run and job id, command that shows it>.
+Scenarios: <ids this unit must keep green, or none; failing scenario id + transcript as repro on fix rounds>.
 Known context: <recent commits that may be involved, suspects, what was ruled out>.
 Environment: <how to run tests here: env vars, binaries, build step first>.
 

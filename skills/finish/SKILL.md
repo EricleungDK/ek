@@ -14,6 +14,8 @@ At report time, rerun the decisive commands: tests, typecheck, build. Counts and
 - CLI or app deliverable: run the real install and launch the way the user will (`pip install -e .` / `cargo install --path .` / `npm i -g .`, then the command). A built binary or `playwright --list` counts as not run.
 - State the env each command ran in: sandboxed or unsandboxed.
 
+- Repo with `.ek/scenarios/` (taste-it skill): a scenario-backed criterion is verified by the runner, never the taster's say-so. Run `RUN run`, then `RUN check`. Evidence: the `PASS`/`FAIL` line, the results.json or transcript path, tree hash fresh (`check` exit 0). Any `FAIL`, stale or partial `check` (exit 1) = not done: no ✅ row, no plain "done"; a fix-class FAIL stays an agent job (fix, full `RUN run`, `RUN check`), listed under Open, never handed to the user as a question or check.
+
 Done when: every criterion has a fresh result or a reason it can't run here.
 
 ## 2. Close the loop
@@ -34,12 +36,16 @@ Pick the branch.
 |---|---|---|
 | <criterion> | ✅ verified | `<cmd>` → exit 0, <key output> |
 | <criterion> | ⚠️ not verified | <why>; run: `<exact cmd>` |
-| <criterion> | 👤 human-only | <what the user checks> |
+| <criterion> | 👤 human-only | <what the user checks>; Needs-you block below |
 TDD: <test> red (`<failure line>`) → green (`<cmd>` exit 0)
 Env: <sandboxed|unsandboxed>
 Verification debt: <items, or none>
 Open: <issues, flakes, follow-ups, or none>
 ```
+
+Scenario row evidence: `RUN run <id>` → `PASS <id>`, `<results.json / transcript path>`, `RUN check` exit 0.
+
+Each 👤 row gets a Needs-you block (same shape as in Blocked; Run/Expect become the exact steps and expected result, Why = what the check protects). Verdict stays "done except the rows marked ⚠️/👤".
 
 Any ⚠️ row means the report says "done except the rows marked ⚠️", never plain "done".
 
