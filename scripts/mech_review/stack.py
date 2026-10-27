@@ -238,9 +238,9 @@ class RustAdapter(Adapter):
         return out
 
     def calls(self, text):
-        """{fn qname: bare names it calls in its body}"""
+        """{fn qname: bare names it calls as plain or path calls (f(), self::f(), super::f()); method calls (x.f()) excluded}"""
         m, _, items = self._items(text)
-        return {it.qname: set(re.findall(r"\b(\w+)\s*\(", m[it.body[0]:it.body[1]])) for it in items if it.body}
+        return {it.qname: set(re.findall(r"(?<![\w.])(?:\w+::)*(\w+)\s*\(", m[it.body[0]:it.body[1]])) for it in items if it.body}
 
     def suppressions(self, text):
         """lint-suppression attributes (allow/expect, also inside cfg_attr) found in code, not comments or strings.
