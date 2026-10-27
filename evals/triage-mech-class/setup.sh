@@ -43,4 +43,3 @@ sed "s/HEAD_SHA/$head/; s/BASE_SHA/$base/" > mech.json <<'JSON'
  ],
  "summary":"fail HEAD_SHA"}
 JSON
-git add -A; git commit -qm "chore: mech fixture"
