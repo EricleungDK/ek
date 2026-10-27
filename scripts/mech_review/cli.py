@@ -31,8 +31,9 @@ Guard exceptions: a PR body (--pr-body) with a heading 'Guard exceptions' listin
   `<id>: <reason>` lines downgrades that id's fail (class agent-fixable only) to confirm.
   needs-human entries are never downgraded. Reason needs at least 3 letters beside the id.
 
-test paths: a .rs file matching a --test-paths glob is a test file; its assert count covers the
-  whole file. Other .rs files count only asserts inside #[test] fns. Globs: ** any depth, * one segment.
+test paths: a .rs file matching a --test-paths glob is test code; every assert in it (helpers too) counts.
+  Other .rs files count asserts inside #[test] fns and #[cfg(test)] mods only, never production code.
+  Globs: ** any depth, * one segment.
 """
 
 

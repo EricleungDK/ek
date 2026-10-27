@@ -16,13 +16,13 @@ TestFn = namedtuple("TestFn", "name line markers")
 Assertion = namedtuple("Assertion", "line fn scope kind left right")
 Suppression = namedtuple("Suppression", "line end_line kind lints lint_text reason")
 
-RAW = re.compile(r'(?:br|r)(#*)"')
+RAW = re.compile(r'(?:br|cr|r)(#*)"')
 FN = re.compile(r'((?:#\[[^\]]*\]\s*)*)(?:pub(?:\s*\([^)]*\))?\s+)?(?:async\s+)?(?:unsafe\s+)?fn\s+(\w+)')
 ATTR_START = re.compile(r"#!?\[")
 ASSERT = re.compile(r"\b(\w*assert\w*)!\s*[(\[{]")
-MODULE = re.compile(r"#\[\s*cfg\s*\(\s*test\s*\)\s*\]\s*(?:pub(?:\s*\([^)]*\))?\s+)?mod\s+\w+\s*\{")
+MODULE = re.compile(r"#\[\s*cfg\s*\(\s*test\s*\)\s*\]\s*(?:#\[[^\]]*\]\s*)*(?:pub(?:\s*\([^)]*\))?\s+)?mod\s+\w+\s*\{")
 TEST_ATTR = re.compile(r"#\[\s*(?:\w+::)*(?:test|rstest|test_case)\b")
-IGNORE_ATTR = re.compile(r"#\[\s*(?:ignore\b|cfg_attr\s*\(.*\bignore\b|cfg\s*\(\s*(?:any\s*\(\s*\)|FALSE|false)\s*\)\s*\])")
+IGNORE_ATTR = re.compile(r"#\[\s*(?:ignore\b|cfg_attr\s*\(.*\bignore\b|cfg\s*\(\s*(?:any\s*\(\s*\)|FALSE|false|not\s*\(\s*test\s*\))\s*\)\s*\])")
 OPEN, CLOSE = "([{", ")]}"
 
 
@@ -60,7 +60,7 @@ def mask(text):
                     j += 1
             blank(i, j)
             i = j
-        elif c in "rb" and (i == 0 or not _ident(text[i - 1])) and RAW.match(text, i):
+        elif c in "rbc" and (i == 0 or not _ident(text[i - 1])) and RAW.match(text, i):
             m = RAW.match(text, i)
             close = '"' + m.group(1)
             j = text.find(close, m.end())

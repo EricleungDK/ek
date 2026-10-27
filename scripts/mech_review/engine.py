@@ -175,8 +175,10 @@ def r2(repo, mb, head, adapter, test_globs, protected_globs):
                                      f"test `{f.name}` marked #[ignore]",
                                      "make it pass or fix the code it covers; do not mark it ignored",
                                      "#[ignore] / skip / xfail / only on a test"))
-        bas = [a for a in adapter.assertions(before) if a.scope] if before is not None else []
-        aas = [a for a in adapter.assertions(after) if a.scope] if after is not None else []
+        # test-path files: the whole file is test code (helpers too); elsewhere only test fns and cfg(test) mods
+        whole = adapter.classify(path, test_globs) == "test"
+        bas = [a for a in adapter.assertions(before) if whole or a.scope] if before is not None else []
+        aas = [a for a in adapter.assertions(after) if whole or a.scope] if after is not None else []
         # assert count: asserts lost from surviving test fns (or module-level test code); removed fns are their own entry
         head_fns = {f.name for f in afns}
         nb = sum(1 for a in bas if a.fn is None or a.fn in head_fns)
