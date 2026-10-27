@@ -562,12 +562,11 @@ id2=$(mr "$R" "$B" "$H2" | jq -r '[.entries[] | select(.problem|contains("remove
 eq "$id2" "$id1" "removed-fn id unchanged when lines move"
 has "$id1" "R2-" "removed-fn id has R2 prefix"
 
-# suppression: same id after lines move
+# suppression: same id after lines move (allow added in each head, so the entry exists)
 R=$(mkrepo s8allow)
 put "$R" src/lib.rs <<'EOF2'
 pub fn f() -> i32 { 1 }
 
-#[allow(dead_code)]
 fn g() {}
 EOF2
 B=$(commit "$R" base)
@@ -576,10 +575,8 @@ pub fn f() -> i32 { 1 }
 
 #[allow(dead_code)]
 fn g() {}
-
-pub fn h() {}
 EOF2
-H1=$(commit "$R" allow-lines-a)
+H1=$(commit "$R" allow-added)
 put "$R" src/lib.rs <<'EOF2'
 pub fn f() -> i32 { 1 }
 
@@ -587,12 +584,11 @@ pub fn extra() {}
 
 #[allow(dead_code)]
 fn g() {}
-
-pub fn h() {}
 EOF2
-H2=$(commit "$R" allow-lines-b)
+H2=$(commit "$R" allow-lines-moved)
 id1=$(mr "$R" "$B" "$H1" | jq -r '.entries[0].id')
 id2=$(mr "$R" "$B" "$H2" | jq -r '.entries[0].id')
+eq "$([[ -n $id1 && $id1 != null ]] && echo yes)" yes "suppression entry exists in head 1"
 eq "$id2" "$id1" "suppression id unchanged when lines move"
 
 # a different test name is a different failure
@@ -1155,5 +1151,65 @@ H=$(commit "$R" space-path)
 out=$(mr "$R" "$B" "$H"); rc=$?
 eq "$rc" 1 "path with a space: suppression caught"
 eq "$(jq -r '.entries[0].file' <<<"$out")" "src/my mod.rs" "path with a space reported verbatim"
+
+# round 2 area 4: guard exception section rules, placeholder reasons, confirm-only summary
+R=$(mkrepo r4g)
+put "$R" tests/a.rs <<'EOF2'
+#[test]
+fn a() {
+    assert_eq!(1, 1);
+}
+
+#[test]
+fn b() {
+    assert_eq!(2, 2);
+}
+EOF2
+B=$(commit "$R" base)
+put "$R" tests/a.rs <<'EOF2'
+#[test]
+fn a() {
+    assert_eq!(1, 1);
+}
+EOF2
+H=$(commit "$R" drop-b)
+ID="R2-$(printf '%s' 'R2tests/a.rsb' | sha1sum | cut -c1-8)"
+body() { printf '%s\n' "$@" > "$T/body.md"; echo "$T/body.md"; }
+
+f=$(body "## Guard exceptions" "$ID: b superseded, reason here")
+out=$(mr "$R" "$B" "$H" --pr-body "$f"); rc=$?
+eq "$rc" 1 "id not in a list item does not downgrade"
+
+f=$(body "## Guard exceptions" "**Summary**" "- $ID: b superseded, reason here")
+out=$(mr "$R" "$B" "$H" --pr-body "$f"); rc=$?
+eq "$rc" 1 "bold line ends the Guard exceptions section"
+
+for r in "TBD" "n/a" "?" "todo" "None"; do
+  f=$(body "## Guard exceptions" "- $ID: $r")
+  out=$(mr "$R" "$B" "$H" --pr-body "$f"); rc=$?
+  eq "$rc" 1 "placeholder reason '$r' rejected"
+done
+
+f=$(body "## Guard exceptions" "- $ID: b superseded by a stronger test in a.rs")
+out=$(mr "$R" "$B" "$H" --pr-body "$f"); rc=$?
+eq "$rc" 0 "list item with real reason downgrades"
+
+R=$(mkrepo r4sum)
+put "$R" tests/a.rs <<'EOF2'
+#[test]
+fn adds_two() {
+    assert_eq!(add(2, 2), 4);
+}
+EOF2
+B=$(commit "$R" base)
+put "$R" tests/a.rs <<'EOF2'
+#[test]
+fn adds_two() {
+    assert_eq!(add(2, 2), 5);
+}
+EOF2
+H=$(commit "$R" change-expected)
+out=$(mr "$R" "$B" "$H"); rc=$?
+eq "$(jq -r .summary <<<"$out")" "pass $H, 1 confirm" "confirm-only renders pass <sha>, n confirm (never all pass)"
 
 done_tests
