@@ -46,6 +46,8 @@ Globs: `**` any depth, `*` one segment.
 - Check fails on any `fail` entry (`confirm` entries do not fail). Guard error (usage or git, no JSON) fails the check and the comment says no result.
 - Summary: `all pass <sha>` only when every check ran. R2 alone reads `pass <sha> (0 fail, 0 confirm; ran: R2; skipped: R1 R3 R4)`.
 - Require the check `mech-review report` in branch protection.
+- Readers trust only the bot's marker comment (`github-actions[bot]`, override `MECH_COMMENT_AUTHOR`): a `<!-- mech-review -->` comment from any other user is ignored.
+- A run whose PR head has moved on leaves the comment alone; the newest push owns it.
 
 ## Limits
 
