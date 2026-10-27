@@ -1681,4 +1681,50 @@ H=$(commit "$R" extract-helper-26)
 out=$(mr "$R" "$B" "$H"); rc=$?
 eq "$rc" 0 "per-fn: assert extracted into helper, helper gains the count: clean"
 
+# in-place weakening: assert_eq!(out, 3) -> assert!(out.is_some()) is at least confirm
+R=$(mkrepo r26weak)
+put "$R" tests/a.rs <<'EOF2'
+#[test]
+fn t() {
+    let out = Some(3);
+    assert_eq!(out, Some(3));
+}
+EOF2
+B=$(commit "$R" base)
+put "$R" tests/a.rs <<'EOF2'
+#[test]
+fn t() {
+    let out = Some(3);
+    assert!(out.is_some());
+}
+EOF2
+H=$(commit "$R" weaken-in-place)
+out=$(mr "$R" "$B" "$H"); rc=$?
+eq "$rc" 0 "in-place weakening: confirm, exit 0"
+eq "$(jq -r '.entries|length' <<<"$out")" 1 "in-place weakening: one entry"
+eq "$(jq -r '.entries[0].severity' <<<"$out")" confirm "in-place weakening: severity confirm"
+eq "$(jq -r '.entries[0].id' <<<"$out")" "R2-$(printf '%s' 'R2tests/a.rsassert-replaced:t' | sha1sum | cut -c1-8)" "in-place weakening: id keyed by fn t"
+has "$(jq -r '.entries[0].problem' <<<"$out")" "assert_eq!(out, Some(3))" "in-place weakening: problem shows old assert"
+has "$(jq -r '.entries[0].problem' <<<"$out")" "assert!(out.is_some())" "in-place weakening: problem shows new assert"
+
+# assert_eq! to assert! with a different operand: confirm too
+R=$(mkrepo r26weak2)
+put "$R" tests/a.rs <<'EOF2'
+#[test]
+fn t() {
+    assert_eq!(x, 3);
+}
+EOF2
+B=$(commit "$R" base)
+put "$R" tests/a.rs <<'EOF2'
+#[test]
+fn t() {
+    assert!(y > 0);
+}
+EOF2
+H=$(commit "$R" weaken-both-sides)
+out=$(mr "$R" "$B" "$H"); rc=$?
+eq "$rc" 0 "assert_eq! to assert!(y > 0): confirm, exit 0"
+eq "$(jq -r '.entries[0].severity' <<<"$out")" confirm "assert_eq! to assert!: severity confirm"
+
 done_tests
