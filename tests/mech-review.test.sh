@@ -328,7 +328,7 @@ out=$(mr "$R" "$B" "$H"); rc=$?
 eq "$rc" 1 "inline test assert drop exit 1"
 eq "$(jq -r '.entries[0].file' <<<"$out")" src/lib.rs "inline drop names src file"
 
-# helper (no #[test], not in cfg(test) mod) is not counted: scope = test fns + cfg(test) mods
+# helper in a test-path file: whole file counts
 R=$(mkrepo s4helper)
 put "$R" tests/helpers.rs <<'EOF2'
 pub fn check(v: i32) {
@@ -344,7 +344,7 @@ pub fn check(v: i32) {
 EOF2
 H=$(commit "$R" drop-helper)
 out=$(mr "$R" "$B" "$H"); rc=$?
-eq "$rc" 0 "helper assert outside test fns not counted"
+eq "$rc" 1 "helper assert drop in test-path file exit 1"
 
 # slice 5: R2 added suppression without a reason
 R=$(mkrepo s5)
@@ -1069,8 +1069,8 @@ pub fn f(x: i32) -> i32 {
 }
 EOF2
 H=$(commit "$R" drop-prod-debug)
-out=$(python3 -I "$MR" r2 --repo "$R" --base "$B" --head "$H" --stack rust --test-paths 'src/**'); rc=$?
-eq "$rc" 0 "broad test glob: production debug_assert removal is not counted"
+out=$(python3 -I "$MR" r2 --repo "$R" --base "$B" --head "$H" --stack rust --test-paths 'tests/**'); rc=$?
+eq "$rc" 0 "production file outside test paths: debug_assert removal not counted"
 
 # round 2 area 3: suppressions on masked head text (multi-line, cfg_attr, doc/raw strings), path with space
 R=$(mkrepo r3multi)
@@ -1211,5 +1211,297 @@ EOF2
 H=$(commit "$R" change-expected)
 out=$(mr "$R" "$B" "$H"); rc=$?
 eq "$(jq -r .summary <<<"$out")" "pass $H, 1 confirm" "confirm-only renders pass <sha>, n confirm (never all pass)"
+
+# round 3 red: scope, cfg attrs, raw C strings, pr-body encoding, binary diffs, non-utf8 and control-char names, ordinals
+
+# item 2: top-level helper extracted from test t in a test-path file: not a drop
+R=$(mkrepo r6helper)
+put "$R" tests/a.rs <<'EOF2'
+#[test]
+fn t() {
+    assert_eq!(f(), 1);
+}
+EOF2
+B=$(commit "$R" base)
+put "$R" tests/a.rs <<'EOF2'
+fn check(v: i32) {
+    assert_eq!(v, 1);
+}
+
+#[test]
+fn t() {
+    check(f());
+}
+EOF2
+H=$(commit "$R" extract-top-helper)
+out=$(mr "$R" "$B" "$H"); rc=$?
+eq "$rc" 0 "extracted top-level helper in test path: not a drop"
+
+# item 3: #[cfg(test)] followed by other attributes before mod
+R=$(mkrepo r6mod)
+put "$R" src/lib.rs <<'EOF2'
+pub fn f(v: i32) -> i32 { v }
+#[cfg(test)]
+#[allow(clippy::all)]
+mod tests {
+    use super::*;
+    fn check(v: i32) {
+        assert!(v > 0);
+        assert!(v < 10);
+    }
+    #[test]
+    fn t() { check(f(1)); }
+}
+EOF2
+B=$(commit "$R" base)
+put "$R" src/lib.rs <<'EOF2'
+pub fn f(v: i32) -> i32 { v }
+#[cfg(test)]
+#[allow(clippy::all)]
+mod tests {
+    use super::*;
+    fn check(v: i32) {
+        assert!(v > 0);
+    }
+    #[test]
+    fn t() { check(f(1)); }
+}
+EOF2
+H=$(commit "$R" drop-helper-assert-attr)
+out=$(mr "$R" "$B" "$H"); rc=$?
+eq "$rc" 1 "cfg(test) mod with extra attr: helper assert drop caught"
+has "$(jq -r '[.entries[].problem] | join(" ")' <<<"$out")" "from 2 to 1" "module helper counted 2 to 1"
+
+# item 4: raw C string is masked (cr"..." has no escapes; a \" must not open a string)
+R=$(mkrepo r6rawc)
+put "$R" tests/a.rs <<'EOF2'
+pub const CR: &core::ffi::CStr = cr"a\";
+pub const X: u8 = 1;
+#[test]
+fn a() {
+    assert_eq!(1, 1);
+}
+
+#[test]
+fn b() {
+    assert_eq!(2, 2);
+}
+EOF2
+B=$(commit "$R" base)
+put "$R" tests/a.rs <<'EOF2'
+pub const CR: &core::ffi::CStr = cr"a\";
+pub const X: u8 = 1;
+#[test]
+fn a() {
+    assert_eq!(1, 1);
+}
+EOF2
+H=$(commit "$R" drop-b-after-cr)
+out=$(mr "$R" "$B" "$H"); rc=$?
+eq "$rc" 1 "after cr\"a\\\" raw C string: removed b caught"
+has "$(jq -r '[.entries[].problem] | join(" ")' <<<"$out")" '`b`' "removed b named after raw C string"
+
+R=$(mkrepo r6rawc2)
+put "$R" tests/a.rs <<'EOF2'
+pub const CH: &core::ffi::CStr = cr#"a"#;
+pub const CC: &core::ffi::CStr = c"x\"y";
+#[test]
+fn a() {
+    assert_eq!(1, 1);
+}
+
+#[test]
+fn b() {
+    assert_eq!(2, 2);
+}
+EOF2
+B=$(commit "$R" base)
+put "$R" tests/a.rs <<'EOF2'
+pub const CH: &core::ffi::CStr = cr#"a"#;
+pub const CC: &core::ffi::CStr = c"x\"y";
+#[test]
+fn a() {
+    assert_eq!(1, 1);
+}
+EOF2
+H=$(commit "$R" drop-b-after-cr-hash)
+out=$(mr "$R" "$B" "$H"); rc=$?
+eq "$rc" 1 "after cr#\"a\"# and c\"x\\\"y\": removed b caught"
+
+# item 5: #[cfg(not(test))] on a test fn disables it (ignore marker); cfg(feature) is left alone
+R=$(mkrepo r6cfgnot)
+put "$R" tests/a.rs <<'EOF2'
+#[test]
+fn a() {
+    assert_eq!(1, 1);
+}
+
+#[test]
+fn b() {
+    assert_eq!(2, 2);
+}
+EOF2
+B=$(commit "$R" base)
+put "$R" tests/a.rs <<'EOF2'
+#[test]
+fn a() {
+    assert_eq!(1, 1);
+}
+
+#[test]
+#[cfg(not(test))]
+fn b() {
+    assert_eq!(2, 2);
+}
+EOF2
+H=$(commit "$R" cfg-not-test)
+out=$(mr "$R" "$B" "$H"); rc=$?
+eq "$rc" 1 "cfg(not(test)) on a test fn is an ignore marker"
+has "$(jq -r '[.entries[].problem] | join(" ")' <<<"$out")" '`b`' "cfg(not(test)) names b"
+put "$R" tests/a.rs <<'EOF2'
+#[test]
+fn a() {
+    assert_eq!(1, 1);
+}
+
+#[test]
+#[cfg(feature = "slow")]
+fn b() {
+    assert_eq!(2, 2);
+}
+EOF2
+H2=$(commit "$R" cfg-feature)
+out=$(mr "$R" "$B" "$H2"); rc=$?
+eq "$rc" 0 "cfg(feature) on a test fn is not an ignore marker"
+
+# item 6: non-UTF-8 --pr-body: no traceback, decoded with replacement; list item still downgrades
+R=$(mkrepo r6body)
+put "$R" tests/a.rs <<'EOF2'
+#[test]
+fn a() {
+    assert_eq!(1, 1);
+}
+
+#[test]
+fn b() {
+    assert_eq!(2, 2);
+}
+EOF2
+B=$(commit "$R" base)
+put "$R" tests/a.rs <<'EOF2'
+#[test]
+fn a() {
+    assert_eq!(1, 1);
+}
+EOF2
+H=$(commit "$R" drop-b-body)
+ID="R2-$(printf '%s' 'R2tests/a.rsb' | sha1sum | cut -c1-8)"
+printf '## Guard exceptions\n- %s: b superseded by a stronger test \377 in a.rs\n' "$ID" > "$T/badbody.md"
+out=$(mr "$R" "$B" "$H" --pr-body "$T/badbody.md" 2>&1); rc=$?
+lacks "$out" "Traceback" "non-utf8 pr body: no traceback"
+eq "$rc" 0 "non-utf8 pr body: list item still downgrades"
+
+# item 7: binary-marked source (-diff attr, or NUL byte) must still show suppressions
+R=$(mkrepo r6binattr)
+put "$R" .gitattributes <<'EOF2'
+*.rs -diff
+EOF2
+put "$R" src/lib.rs <<'EOF2'
+pub fn f() {}
+EOF2
+B=$(commit "$R" base)
+put "$R" src/lib.rs <<'EOF2'
+pub fn f() {}
+#[allow(dead_code)]
+fn g() {}
+EOF2
+H=$(commit "$R" bare-allow-diff-attr)
+out=$(mr "$R" "$B" "$H"); rc=$?
+eq "$rc" 1 "*.rs -diff attr: bare allow still caught"
+
+R=$(mkrepo r6nul)
+put "$R" src/lib.rs <<'EOF2'
+pub fn f() {}
+EOF2
+B=$(commit "$R" base)
+printf 'pub fn f() {}\n// nul \000 here\n#[allow(dead_code)]\nfn g() {}\n' > "$R/src/lib.rs"
+H=$(commit "$R" bare-allow-nul)
+out=$(mr "$R" "$B" "$H"); rc=$?
+eq "$rc" 1 "NUL byte in source: bare allow still caught"
+
+# item 9: non-UTF-8 file name is handled, not 'path does not exist'
+R=$(mkrepo r6name)
+F=$(printf 'src/bad\377.rs')
+put "$R" "$F" <<'EOF2'
+pub fn f() {}
+EOF2
+B=$(commit "$R" base)
+put "$R" "$F" <<'EOF2'
+pub fn f() {}
+#[allow(dead_code)]
+fn g() {}
+EOF2
+H=$(commit "$R" bytes-name)
+out=$(mr "$R" "$B" "$H" 2>&1); rc=$?
+eq "$rc" 1 "non-utf8 file name: suppression caught (exit 1, not 2)"
+eq "$(jq -r '.entries[0].check' <<<"$out" 2>/dev/null)" R2 "non-utf8 file name: R2 entry"
+
+# item 10: git C-quoting of control chars in names (\r)
+R=$(mkrepo r6cr)
+F=$(printf 'src/a\rb.rs')
+put "$R" "$F" <<'EOF2'
+pub fn f() {}
+EOF2
+B=$(commit "$R" base)
+put "$R" "$F" <<'EOF2'
+pub fn f() {}
+#[allow(dead_code)]
+fn g() {}
+EOF2
+H=$(commit "$R" cr-name)
+out=$(mr "$R" "$B" "$H"); rc=$?
+eq "$rc" 1 "name with CR: suppression caught"
+eq "$(jq -r '.entries[0].file' <<<"$out")" "$F" "name with CR reported verbatim"
+
+# item 8: occurrences of one key in a file each get an entry
+R=$(mkrepo r6two_allow)
+put "$R" src/lib.rs <<'EOF2'
+pub fn f() {}
+EOF2
+B=$(commit "$R" base)
+put "$R" src/lib.rs <<'EOF2'
+pub fn f() {}
+#[allow(dead_code)]
+fn g() {}
+#[allow(dead_code)]
+fn h() {}
+EOF2
+H=$(commit "$R" two-allows)
+out=$(mr "$R" "$B" "$H"); rc=$?
+eq "$(jq -r '.entries|length' <<<"$out")" 2 "two bare allows of one lint in one file: two entries"
+eq "$(jq -r '[.entries[].id]|unique|length' <<<"$out")" 2 "two entries have distinct ids"
+eq "$(jq -r '.entries[0].id' <<<"$out")" "R2-$(printf '%s' 'R2src/lib.rsdead_code' | sha1sum | cut -c1-8)" "first occurrence keeps the plain id"
+
+R=$(mkrepo r6two_exp)
+put "$R" tests/a.rs <<'EOF2'
+#[test]
+fn a() {
+    assert_eq!(x, 1);
+    assert_eq!(x, 2);
+}
+EOF2
+B=$(commit "$R" base)
+put "$R" tests/a.rs <<'EOF2'
+#[test]
+fn a() {
+    assert_eq!(x, 9);
+    assert_eq!(x, 8);
+}
+EOF2
+H=$(commit "$R" two-same-lhs)
+out=$(mr "$R" "$B" "$H"); rc=$?
+eq "$(jq -r '.entries|length' <<<"$out")" 2 "two changed expected values sharing an operand: two entries"
+eq "$(jq -r '[.entries[].id]|unique|length' <<<"$out")" 2 "those entries have distinct ids"
+eq "$(jq -r '.entries[0].id' <<<"$out")" "R2-$(printf '%s' 'R2tests/a.rsexpected:a|x' | sha1sum | cut -c1-8)" "first expected entry keeps the plain id"
 
 done_tests
