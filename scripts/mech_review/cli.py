@@ -57,7 +57,7 @@ def read_body(path):
     if path is None:
         return None
     try:
-        with open(path, encoding="utf-8") as f:
+        with open(path, encoding="utf-8", errors="replace") as f:
             return f.read()
     except OSError as e:
         raise engine.Die(f"cannot read --pr-body {path}: {e.strerror}")

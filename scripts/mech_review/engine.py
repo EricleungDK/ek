@@ -33,7 +33,7 @@ def git(repo, *args):
     r = subprocess.run(["git", "-c", "core.quotepath=off", "-C", repo, *args], capture_output=True)
     if r.returncode:
         raise Die(r.stderr.decode("utf-8", "replace").strip() or f"git {args[0]} failed")
-    return r.stdout.decode("utf-8", "replace")
+    return r.stdout.decode("utf-8", "surrogateescape")  # non-utf8 names/content survive; re-encoded on the way back to git
 
 
 def resolve(repo, ref):
@@ -45,7 +45,7 @@ def resolve(repo, ref):
 
 def entry(check, file, line, key, cls, severity, problem, hint, forbidden):
     """id = <check>-<sha1(check+file+key)[:8]>; key is the test fn or rule name, never a line number."""
-    eid = f"{check}-" + hashlib.sha1((check + file + key).encode()).hexdigest()[:8]
+    eid = f"{check}-" + hashlib.sha1((check + file + key).encode("utf-8", "surrogateescape")).hexdigest()[:8]
     return {"id": eid, "check": check, "class": cls, "severity": severity, "file": file, "line": line,
             "problem": problem, "hint": hint, "forbidden": forbidden}
 
@@ -74,7 +74,7 @@ def changes(repo, mb, head):
     return out
 
 
-ESC = {"n": 10, "t": 9, '"': 34, "\\": 92}
+ESC = {"a": 7, "b": 8, "t": 9, "n": 10, "v": 11, "f": 12, "r": 13, '"': 34, "\\": 92}
 
 
 def unquote(s):
@@ -88,15 +88,15 @@ def unquote(s):
             b.append(ESC.get(s[i + 1], ord(s[i + 1])))
             i += 2
         else:
-            b.extend(s[i].encode())
+            b.extend(s[i].encode("utf-8", "surrogateescape"))
             i += 1
-    return b.decode("utf-8", "replace")
+    return b.decode("utf-8", "surrogateescape")
 
 
 def added_lines(repo, mb, head):
     """{new path: [(head line no, text)]} for lines added in mb..head (hunk counts, so '---'/'+++' content is safe)."""
     out, cur, ln, rem_old, rem_new = {}, None, 0, 0, 0
-    text = git(repo, "diff", "--no-ext-diff", "--no-textconv", "-U0", "-M", "--src-prefix=a/", "--dst-prefix=b/", mb, head)
+    text = git(repo, "diff", "--no-ext-diff", "--no-textconv", "--text", "-U0", "-M", "--src-prefix=a/", "--dst-prefix=b/", mb, head)
     for line in text.split("\n"):
         if rem_old or rem_new:
             if line.startswith("+"):
