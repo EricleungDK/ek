@@ -627,4 +627,63 @@ has "$(jq -r '[.entries[].id] | join(" ")' <<<"$out")" "R2-" "rename yields entr
 eq "$(jq -r '[.entries[].id] | unique | length' <<<"$out")" "$(jq -r '.entries|length' <<<"$out")" "entry ids unique"
 has "$(jq -r '[.entries[].problem] | join(" ")' <<<"$out")" '`b`' "rename reports removed b"
 
+# slice 9: all pass renders `all pass <sha>` (text + json); `all` subcommand; text fail output
+R=$(mkrepo s9)
+put "$R" tests/a.rs <<'EOF2'
+#[test]
+fn a() {
+    assert_eq!(1, 1);
+}
+
+#[test]
+fn b() {
+    assert_eq!(2, 2);
+}
+EOF2
+B=$(commit "$R" base)
+put "$R" tests/a.rs <<'EOF2'
+#[test]
+fn a() {
+    assert_eq!(1, 1);
+}
+
+#[test]
+fn b() {
+    assert_eq!(2, 2);
+}
+
+#[test]
+fn c() {
+    assert_eq!(3, 3);
+}
+EOF2
+H=$(commit "$R" add-c)
+out=$(mr "$R" "$B" "$H" --format text); rc=$?
+eq "$rc" 0 "text clean exit 0"
+eq "$out" "all pass $H" "text clean is exactly all pass <sha>"
+
+out=$(python3 -I "$MR" all --repo "$R" --base "$B" --head "$H" --stack rust); rc=$?
+eq "$rc" 0 "all subcommand clean exit 0"
+eq "$(jq -r .summary <<<"$out")" "all pass $H" "all subcommand summary"
+
+put "$R" tests/a.rs <<'EOF2'
+#[test]
+fn a() {
+    assert_eq!(1, 1);
+}
+
+#[test]
+fn c() {
+    assert_eq!(3, 3);
+}
+EOF2
+H2=$(commit "$R" drop-b)
+out=$(mr "$R" "$B" "$H2" --format text); rc=$?
+eq "$rc" 1 "text fail exit 1"
+eq "$(head -1 <<<"$out")" "fail $H2 (1 fail, 0 confirm)" "text fail summary line"
+has "$out" "R2-" "text lists entry id"
+has "$out" "tests/a.rs" "text lists file"
+has "$out" "hint:" "text shows hint"
+has "$out" "forbidden:" "text shows forbidden"
+
 done_tests
