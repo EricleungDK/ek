@@ -407,4 +407,53 @@ H=$(commit "$R" add-h)
 out=$(mr "$R" "$B" "$H"); rc=$?
 eq "$rc" 0 "pre-existing allow untouched is clean"
 
+# slice 6: changed expected value -> confirm; protected path -> fail needs-human
+R=$(mkrepo s6)
+put "$R" tests/a.rs <<'EOF2'
+#[test]
+fn adds_two() {
+    assert_eq!(add(2, 2), 4);
+}
+EOF2
+B=$(commit "$R" base)
+put "$R" tests/a.rs <<'EOF2'
+#[test]
+fn adds_two() {
+    assert_eq!(add(2, 2), 5);
+}
+EOF2
+H=$(commit "$R" change-expected)
+out=$(mr "$R" "$B" "$H"); rc=$?
+eq "$rc" 0 "changed expected value is confirm, exit 0"
+eq "$(jq -r '.entries[0].severity' <<<"$out")" confirm "changed expected severity confirm"
+eq "$(jq -r '.entries[0].class' <<<"$out")" agent-fixable "changed expected class agent-fixable"
+eq "$(jq -r '.entries[0].line' <<<"$out")" 3 "changed expected line = head assert line"
+eq "$(jq -r '.entries[0].id' <<<"$out")" "R2-$(printf '%s' 'R2tests/a.rsadds_two' | sha1sum | cut -c1-8)" "changed expected id keyed by test fn"
+has "$(jq -r .summary <<<"$out")" "confirm" "summary confirm, not all pass"
+has "$(jq -r '.entries[0].problem' <<<"$out")" "was 4, now 5" "problem gives old and new values"
+eq "$(jq -r '.entries[0].forbidden' <<<"$out")" "editing an expected value to match the code's current output" "changed expected forbidden text"
+
+# no protected paths configured: .github change is not flagged
+R=$(mkrepo s6none)
+put "$R" .github/workflows/ci.yml <<'EOF2'
+on: push
+EOF2
+B=$(commit "$R" base)
+put "$R" .github/workflows/ci.yml <<'EOF2'
+on: pull_request
+EOF2
+H=$(commit "$R" ci-change)
+out=$(mr "$R" "$B" "$H"); rc=$?
+eq "$rc" 0 "unconfigured protected path not flagged"
+
+# protected path changed: fail, needs-human
+out=$(mr "$R" "$B" "$H" --protected-paths '.github/**'); rc=$?
+eq "$rc" 1 "protected path change exit 1"
+eq "$(jq -r '.entries[0].class' <<<"$out")" needs-human "protected class needs-human"
+eq "$(jq -r '.entries[0].severity' <<<"$out")" fail "protected severity fail"
+eq "$(jq -r '.entries[0].check' <<<"$out")" R2 "protected check R2"
+eq "$(jq -r '.entries[0].file' <<<"$out")" .github/workflows/ci.yml "protected file"
+eq "$(jq -r '.entries[0].id' <<<"$out")" "R2-$(printf '%s' 'R2.github/workflows/ci.ymlprotected-path' | sha1sum | cut -c1-8)" "protected id keyed by file+protected-path"
+eq "$(jq -r '.entries[0].line' <<<"$out")" 0 "protected entry file-level"
+
 done_tests
