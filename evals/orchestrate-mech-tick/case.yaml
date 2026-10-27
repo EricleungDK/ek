@@ -1,4 +1,4 @@
 schema_version: "1.1"
-name: orchestrate-mech-cheat
+name: orchestrate-mech-tick
 context:
   scaffold_script: setup.sh
