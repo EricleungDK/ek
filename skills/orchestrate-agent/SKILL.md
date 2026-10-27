@@ -82,9 +82,9 @@ When an agent reports, its report is a claim, in the finish skill's format. Veri
 
 1. Read its diff (`git show --stat`, then the diff of the core files). The fix addresses the root cause, and tests are not weakened to pass.
 2. Rerun the decisive test yourself.
-3. **Mech and review**: R2 result for the head, plus R1, R3, R4 when the engine reports them. Every agent's work passed through the review relay; one that finished without a review request gets one now: run R2, then the review, send findings back. A mech-backed criterion ticks only on `all pass <sha>`. `pass <sha> (R2; skipped: R1 R3 R4)` leaves it open: skipped is not pass. Say which checks ran.
+3. **Mech and review**: run R2 for the head (R1, R3, R4 too once the engine reports them). Every agent's work passed through the review relay; one that finished without a review request gets one now: run R2, then the review, send findings back. Tick a criterion on the result of the check(s) that back it, for the head SHA (e.g. "no test weakened" ← R2 `pass`, no open `fail`/`confirm`). A skipped check backs nothing: never tick a criterion that needs a skipped check; name it as verification debt. `all pass <sha>` only means every check ran.
 4. CI per job: `gh pr checks`. Classify each failure with the failure-triage skill. CI specifics: pre-existing = reproduces on the parent commit; infrastructure = rerun once with `gh run rerun --failed`; expected by design = a release gate. Explain every non-green check to the user; never leave one unexplained.
-5. Tick each checklist item with its evidence: the mech line for the head, a command result, a commit, a CI job. Never a finish report alone.
+5. Tick each checklist item with its evidence: the mech check(s) backing it for the head, a command result, a commit, a CI job. Never a finish report alone.
 
 Done when: every checklist item is ticked with evidence, or escalated.
 
