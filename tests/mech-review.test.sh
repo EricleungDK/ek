@@ -26,7 +26,7 @@ EOF
 H=$(commit "$R" feat)
 out=$(mr "$R" "$B" "$H"); rc=$?
 eq "$rc" 0 "clean change exit 0"
-eq "$(jq -r .summary <<<"$out")" "all pass $H" "all green renders all pass <head sha>"
+eq "$(jq -r .summary <<<"$out")" "pass $H (0 fail, 0 confirm; ran: R2; skipped: R1 R3 R4)" "clean change with R1/R3/R4 skipped is not all pass"
 eq "$(jq -r .head <<<"$out")" "$H" "envelope head sha"
 eq "$(jq -r .base <<<"$out")" "$B" "envelope base sha"
 eq "$(jq -r .ek <<<"$out")" "0.1.1" "envelope ek version from plugin.json"
@@ -130,7 +130,7 @@ EOF2
 H=$(commit "$R" add-b)
 out=$(mr "$R" "$B" "$H"); rc=$?
 eq "$rc" 0 "added test is clean"
-eq "$(jq -r .summary <<<"$out")" "all pass $H" "added test all pass"
+eq "$(jq -r .summary <<<"$out")" "pass $H (0 fail, 0 confirm; ran: R2; skipped: R1 R3 R4)" "added test: pass names skipped checks"
 
 # slice 3: R2 added #[ignore] (skip marker)
 R=$(mkrepo s3)
@@ -618,7 +618,7 @@ has "$(jq -r '[.entries[].id] | join(" ")' <<<"$out")" "R2-" "rename yields entr
 eq "$(jq -r '[.entries[].id] | unique | length' <<<"$out")" "$(jq -r '.entries|length' <<<"$out")" "entry ids unique"
 has "$(jq -r '[.entries[].problem] | join(" ")' <<<"$out")" '`b`' "rename reports removed b"
 
-# slice 9: all pass renders `all pass <sha>` (text + json); `all` subcommand; text fail output
+# slice 9: summary names ran and skipped checks (text + json); `all` subcommand; text fail output
 R=$(mkrepo s9)
 put "$R" tests/a.rs <<'EOF2'
 #[test]
@@ -651,11 +651,11 @@ EOF2
 H=$(commit "$R" add-c)
 out=$(mr "$R" "$B" "$H" --format text); rc=$?
 eq "$rc" 0 "text clean exit 0"
-eq "$out" "all pass $H" "text clean is exactly all pass <sha>"
+eq "$out" "pass $H (0 fail, 0 confirm; ran: R2; skipped: R1 R3 R4)" "text clean names skipped checks"
 
 out=$(python3 -I "$MR" all --repo "$R" --base "$B" --head "$H" --stack rust); rc=$?
 eq "$rc" 0 "all subcommand clean exit 0"
-eq "$(jq -r .summary <<<"$out")" "all pass $H" "all subcommand summary"
+eq "$(jq -r .summary <<<"$out")" "pass $H (0 fail, 0 confirm; ran: R2; skipped: R1 R3 R4)" "all subcommand summary names skipped checks"
 
 put "$R" tests/a.rs <<'EOF2'
 #[test]
@@ -671,7 +671,7 @@ EOF2
 H2=$(commit "$R" drop-b)
 out=$(mr "$R" "$B" "$H2" --format text); rc=$?
 eq "$rc" 1 "text fail exit 1"
-eq "$(head -1 <<<"$out")" "fail $H2 (1 fail, 0 confirm)" "text fail summary line"
+eq "$(head -1 <<<"$out")" "fail $H2 (1 fail, 0 confirm; ran: R2; skipped: R1 R3 R4)" "text fail summary line"
 has "$out" "R2-" "text lists entry id"
 has "$out" "tests/a.rs" "text lists file"
 has "$out" "hint:" "text shows hint"
@@ -1268,7 +1268,7 @@ fn adds_two() {
 EOF2
 H=$(commit "$R" change-expected)
 out=$(mr "$R" "$B" "$H"); rc=$?
-eq "$(jq -r .summary <<<"$out")" "pass $H, 1 confirm" "confirm-only renders pass <sha>, n confirm (never all pass)"
+eq "$(jq -r .summary <<<"$out")" "pass $H (0 fail, 1 confirm; ran: R2; skipped: R1 R3 R4)" "confirm-only: pass names counts and skipped checks"
 
 # round 3 red: scope, cfg attrs, raw C strings, pr-body encoding, binary diffs, non-utf8 and control-char names, ordinals
 
@@ -1561,5 +1561,41 @@ out=$(mr "$R" "$B" "$H"); rc=$?
 eq "$(jq -r '.entries|length' <<<"$out")" 2 "two changed expected values sharing an operand: two entries"
 eq "$(jq -r '[.entries[].id]|unique|length' <<<"$out")" 2 "those entries have distinct ids"
 eq "$(jq -r '.entries[0].id' <<<"$out")" "R2-$(printf '%s' 'R2tests/a.rsexpected:a|x' | sha1sum | cut -c1-8)" "first expected entry keeps the plain id"
+
+# #27 summary: `all pass <sha>` only when every check ran and passed with no entries; fail names counts and checks
+pyeng() { python3 -I -c "import sys; sys.path.insert(0, '$ROOT/scripts'); from mech_review import engine; print(engine.summarize('abc', $1, $2))"; }
+ALLPASS='{"R1":{"status":"pass"},"R2":{"status":"pass"},"R3":{"status":"pass"},"R4":{"status":"pass"}}'
+SKIP='{"R1":{"status":"skipped"},"R2":{"status":"pass"},"R3":{"status":"skipped"},"R4":{"status":"skipped"}}'
+ONEC='[{"severity":"confirm"}]'
+TWOF='[{"severity":"fail"},{"severity":"fail"}]'
+eq "$(pyeng "$ALLPASS" '[]')" "all pass abc" "summary: all four pass, no entries: all pass"
+eq "$(pyeng "$SKIP" '[]')" "pass abc (0 fail, 0 confirm; ran: R2; skipped: R1 R3 R4)" "summary: skipped checks never all pass"
+eq "$(pyeng "$ALLPASS" "$ONEC")" "pass abc (0 fail, 1 confirm; ran: R1 R2 R3 R4)" "summary: confirm with every check ran is not all pass"
+eq "$(pyeng "$SKIP" "$TWOF")" "fail abc (2 fail, 0 confirm; ran: R2; skipped: R1 R3 R4)" "summary: fail names counts, ran and skipped"
+
+R=$(mkrepo s9fail)
+put "$R" tests/a.rs <<'EOF2'
+#[test]
+fn a() {
+    assert_eq!(1, 1);
+}
+
+#[test]
+fn b() {
+    assert_eq!(2, 2);
+}
+EOF2
+B=$(commit "$R" base)
+put "$R" tests/a.rs <<'EOF2'
+#[test]
+#[ignore]
+fn a() {
+    assert_eq!(1, 1);
+}
+EOF2
+H=$(commit "$R" two-fails)
+out=$(mr "$R" "$B" "$H"); rc=$?
+eq "$rc" 1 "two fails: exit 1"
+eq "$(jq -r .summary <<<"$out")" "fail $H (2 fail, 0 confirm; ran: R2; skipped: R1 R3 R4)" "two fails: summary names counts and skipped checks"
 
 done_tests
