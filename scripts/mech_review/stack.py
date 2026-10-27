@@ -2,7 +2,7 @@
 
 Adapter interface:
   classify(path, test_globs) -> "test" | "prod" | None (None: not a source file of this stack)
-  test_fns(text) -> [TestFn(name, line, markers)]   markers: "ignore" (skip-like; more for future stacks)
+  test_fns(text) -> [TestFn(name, line, markers)]   markers: "ignore" (skip-like), "should_panic"
   assertions(text) -> [Assertion(line, fn, scope, kind, left, right, text)]  fn: enclosing test fn name or None;
       scope: inside a test fn or a #[cfg(test)] mod (production code is never in scope);
       kind: eq | ne | other (assert!(a == b) is eq); left/right: whitespace-normalized operands (eq/ne only);
@@ -21,6 +21,7 @@ RAW = re.compile(r'(?:br|cr|r)(#*)"')
 FN = re.compile(r'((?:#\[[^\]]*\]\s*)*)(?:pub(?:\s*\([^)]*\))?\s+)?(?:async\s+)?(?:unsafe\s+)?fn\s+(\w+)')
 ATTR_START = re.compile(r"#!?\[")
 ASSERT = re.compile(r"\b(\w*assert\w*)!\s*[(\[{]")
+SHOULD_PANIC = re.compile(r"#\[\s*should_panic\b")
 MOD = re.compile(r"((?:#\[[^\]]*\]\s*)*)(?:pub(?:\s*\([^)]*\))?\s+)?mod\s+\w+\s*\{")
 MODULE = re.compile(r"#\[\s*cfg\s*\(\s*test\s*\)\s*\]\s*(?:#\[[^\]]*\]\s*)*(?:pub(?:\s*\([^)]*\))?\s+)?mod\s+\w+\s*\{")
 TEST_ATTR = re.compile(r"#\[\s*(?:\w+::)*(?:test|rstest|test_case)\b")
@@ -177,6 +178,8 @@ class RustAdapter(Adapter):
                 continue
             mod_attrs = [a for grp, b, e in mods if b < f.start() < e for a in re.findall(r"#\[[^\]]*\]", grp)]
             markers = ["ignore"] if any(IGNORE_ATTR.match(a) for a in attrs + mod_attrs) else []
+            if any(SHOULD_PANIC.match(a) for a in attrs):
+                markers.append("should_panic")
             body = m.find("{", f.end())
             span = (body, close_of(m, body)) if body >= 0 else (f.end(), f.end())
             fns.append((TestFn(f.group(2), m.count("\n", 0, f.start(2)) + 1, markers), span))

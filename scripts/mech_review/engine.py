@@ -178,6 +178,11 @@ def r2(repo, mb, head, adapter, test_globs, protected_globs):
                                      f"test `{f.name}` marked #[ignore]",
                                      "make it pass or fix the code it covers; do not mark it ignored",
                                      "#[ignore] / skip / xfail / only on a test"))
+            if "should_panic" in f.markers and prev and "should_panic" not in prev.markers:
+                entries.append(entry("R2", path, f.line, f"should-panic:{f.name}", "agent-fixable", "confirm",
+                                     f"test `{f.name}` now expects a panic (#[should_panic] added)",
+                                     "a panic-expecting test passes on any panic; assert the error or value instead",
+                                     "adding #[should_panic] to an existing test"))
         # test-path files: the whole file is test code (helpers too); elsewhere only test fns and cfg(test) mods
         # each side is classified by its own path: a file moved between test and prod paths is judged per side
         whole_b = old is not None and adapter.classify(old, test_globs) == "test"
