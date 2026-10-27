@@ -23,9 +23,9 @@ def build_parser():
 def main(argv):
     args = build_parser().parse_args(argv)
     try:
-        env = engine.run(args.repo, args.base, args.head)
+        env = engine.run(args.repo, args.base, args.head, args.stack, args.test_paths)
     except engine.Die as e:
         print(f"mech-review: {e}", file=sys.stderr)
         return 2
     print(json.dumps(env, indent=2))
-    return 0
+    return 1 if any(e["severity"] == "fail" for e in env["entries"]) else 0
