@@ -208,7 +208,7 @@ class RustAdapter(Adapter):
 
     def suppressions(self, text):
         """lint-suppression attributes (allow/expect, also inside cfg_attr) found in code, not comments or strings.
-        reason: `reason = ...` inside the attribute, or a // comment after it on its last line."""
+        reason: non-empty `reason = "..."` inside the attribute, or a // comment after it on its last line."""
         m = mask(text)
         out = []
         for a in ATTR_START.finditer(m):
@@ -224,7 +224,7 @@ class RustAdapter(Adapter):
             raw = text[lint_open + 1:close_of(m, lint_open)]
             eol = text.find("\n", end)
             tail = text[end + 1:len(text) if eol < 0 else eol]
-            reason = bool(re.search(r"\breason\s*=", raw)) or bool(re.search(r"//\s*\S", tail))
+            reason = bool(re.search(r'\breason\s*=\s*"[^"]*[^\s"][^"]*"', raw)) or bool(re.search(r"//\s*\S", tail))
             out.append(Suppression(m.count("\n", 0, a.start()) + 1, m.count("\n", 0, end) + 1, mm.group(1),
                                    norm(raw), " ".join(raw.split()), reason))
         return out
