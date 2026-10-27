@@ -111,7 +111,9 @@ check("render: oversize table truncated with count", "2000" in b and "showing" i
 
 long_cell = env([entry(problem="y" * 500)])
 b = C.render(long_cell)
-check("render: long table cell truncated", "y" * 500 not in b and "y" * 100 in b)
+row = next(l for l in b.splitlines() if l.startswith("| R2-deadbeef"))
+check("render: long table cell truncated in the table row", "…" in row and "y" * 500 not in row and len(row) < 400, row)
+check("render: JSON block keeps the full problem", json_block(b) == long_cell)
 
 # ---- crash render ----
 b = C.render_crash(SHA, "guard produced no JSON")
