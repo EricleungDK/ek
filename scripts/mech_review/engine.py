@@ -2,6 +2,7 @@
 import hashlib
 import json
 import os
+import re
 import subprocess
 from collections import namedtuple
 
@@ -9,6 +10,8 @@ from .stack import ADAPTERS
 
 PLUGIN = os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", ".claude-plugin", "plugin.json"))
 CHECKS = ("R1", "R2", "R3", "R4")
+HUNK = re.compile(r"^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@")
+SUPPRESS = re.compile(r"#!?\[\s*(allow|expect)\s*\((.*?)\)\s*\]")
 Change = namedtuple("Change", "status old new")
 
 
@@ -66,12 +69,39 @@ def changes(repo, mb, head):
     return out
 
 
+def added_lines(repo, mb, head):
+    """{new path: [(head line no, text)]} for lines added in mb..head (hunk counts, so '---'/'+++' content is safe)."""
+    out, cur, ln, rem_old, rem_new = {}, None, 0, 0, 0
+    text = git(repo, "diff", "--no-ext-diff", "--no-textconv", "-U0", "-M", "--src-prefix=a/", "--dst-prefix=b/", mb, head)
+    for line in text.split("\n"):
+        if rem_old or rem_new:
+            if line.startswith("+"):
+                out[cur].append((ln, line[1:]))
+                ln, rem_new = ln + 1, rem_new - 1
+            elif line.startswith("-"):
+                rem_old -= 1
+            elif line.startswith(" "):
+                ln, rem_old, rem_new = ln + 1, rem_old - 1, rem_new - 1
+            continue
+        if line.startswith("+++ "):
+            cur = line[6:] if line.startswith("+++ b/") else None
+            if cur:
+                out.setdefault(cur, [])
+        elif line.startswith("@@"):
+            m = HUNK.match(line)
+            rem_old = int(m.group(2)) if m.group(2) is not None else 1
+            rem_new = int(m.group(4)) if m.group(4) is not None else 1
+            ln = int(m.group(3))
+    return out
+
+
 def blob(repo, rev, path):
     return git(repo, "cat-file", "blob", f"{rev}:{path}")
 
 
 def r2(repo, mb, head, adapter, test_globs):
     entries = []
+    added = added_lines(repo, mb, head)
     for ch in changes(repo, mb, head):
         path = ch.new or ch.old
         if adapter.classify(path, test_globs) is None:
@@ -104,6 +134,15 @@ def r2(repo, mb, head, adapter, test_globs):
                                      f"assertions in `{path}` dropped from {nb} to {na}",
                                      "restore the dropped assertions; strengthen a test instead of removing one",
                                      f"fewer asserts in changed test file {path}"))
+        for ln, text in (added.get(ch.new) or []) if ch.new else []:
+            for m in SUPPRESS.finditer(text):
+                inner = m.group(2)
+                if re.search(r"\breason\s*=", inner) or re.search(r"//\s*\S", text[m.end():]):
+                    continue
+                entries.append(entry("R2", ch.new, ln, re.sub(r"\s+", "", inner), "agent-fixable", "fail",
+                                     f"#[{m.group(1)}({inner})] added without a reason",
+                                     'fix the lint, or give the suppression a reason: #[allow(lint, reason = "...")]',
+                                     "silencing a lint without a reason"))
     return entries
 
 
