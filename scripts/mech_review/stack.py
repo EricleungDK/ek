@@ -14,9 +14,11 @@ from .globs import any_glob
 
 TestFn = namedtuple("TestFn", "name line markers")
 Assertion = namedtuple("Assertion", "line fn scope kind left right")
+Suppression = namedtuple("Suppression", "line end_line kind lints lint_text reason")
 
 RAW = re.compile(r'(?:br|r)(#*)"')
 FN = re.compile(r'((?:#\[[^\]]*\]\s*)*)(?:pub(?:\s*\([^)]*\))?\s+)?(?:async\s+)?(?:unsafe\s+)?fn\s+(\w+)')
+ATTR_START = re.compile(r"#!?\[")
 ASSERT = re.compile(r"\b(\w*assert\w*)!\s*[(\[{]")
 MODULE = re.compile(r"#\[\s*cfg\s*\(\s*test\s*\)\s*\]\s*(?:pub(?:\s*\([^)]*\))?\s+)?mod\s+\w+\s*\{")
 TEST_ATTR = re.compile(r"#\[\s*(?:\w+::)*(?:test|rstest|test_case)\b")
@@ -150,6 +152,9 @@ class Adapter:
     def assertions(self, text):
         raise NotImplementedError
 
+    def suppressions(self, text):
+        raise NotImplementedError
+
 
 class RustAdapter(Adapter):
     name = "rust"
@@ -196,6 +201,30 @@ class RustAdapter(Adapter):
                     if cmp:
                         kind, left, right = cmp
             out.append(Assertion(m.count("\n", 0, pos) + 1, fn, bool(inside), kind, norm(left), norm(right)))
+        return out
+
+
+    def suppressions(self, text):
+        """lint-suppression attributes (allow/expect, also inside cfg_attr) found in code, not comments or strings.
+        reason: `reason = ...` inside the attribute, or a // comment after it on its last line."""
+        m = mask(text)
+        out = []
+        for a in ATTR_START.finditer(m):
+            br = a.end() - 1
+            end = close_of(m, br)
+            body = m[br + 1:end]
+            mm = re.match(r"\s*(allow|expect)\s*\(", body)
+            if not mm and re.match(r"\s*cfg_attr\s*\(", body):
+                mm = re.search(r"\b(allow|expect)\s*\(", body)
+            if not mm:
+                continue
+            lint_open = br + 1 + mm.end() - 1
+            raw = text[lint_open + 1:close_of(m, lint_open)]
+            eol = text.find("\n", end)
+            tail = text[end + 1:len(text) if eol < 0 else eol]
+            reason = bool(re.search(r"\breason\s*=", raw)) or bool(re.search(r"//\s*\S", tail))
+            out.append(Suppression(m.count("\n", 0, a.start()) + 1, m.count("\n", 0, end) + 1, mm.group(1),
+                                   norm(raw), " ".join(raw.split()), reason))
         return out
 
 

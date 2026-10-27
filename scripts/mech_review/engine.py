@@ -72,6 +72,25 @@ def changes(repo, mb, head):
     return out
 
 
+ESC = {"n": 10, "t": 9, '"': 34, "\\": 92}
+
+
+def unquote(s):
+    """git C-style quoted path body -> str (octal escapes are utf-8 bytes)."""
+    b, i = bytearray(), 0
+    while i < len(s):
+        if s[i] == "\\" and re.match(r"[0-7]{3}", s[i + 1:i + 4]):
+            b.append(int(s[i + 1:i + 4], 8))
+            i += 4
+        elif s[i] == "\\":
+            b.append(ESC.get(s[i + 1], ord(s[i + 1])))
+            i += 2
+        else:
+            b.extend(s[i].encode())
+            i += 1
+    return b.decode("utf-8", "replace")
+
+
 def added_lines(repo, mb, head):
     """{new path: [(head line no, text)]} for lines added in mb..head (hunk counts, so '---'/'+++' content is safe)."""
     out, cur, ln, rem_old, rem_new = {}, None, 0, 0, 0
@@ -87,7 +106,12 @@ def added_lines(repo, mb, head):
                 ln, rem_old, rem_new = ln + 1, rem_old - 1, rem_new - 1
             continue
         if line.startswith("+++ "):
-            cur = line[6:] if line.startswith("+++ b/") else None
+            p = line[4:]
+            if p.endswith("\t"):  # git ends names containing spaces with a tab
+                p = p[:-1]
+            if p.startswith('"') and p.endswith('"'):
+                p = unquote(p[1:-1])
+            cur = p[2:] if p.startswith("b/") else None
             if cur:
                 out.setdefault(cur, [])
         elif line.startswith("@@"):
@@ -181,13 +205,13 @@ def r2(repo, mb, head, adapter, test_globs, protected_globs):
                                      "confirm the new value is the spec'd behaviour, not the buggy output",
                                      "editing an expected value to match the code's current output"))
                 break
-        for ln, text in (added.get(new) or []) if new else []:
-            for m in SUPPRESS.finditer(text):
-                inner = m.group(2)
-                if re.search(r"\breason\s*=", inner) or re.search(r"//\s*\S", text[m.end():]):
+        if new is not None:
+            added_nums = {ln for ln, _ in added.get(new, [])}
+            for sup in adapter.suppressions(after):
+                if sup.reason or not any(ln in added_nums for ln in range(sup.line, sup.end_line + 1)):
                     continue
-                entries.append(entry("R2", new, ln, re.sub(r"\s+", "", inner), "agent-fixable", "fail",
-                                     f"#[{m.group(1)}({inner})] added without a reason",
+                entries.append(entry("R2", new, sup.line, sup.lints, "agent-fixable", "fail",
+                                     f"#[{sup.kind}({sup.lint_text})] added without a reason",
                                      'fix the lint, or give the suppression a reason: #[allow(lint, reason = "...")]',
                                      "silencing a lint without a reason"))
     return entries
