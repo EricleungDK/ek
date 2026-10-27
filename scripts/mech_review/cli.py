@@ -20,10 +20,21 @@ def build_parser():
     return p
 
 
+def read_body(path):
+    if path is None:
+        return None
+    try:
+        with open(path, encoding="utf-8") as f:
+            return f.read()
+    except OSError as e:
+        raise engine.Die(f"cannot read --pr-body {path}: {e.strerror}")
+
+
 def main(argv):
     args = build_parser().parse_args(argv)
     try:
-        env = engine.run(args.repo, args.base, args.head, args.stack, args.test_paths, args.protected_paths)
+        body = read_body(args.pr_body)
+        env = engine.run(args.repo, args.base, args.head, args.stack, args.test_paths, args.protected_paths, body)
     except engine.Die as e:
         print(f"mech-review: {e}", file=sys.stderr)
         return 2

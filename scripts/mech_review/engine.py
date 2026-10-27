@@ -12,6 +12,8 @@ from .stack import ADAPTERS
 PLUGIN = os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", ".claude-plugin", "plugin.json"))
 CHECKS = ("R1", "R2", "R3", "R4")
 HUNK = re.compile(r"^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@")
+ID = re.compile(r"\b(?:R[1-4]|CI)-[0-9a-f]{8}\b")
+GUARD_HEAD = re.compile(r"^(?:#+\s*)?\**\s*guard exceptions\s*\**\s*:?\s*$", re.I)
 SUPPRESS = re.compile(r"#!?\[\s*(allow|expect)\s*\((.*?)\)\s*\]")
 Change = namedtuple("Change", "status old new")
 
@@ -171,6 +173,32 @@ def r2(repo, mb, head, adapter, test_globs, protected_globs):
     return entries
 
 
+def guard_exceptions(pr_body):
+    """ids listed under a 'Guard exceptions' heading, each with a reason (>= 3 letters beside the id)."""
+    ids, in_sec = set(), False
+    for line in (pr_body or "").split("\n"):
+        s = line.strip()
+        if GUARD_HEAD.match(s):
+            in_sec = True
+            continue
+        if s.startswith("#"):
+            in_sec = False
+        if in_sec:
+            for m in ID.finditer(line):
+                reason = line[:m.start()] + line[m.end():]
+                if len(re.findall(r"[A-Za-z]", reason)) >= 3:
+                    ids.add(m.group(0))
+    return ids
+
+
+def apply_exceptions(entries, ids):
+    """only agent-fixable fails downgrade; needs-human stays fail (reviewer cannot waive it from the PR body)."""
+    for e in entries:
+        if e["severity"] == "fail" and e["class"] == "agent-fixable" and e["id"] in ids:
+            e["severity"] = "confirm"
+    return entries
+
+
 def envelope(base, head, entries):
     fails = [e for e in entries if e["severity"] == "fail"]
     confirms = [e for e in entries if e["severity"] == "confirm"]
@@ -184,7 +212,7 @@ def envelope(base, head, entries):
     return {"ek": ek_version(), "base": base, "head": head, "checks": checks, "entries": entries, "summary": summary}
 
 
-def run(repo, base_ref, head_ref, stack, test_globs, protected_globs=()):
+def run(repo, base_ref, head_ref, stack, test_globs, protected_globs=(), pr_body=None):
     base = resolve(repo, base_ref)
     head = resolve(repo, head_ref)
     try:
@@ -192,5 +220,6 @@ def run(repo, base_ref, head_ref, stack, test_globs, protected_globs=()):
     except Die:
         raise Die(f"no merge base for {base_ref} and {head_ref}")
     adapter = ADAPTERS[stack]()
-    entries = finalize(r2(repo, mb, head, adapter, test_globs, list(protected_globs)))
+    entries = apply_exceptions(finalize(r2(repo, mb, head, adapter, test_globs, list(protected_globs))),
+                               guard_exceptions(pr_body))
     return envelope(base, head, entries)
