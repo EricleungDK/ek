@@ -2,7 +2,7 @@
 
 One bar for tests in every ek-adopting repo. Apps link this from their agent docs (`AGENTS.md` / `CLAUDE.md`) and add a short local doc with repo specifics ([per-app doc](#per-app-doc)). Don't fork these rules into the app.
 
-Status: R2 in progress (#13). R1, R3, R4 planned (#12). Until a check runs, a reviewer applies its rule by hand. Never report a planned or in-progress check as run.
+Status: R2 implemented (#13, `scripts/mech-review.py`). R1, R3, R4 planned (#12). Until a check runs, a reviewer applies its rule by hand. Never report a planned check as run.
 
 ## Contents
 
@@ -102,7 +102,7 @@ Legit removal: list it in the PR body:
 | Check | Enforces | Status |
 |---|---|---|
 | R1 red-first | First `test(red): …` commit touches only test paths. Its new tests fail there (or build fails: `compile-red`). They pass at head. Agent branches only, when production files changed. | planned (#12) |
-| R2 test-diff guard | Cheat rows above: removed tests, new skip/ignore/xfail/only, fewer asserts, changed expected values, unreasoned suppressions, protected paths. | in progress (#13) |
+| R2 test-diff guard | Cheat rows above: removed tests, new skip/ignore/xfail/only, fewer asserts, changed expected values, unreasoned suppressions, protected paths. | implemented (#13) |
 | R3 mutation on diff | Mutation runs on changed production code only. MISSED mutant = `fail`. Timeout and unviable ignored. Budgeted. Budget hit with no MISSED so far = `partial`: reports `R3 partial (tested/total)`, does not block. | planned (#12) |
 | R4 determinism | Each new or changed test runs 5× at head. Any failure = `fail`, class `agent-fixable`. | planned (#12) |
 
