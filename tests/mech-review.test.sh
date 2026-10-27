@@ -610,7 +610,7 @@ fn a() {
 
 #[test]
 fn c() {
-    assert_eq!(2, 2);
+    assert_eq!(3, 3);
 }
 EOF2
 H=$(commit "$R" rename-b-c)

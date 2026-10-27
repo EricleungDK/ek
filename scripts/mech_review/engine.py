@@ -162,18 +162,35 @@ def r2(repo, mb, head, adapter, test_globs, protected_globs):
         path = new or old
         before = blob(repo, mb, old) if old else None
         after = blob(repo, head, new) if new else None
+        # each side is classified by its own path: a file moved between test and prod paths is judged per side
+        whole_b = old is not None and adapter.classify(old, test_globs) == "test"
+        whole_a = new is not None and adapter.classify(new, test_globs) == "test"
+        bas = [a for a in adapter.assertions(before) if whole_b or a.scope] if before is not None else []
+        aas = [a for a in adapter.assertions(after) if whole_a or a.scope] if after is not None else []
         bfns = adapter.test_fns(before) if before is not None else []
         afns = adapter.test_fns(after) if after is not None else []
         names = {f.name for f in afns}
         by_name = {f.name: f for f in bfns}
-        for f in bfns:
-            if f.name not in names:
-                entries.append(entry("R2", path, f.line, f.name, "agent-fixable", "fail",
-                                     f"test fn `{f.name}` removed",
-                                     "restore the test and make the code satisfy it; a removed test is not a fix",
-                                     "deleting or renaming a test to hide a failure"))
+        # a removed fn whose asserts reappear unchanged in a new fn (one-to-one, non-empty) is a rename
+        sigs = lambda xs, n: sorted(re.sub(r"\s+", "", a.text) for a in xs if a.fn == n)
+        gone = [f for f in bfns if f.name not in names]
+        renamed = {}
+        for nf in (f for f in afns if f.name not in by_name):
+            sig = sigs(aas, nf.name)
+            if not sig:
+                continue
+            for rf in gone:
+                if sigs(bas, rf.name) == sig:
+                    renamed[nf.name] = rf
+                    gone.remove(rf)
+                    break
+        for f in gone:
+            entries.append(entry("R2", path, f.line, f.name, "agent-fixable", "fail",
+                                 f"test fn `{f.name}` removed",
+                                 "restore the test and make the code satisfy it; a removed test is not a fix",
+                                 "deleting or renaming a test to hide a failure"))
         for f in afns:
-            prev = by_name.get(f.name)
+            prev = by_name.get(f.name) or renamed.get(f.name)
             if "ignore" in f.markers and not (prev and "ignore" in prev.markers):
                 entries.append(entry("R2", path, f.line, f"ignore:{f.name}", "agent-fixable", "fail",
                                      f"test `{f.name}` marked #[ignore]",
@@ -185,11 +202,6 @@ def r2(repo, mb, head, adapter, test_globs, protected_globs):
                                      "a panic-expecting test passes on any panic; assert the error or value instead",
                                      "adding #[should_panic] to an existing test"))
         # test-path files: the whole file is test code (helpers too); elsewhere only test fns and cfg(test) mods
-        # each side is classified by its own path: a file moved between test and prod paths is judged per side
-        whole_b = old is not None and adapter.classify(old, test_globs) == "test"
-        whole_a = new is not None and adapter.classify(new, test_globs) == "test"
-        bas = [a for a in adapter.assertions(before) if whole_b or a.scope] if before is not None else []
-        aas = [a for a in adapter.assertions(after) if whole_a or a.scope] if after is not None else []
         # assert count per surviving test fn (by name). A fn that loses asserts is a fail unless asserts
         # outside test fns (helpers) grew by at least as much (extraction). Helpers keep a per-file count.
         head_fns = {f.name for f in afns}
