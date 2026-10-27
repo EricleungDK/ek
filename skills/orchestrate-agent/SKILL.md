@@ -27,7 +27,7 @@ Done when: you know the branch, HEAD, owner rules, and the spec.
 
 ## 3. Acceptance checklist
 
-Write the checklist: each spec outcome (issue criterion or derived outcome), plus the repo gates (tests red-first, typecheck, the test suites the change touches, CI green, docs updated). In a repo with `.ek/scenarios/`, or when the deliverable is something a user runs, map each criterion to scenario ids (taste-it skill; `covers` field); an unmapped criterion is a gap to fill. Show it to the user before dispatching, together with the division of labor (step 4). Each item will later be ticked with **evidence** (a command and its result, a commit, a CI job), never with an agent's say-so.
+Write the checklist: each spec outcome (issue criterion or derived outcome), plus the repo gates (tests red-first, typecheck, the test suites the change touches, CI green, docs updated). In a repo with `.ek/scenarios/`, or when the deliverable is something a user runs, map each criterion to scenario ids (taste-it skill; `covers` field); an unmapped criterion is a gap to fill. Show it to the user before dispatching, together with the division of labor (step 4). Each item will later be ticked with **evidence** (a command and its result, a commit, a CI job, a mech-review result for the head), never with an agent's say-so.
 
 Done when: the user has seen the checklist.
 
@@ -44,7 +44,7 @@ Show the units (name, files owned, checklist items, depends on) with the checkli
 - One agent per unit; units touching disjoint files run in parallel, in one message. Run them in the background.
 - Every brief follows [brief-template.md](brief-template.md). An agent starts with none of your context, so the brief is self-contained.
 - **Subagents cannot spawn subagents.** A subagent whose flow (e.g. `/implement`) reaches a step that fans out, code review above all, hands that step to you through the **review relay** below. Research skills and workflows stay with you from the start.
-- Fix loop: each failing unit gets at most **3 rounds** (initial fix plus two retries after CI or verification fails). After round 3, stop and escalate to the user with evidence.
+- Fix loop: each failing unit gets at most **3 rounds** (initial fix plus two retries after CI or verification fails). Count rounds per unit and per mech entry `id`; the first to reach 3 escalates. Hand each failing entry to the engineer verbatim (id, file, line, problem, hint, forbidden). No agent waives a `fail`. After round 3, stop and escalate to the user with evidence.
 
 Done when: every unit has a running agent.
 
@@ -53,8 +53,8 @@ Done when: every unit has a running agent.
 Review stays inside the subagent's own implement flow; only the dispatch moves to you.
 
 1. At its review step, the subagent commits its work and stops with a **review request** as its report: branch, base and head SHAs, checklist items covered, files changed, what to focus on. It stays alive, context intact.
-2. You run the review for that session: `mp-code-review` (or `code-review`) scoped to base..head, reviewers on the model the user picked. The review is yours to run, never skip it because the agent's tests are green.
-3. Send the findings back to that same agent with SendMessage (its ID, not a new agent): each finding with file, line, and failure scenario, plus which ones you judge real. Filter out findings you verified as false, and say why.
+2. Run R2 first: `python3 -I <kit>/scripts/mech-review.py r2 --repo <worktree> --base <base> --head <head> --stack <stack>` plus the repo's `--test-paths`/`--protected-paths` (or its `<!-- mech-review -->` PR comment). Then run `mp-code-review` (or `code-review`) scoped to base..head, reviewers on the model the user picked, with R2's JSON. The review is yours to run, never skip it because the agent's tests are green.
+3. Send the findings back to that same agent with SendMessage (its ID, not a new agent): each finding with file, line, and failure scenario, plus which ones you judge real. Filter out findings you verified as false, and say why. `fail` entries go back verbatim. Each `confirm` (changed expected value): confirm only if the spec sets the new value, else reject with reason. Legit test removal: `needs-human`, the owner decides, never self-declared.
 4. The agent fixes, re-verifies, and either finishes its flow or sends a new review request. Each review-fix cycle counts as one of its 3 rounds.
 
 Several agents may request review at once: run each review separately, scoped to that agent's diff, and route findings back to the right agent.
@@ -82,9 +82,9 @@ When an agent reports, its report is a claim, in the finish skill's format. Veri
 
 1. Read its diff (`git show --stat`, then the diff of the core files). The fix addresses the root cause, and tests are not weakened to pass.
 2. Rerun the decisive test yourself.
-3. **Review**: every agent's work passed through the review relay. An agent that finished without a review request gets one now: run the review on its diff and send findings back to it.
+3. **Mech and review**: R2 result for the head, plus R1, R3, R4 when the engine reports them. Every agent's work passed through the review relay; one that finished without a review request gets one now: run R2, then the review, send findings back. A mech-backed criterion ticks only on `all pass <sha>`. `pass <sha> (R2; skipped: R1 R3 R4)` leaves it open: skipped is not pass. Say which checks ran.
 4. CI per job: `gh pr checks`. Classify each failure with the failure-triage skill. CI specifics: pre-existing = reproduces on the parent commit; infrastructure = rerun once with `gh run rerun --failed`; expected by design = a release gate. Explain every non-green check to the user; never leave one unexplained.
-5. Tick each checklist item with its evidence.
+5. Tick each checklist item with its evidence: the mech line for the head, a command result, a commit, a CI job. Never a finish report alone.
 
 Done when: every checklist item is ticked with evidence, or escalated.
 
