@@ -2012,4 +2012,105 @@ out=$(mr "$R" "$B" "$H"); rc=$?
 eq "$rc" 0 "reordered asserts: exit 0"
 eq "$(jq -c .entries <<<"$out")" "[]" "reordered asserts: no entries"
 
+# review F2: a dropped test assert is explained only by a helper that this test calls
+R=$(mkrepo f2unused)
+put "$R" tests/a.rs <<'EOF2'
+#[test]
+fn a() {
+    assert_eq!(1, 1);
+    assert_eq!(2, 2);
+}
+EOF2
+B=$(commit "$R" base)
+put "$R" tests/a.rs <<'EOF2'
+#[test]
+fn a() {
+    assert_eq!(1, 1);
+}
+
+fn unused() {
+    assert!(true);
+}
+EOF2
+H=$(commit "$R" drop-assert-add-unused-helper)
+out=$(mr "$R" "$B" "$H"); rc=$?
+eq "$rc" 1 "dropped assert offset by an unused helper: exit 1"
+has "$(jq -r '[.entries[].problem] | join(" ")' <<<"$out")" "test \`a\` dropped from 2 to 1" "unused helper: a named"
+
+R=$(mkrepo f2unusedmod)
+put "$R" src/lib.rs <<'EOF2'
+pub fn f() -> i32 { 1 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a() {
+        assert_eq!(f(), 1);
+        assert_eq!(f(), 1);
+    }
+}
+EOF2
+B=$(commit "$R" base)
+put "$R" src/lib.rs <<'EOF2'
+pub fn f() -> i32 { 1 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a() {
+        assert_eq!(f(), 1);
+    }
+
+    fn unused() {
+        assert!(true);
+    }
+}
+EOF2
+H=$(commit "$R" drop-assert-add-unused-in-mod)
+out=$(mr "$R" "$B" "$H"); rc=$?
+eq "$rc" 1 "unused helper inside cfg(test) mod does not offset: exit 1"
+
+R=$(mkrepo f2other)
+put "$R" tests/a.rs <<'EOF2'
+fn check(x: i32) {
+    assert_eq!(x, 1);
+}
+
+#[test]
+fn a() {
+    assert_eq!(1, 1);
+    assert_eq!(2, 2);
+}
+
+#[test]
+fn b() {
+    check(1);
+}
+EOF2
+B=$(commit "$R" base)
+put "$R" tests/a.rs <<'EOF2'
+fn check(x: i32) {
+    assert_eq!(x, 1);
+    assert_eq!(x, 1);
+}
+
+#[test]
+fn a() {
+    assert_eq!(1, 1);
+}
+
+#[test]
+fn b() {
+    check(1);
+}
+EOF2
+H=$(commit "$R" a-drops-helper-called-by-b)
+out=$(mr "$R" "$B" "$H"); rc=$?
+eq "$rc" 1 "a drops an assert while only b calls the gaining helper: exit 1"
+has "$(jq -r '[.entries[].problem] | join(" ")' <<<"$out")" "test \`a\` dropped from 2 to 1" "helper called by b does not explain a"
+
 done_tests
