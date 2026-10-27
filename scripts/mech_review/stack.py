@@ -21,6 +21,7 @@ RAW = re.compile(r'(?:br|cr|r)(#*)"')
 FN = re.compile(r'((?:#\[[^\]]*\]\s*)*)(?:pub(?:\s*\([^)]*\))?\s+)?(?:async\s+)?(?:unsafe\s+)?fn\s+(\w+)')
 ATTR_START = re.compile(r"#!?\[")
 ASSERT = re.compile(r"\b(\w*assert\w*)!\s*[(\[{]")
+MOD = re.compile(r"((?:#\[[^\]]*\]\s*)*)(?:pub(?:\s*\([^)]*\))?\s+)?mod\s+\w+\s*\{")
 MODULE = re.compile(r"#\[\s*cfg\s*\(\s*test\s*\)\s*\]\s*(?:#\[[^\]]*\]\s*)*(?:pub(?:\s*\([^)]*\))?\s+)?mod\s+\w+\s*\{")
 TEST_ATTR = re.compile(r"#\[\s*(?:\w+::)*(?:test|rstest|test_case)\b")
 IGNORE_ATTR = re.compile(r"#\[\s*(?:ignore\b|cfg_attr\s*\(.*\bignore\b|cfg\s*\(\s*(?:any\s*\(\s*\)|FALSE|false|not\s*\(\s*test\s*\))\s*\)\s*\])")
@@ -167,12 +168,15 @@ class RustAdapter(Adapter):
 
     def _scan(self, text):
         m = mask(text)
+        # a test inside a mod disabled by cfg (cfg(any()), cfg(FALSE), cfg(not(test))) is disabled too
+        mods = [(mo.group(1), mo.end() - 1, close_of(m, mo.end() - 1)) for mo in MOD.finditer(m)]
         fns = []
         for f in FN.finditer(m):
             attrs = re.findall(r"#\[[^\]]*\]", f.group(1))
             if not any(TEST_ATTR.match(a) for a in attrs):
                 continue
-            markers = ["ignore"] if any(IGNORE_ATTR.match(a) for a in attrs) else []
+            mod_attrs = [a for grp, b, e in mods if b < f.start() < e for a in re.findall(r"#\[[^\]]*\]", grp)]
+            markers = ["ignore"] if any(IGNORE_ATTR.match(a) for a in attrs + mod_attrs) else []
             body = m.find("{", f.end())
             span = (body, close_of(m, body)) if body >= 0 else (f.end(), f.end())
             fns.append((TestFn(f.group(2), m.count("\n", 0, f.start(2)) + 1, markers), span))
