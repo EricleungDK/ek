@@ -118,6 +118,7 @@ check("guard: no language toolchain (no setup-*, toolchain, cargo, rustup)",
       re.search(r"setup-|toolchain|cargo|rustup", gt) is None)
 check("guard: runs mech-review.py r2", "mech-review.py" in gt and " r2" in gt)
 check("guard: uploads the JSON artifact", "upload-artifact" in gt)
+check("guard: artifact overwrites on re-run", re.search(r"overwrite:\s*true", gt) is not None)
 check("report: downloads the JSON artifact", "download-artifact" in text(report))
 check("report: posts via mech-comment.py", "mech-comment.py" in text(report))
 

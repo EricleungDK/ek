@@ -231,6 +231,16 @@ p = run_cli(["--pr", "5", "--envelope", os.path.join(tmp, "missing.json"), "--he
 check("cli: no usable result exits 4", p.returncode == 4, f"rc={p.returncode} {p.stderr}")
 check("cli: crash edits the sticky comment, no duplicate", any(m == "PATCH" for m, _, _ in LOG) and not any(m == "POST" for m, _, _ in LOG), str(LOG))
 
+# a stale envelope (head is not the PR head) must never be posted as the result
+OTHER = "c" * 40
+LOG.clear()
+p = run_cli(["--pr", "5", "--envelope", envp, "--head", OTHER])
+check("cli: stale envelope (other head) exits 4", p.returncode == 4, f"rc={p.returncode} {p.stderr}")
+patched = [b.get("body", "") for m, _, b in LOG if m == "PATCH"]
+check("cli: stale envelope edits in a crash notice for the PR head",
+      patched and "no result" in patched[0] and OTHER in patched[0] and "R2-deadbeef" not in patched[0],
+      str(patched))
+
 p = run_cli(["--pr", "5", "--envelope", envp], {"GITHUB_TOKEN": None})
 check("cli: missing GITHUB_TOKEN is a usage error (exit 2)", p.returncode == 2 and "GITHUB_TOKEN" in p.stderr, p.stderr)
 
