@@ -182,14 +182,27 @@ def r2(repo, mb, head, adapter, test_globs, protected_globs):
         whole = adapter.classify(path, test_globs) == "test"
         bas = [a for a in adapter.assertions(before) if whole or a.scope] if before is not None else []
         aas = [a for a in adapter.assertions(after) if whole or a.scope] if after is not None else []
-        # assert count: asserts lost from surviving test fns (or module-level test code); removed fns are their own entry
+        # assert count per surviving test fn (by name). A fn that loses asserts is a fail unless asserts
+        # outside test fns (helpers) grew by at least as much (extraction). Helpers keep a per-file count.
         head_fns = {f.name for f in afns}
-        nb = sum(1 for a in bas if a.fn is None or a.fn in head_fns)
-        if before is not None and len(aas) < nb:
-            entries.append(entry("R2", path, 0, "assert-count", "agent-fixable", "fail",
-                                 f"assertions in `{path}` dropped from {nb} to {len(aas)}",
-                                 "restore the dropped assertions; strengthen a test instead of removing one",
-                                 f"fewer asserts in changed test file {path}"))
+        line_of = {f.name: f.line for f in afns}
+        if before is not None:
+            b_cnt = Counter(a.fn for a in bas if a.fn in head_fns)
+            a_cnt = Counter(a.fn for a in aas if a.fn in head_fns)
+            lost = [n for n in dict.fromkeys(f.name for f in bfns) if b_cnt[n] > a_cnt[n]]
+            helper_before = sum(1 for a in bas if a.fn is None)
+            helper_after = sum(1 for a in aas if a.fn is None)
+            if sum(b_cnt[n] - a_cnt[n] for n in lost) > max(0, helper_after - helper_before):
+                for n in lost:
+                    entries.append(entry("R2", path, line_of[n], f"assert-count:{n}", "agent-fixable", "fail",
+                                         f"assertions in test `{n}` dropped from {b_cnt[n]} to {a_cnt[n]}",
+                                         "restore the dropped assertions; strengthen a test instead of removing one",
+                                         f"fewer asserts in test {n}"))
+            if helper_after < helper_before:
+                entries.append(entry("R2", path, 0, "assert-count", "agent-fixable", "fail",
+                                     f"assertions outside test fns in `{path}` dropped from {helper_before} to {helper_after}",
+                                     "restore the dropped assertions; strengthen a test instead of removing one",
+                                     f"fewer asserts in changed test file {path}"))
         # expected value: same fn, one operand unchanged (whitespace-normalized), the other changed
         removed = unmatched(bas, aas)
         added_a = unmatched(aas, bas)
