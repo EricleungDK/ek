@@ -26,7 +26,7 @@ EOF
 H=$(commit "$R" feat)
 out=$(mr "$R" "$B" "$H"); rc=$?
 eq "$rc" 0 "clean change exit 0"
-eq "$(jq -r .summary <<<"$out")" "all pass $H" "all green renders all pass <head sha>"
+eq "$(jq -r .summary <<<"$out")" "pass $H (0 fail, 0 confirm; ran: R2; skipped: R1 R3 R4)" "clean change with R1/R3/R4 skipped is not all pass"
 eq "$(jq -r .head <<<"$out")" "$H" "envelope head sha"
 eq "$(jq -r .base <<<"$out")" "$B" "envelope base sha"
 eq "$(jq -r .ek <<<"$out")" "0.1.1" "envelope ek version from plugin.json"
@@ -130,7 +130,7 @@ EOF2
 H=$(commit "$R" add-b)
 out=$(mr "$R" "$B" "$H"); rc=$?
 eq "$rc" 0 "added test is clean"
-eq "$(jq -r .summary <<<"$out")" "all pass $H" "added test all pass"
+eq "$(jq -r .summary <<<"$out")" "pass $H (0 fail, 0 confirm; ran: R2; skipped: R1 R3 R4)" "added test: pass names skipped checks"
 
 # slice 3: R2 added #[ignore] (skip marker)
 R=$(mkrepo s3)
@@ -243,10 +243,11 @@ eq "$(jq -r '.entries[0].check' <<<"$out")" R2 "dropped assert R2"
 eq "$(jq -r '.entries[0].class' <<<"$out")" agent-fixable "dropped assert class"
 eq "$(jq -r '.entries[0].severity' <<<"$out")" fail "dropped assert severity fail"
 eq "$(jq -r '.entries[0].file' <<<"$out")" tests/a.rs "dropped assert file"
-eq "$(jq -r '.entries[0].line' <<<"$out")" 0 "file-level entry line 0"
+eq "$(jq -r '.entries[0].line' <<<"$out")" 2 "per-fn entry line = head fn line"
 has "$(jq -r '.entries[0].problem' <<<"$out")" "from 2 to 1" "problem gives counts"
-eq "$(jq -r '.entries[0].forbidden' <<<"$out")" "fewer asserts in changed test file tests/a.rs" "forbidden names file"
-eq "$(jq -r '.entries[0].id' <<<"$out")" "R2-$(printf '%s' 'R2tests/a.rsassert-count' | sha1sum | cut -c1-8)" "assert id keyed by file+assert-count"
+eq "$(jq -r '.entries[0].forbidden' <<<"$out")" "fewer asserts in test a" "forbidden names the test fn"
+eq "$(jq -r '.entries[0].id' <<<"$out")" "R2-$(printf '%s' 'R2tests/a.rsassert-count:a' | sha1sum | cut -c1-8)" "assert id keyed by file+fn name"
+has "$(jq -r '.entries[0].problem' <<<"$out")" "test \`a\`" "problem names the test fn"
 
 # commenting an assert out is a drop
 put "$R" tests/a.rs <<'EOF2'
@@ -456,7 +457,7 @@ eq "$(jq -r '.entries[0].file' <<<"$out")" .github/workflows/ci.yml "protected f
 eq "$(jq -r '.entries[0].id' <<<"$out")" "R2-$(printf '%s' 'R2.github/workflows/ci.ymlprotected-path' | sha1sum | cut -c1-8)" "protected id keyed by file+protected-path"
 eq "$(jq -r '.entries[0].line' <<<"$out")" 0 "protected entry file-level"
 
-# slice 7: guard exceptions (PR body) downgrade agent-fixable fails to confirm
+# slice 7 (#27): guard exceptions removed. --pr-body is a usage error; a fail stays fail whatever a PR body says.
 R=$(mkrepo s7)
 put "$R" tests/a.rs <<'EOF2'
 #[test]
@@ -478,38 +479,32 @@ fn a() {
 EOF2
 H=$(commit "$R" drop-b)
 ID="R2-$(printf '%s' 'R2tests/a.rsb' | sha1sum | cut -c1-8)"
-AC="R2-$(printf '%s' 'R2tests/a.rsassert-count' | sha1sum | cut -c1-8)"
-OTHER="R2-$(printf '%s' 'R2tests/a.rszzz' | sha1sum | cut -c1-8)"
 body() { printf '%s\n' "$@" > "$T/body.md"; echo "$T/body.md"; }
 
-f=$(body "## Summary" "removes b" "## Guard exceptions" "- $ID: b superseded by a stronger test in a.rs")
-out=$(mr "$R" "$B" "$H" --pr-body "$f"); rc=$?
-eq "$rc" 0 "listed id with reason: exit 0"
-eq "$(jq -r '.entries[0].severity' <<<"$out")" confirm "listed id downgraded to confirm"
-eq "$(jq -r '.entries[0].class' <<<"$out")" agent-fixable "downgrade keeps class"
-has "$(jq -r .summary <<<"$out")" "confirm" "summary confirm after downgrade"
-
-f=$(body "## Guard exceptions" "**Guard exceptions**" "- $ID")
-out=$(mr "$R" "$B" "$H" --pr-body "$f"); rc=$?
-eq "$rc" 1 "listed id without reason stays fail"
-eq "$(jq -r '.entries[0].severity' <<<"$out")" fail "no-reason severity still fail"
-
-f=$(body "## Guard exceptions" "- $OTHER: unrelated id, reason given here")
-out=$(mr "$R" "$B" "$H" --pr-body "$f"); rc=$?
-eq "$rc" 1 "other id does not match"
-
-f=$(body "## Summary" "- $ID: mentioned outside the section, reason here")
-out=$(mr "$R" "$B" "$H" --pr-body "$f"); rc=$?
-eq "$rc" 1 "id outside Guard exceptions section does not match"
-
-f=$(body "# PR" "Guard exceptions" "no list here")
-out=$(mr "$R" "$B" "$H" --pr-body "$f"); rc=$?
-eq "$rc" 1 "heading without ids does nothing"
-
+f=$(body "## Guard exceptions" "- $ID: b superseded by a stronger test in a.rs")
+out=$(mr "$R" "$B" "$H" --pr-body "$f" 2>&1); rc=$?
+eq "$rc" 2 "--pr-body listing a fail id: usage error exit 2"
+has "$out" "guard exceptions were removed (#27)" "--pr-body error says guard exceptions removed"
+stdout=$(mr "$R" "$B" "$H" --pr-body "$f" 2>/dev/null)
+eq "$stdout" "" "--pr-body: no envelope on stdout (cannot read as pass)"
+out=$(mr "$R" "$B" "$H" --pr-body="$f" 2>&1); rc=$?
+eq "$rc" 2 "--pr-body=FILE form: usage error exit 2"
+out=$(mr "$R" "$B" "$H" --pr-body 2>&1); rc=$?
+eq "$rc" 2 "bare --pr-body: usage error exit 2"
+has "$out" "guard exceptions were removed (#27)" "bare --pr-body names the removal"
 out=$(mr "$R" "$B" "$H" --pr-body "$T/missing.md" 2>&1); rc=$?
-eq "$rc" 2 "missing pr body file exit 2"
+eq "$rc" 2 "--pr-body missing file: usage error exit 2"
 
-# protected entries are never downgraded by guard exceptions
+out=$(python3 -I "$MR" --help); rc=$?
+has "$out" "Guard exceptions removed (#27)" "--help says guard exceptions removed"
+
+# no body read: the listed id stays a fail, agent-fixable
+out=$(mr "$R" "$B" "$H"); rc=$?
+eq "$rc" 1 "listed fail id without --pr-body: exit 1"
+eq "$(jq -r '.entries[0].severity' <<<"$out")" fail "listed fail id: severity stays fail"
+eq "$(jq -r '.entries[0].class' <<<"$out")" agent-fixable "listed fail id: class stays agent-fixable"
+
+# protected entries: --pr-body rejected; without it still fail needs-human
 R=$(mkrepo s7prot)
 put "$R" .github/workflows/ci.yml <<'EOF2'
 on: push
@@ -521,8 +516,10 @@ EOF2
 H=$(commit "$R" ci-change)
 PID="R2-$(printf '%s' 'R2.github/workflows/ci.ymlprotected-path' | sha1sum | cut -c1-8)"
 f=$(body "## Guard exceptions" "- $PID: ci change needed for the fix, reviewer please confirm")
-out=$(mr "$R" "$B" "$H" --protected-paths '.github/**' --pr-body "$f"); rc=$?
-eq "$rc" 1 "protected entry not downgraded by exception: exit 1"
+out=$(mr "$R" "$B" "$H" --protected-paths '.github/**' --pr-body "$f" 2>&1); rc=$?
+eq "$rc" 2 "--pr-body listing protected id: usage error exit 2"
+out=$(mr "$R" "$B" "$H" --protected-paths '.github/**'); rc=$?
+eq "$rc" 1 "protected change without body: exit 1"
 eq "$(jq -r '.entries[0].severity' <<<"$out")" fail "protected stays fail"
 eq "$(jq -r '.entries[0].class' <<<"$out")" needs-human "protected stays needs-human"
 
@@ -613,7 +610,7 @@ fn a() {
 
 #[test]
 fn c() {
-    assert_eq!(2, 2);
+    assert_eq!(3, 3);
 }
 EOF2
 H=$(commit "$R" rename-b-c)
@@ -622,7 +619,7 @@ has "$(jq -r '[.entries[].id] | join(" ")' <<<"$out")" "R2-" "rename yields entr
 eq "$(jq -r '[.entries[].id] | unique | length' <<<"$out")" "$(jq -r '.entries|length' <<<"$out")" "entry ids unique"
 has "$(jq -r '[.entries[].problem] | join(" ")' <<<"$out")" '`b`' "rename reports removed b"
 
-# slice 9: all pass renders `all pass <sha>` (text + json); `all` subcommand; text fail output
+# slice 9: summary names ran and skipped checks (text + json); `all` subcommand; text fail output
 R=$(mkrepo s9)
 put "$R" tests/a.rs <<'EOF2'
 #[test]
@@ -655,11 +652,11 @@ EOF2
 H=$(commit "$R" add-c)
 out=$(mr "$R" "$B" "$H" --format text); rc=$?
 eq "$rc" 0 "text clean exit 0"
-eq "$out" "all pass $H" "text clean is exactly all pass <sha>"
+eq "$out" "pass $H (0 fail, 0 confirm; ran: R2; skipped: R1 R3 R4)" "text clean names skipped checks"
 
 out=$(python3 -I "$MR" all --repo "$R" --base "$B" --head "$H" --stack rust); rc=$?
 eq "$rc" 0 "all subcommand clean exit 0"
-eq "$(jq -r .summary <<<"$out")" "all pass $H" "all subcommand summary"
+eq "$(jq -r .summary <<<"$out")" "pass $H (0 fail, 0 confirm; ran: R2; skipped: R1 R3 R4)" "all subcommand summary names skipped checks"
 
 put "$R" tests/a.rs <<'EOF2'
 #[test]
@@ -675,7 +672,7 @@ EOF2
 H2=$(commit "$R" drop-b)
 out=$(mr "$R" "$B" "$H2" --format text); rc=$?
 eq "$rc" 1 "text fail exit 1"
-eq "$(head -1 <<<"$out")" "fail $H2 (1 fail, 0 confirm)" "text fail summary line"
+eq "$(head -1 <<<"$out")" "fail $H2 (1 fail, 0 confirm; ran: R2; skipped: R1 R3 R4)" "text fail summary line"
 has "$out" "R2-" "text lists entry id"
 has "$out" "tests/a.rs" "text lists file"
 has "$out" "hint:" "text shows hint"
@@ -1254,47 +1251,7 @@ out=$(mr "$R" "$B" "$H"); rc=$?
 eq "$rc" 1 "path with a space: suppression caught"
 eq "$(jq -r '.entries[0].file' <<<"$out")" "src/my mod.rs" "path with a space reported verbatim"
 
-# round 2 area 4: guard exception section rules, placeholder reasons, confirm-only summary
-R=$(mkrepo r4g)
-put "$R" tests/a.rs <<'EOF2'
-#[test]
-fn a() {
-    assert_eq!(1, 1);
-}
-
-#[test]
-fn b() {
-    assert_eq!(2, 2);
-}
-EOF2
-B=$(commit "$R" base)
-put "$R" tests/a.rs <<'EOF2'
-#[test]
-fn a() {
-    assert_eq!(1, 1);
-}
-EOF2
-H=$(commit "$R" drop-b)
-ID="R2-$(printf '%s' 'R2tests/a.rsb' | sha1sum | cut -c1-8)"
-body() { printf '%s\n' "$@" > "$T/body.md"; echo "$T/body.md"; }
-
-f=$(body "## Guard exceptions" "$ID: b superseded, reason here")
-out=$(mr "$R" "$B" "$H" --pr-body "$f"); rc=$?
-eq "$rc" 1 "id not in a list item does not downgrade"
-
-f=$(body "## Guard exceptions" "**Summary**" "- $ID: b superseded, reason here")
-out=$(mr "$R" "$B" "$H" --pr-body "$f"); rc=$?
-eq "$rc" 1 "bold line ends the Guard exceptions section"
-
-for r in "TBD" "n/a" "?" "todo" "None"; do
-  f=$(body "## Guard exceptions" "- $ID: $r")
-  out=$(mr "$R" "$B" "$H" --pr-body "$f"); rc=$?
-  eq "$rc" 1 "placeholder reason '$r' rejected"
-done
-
-f=$(body "## Guard exceptions" "- $ID: b superseded by a stronger test in a.rs")
-out=$(mr "$R" "$B" "$H" --pr-body "$f"); rc=$?
-eq "$rc" 0 "list item with real reason downgrades"
+# round 2 area 4: confirm-only summary
 
 R=$(mkrepo r4sum)
 put "$R" tests/a.rs <<'EOF2'
@@ -1312,7 +1269,7 @@ fn adds_two() {
 EOF2
 H=$(commit "$R" change-expected)
 out=$(mr "$R" "$B" "$H"); rc=$?
-eq "$(jq -r .summary <<<"$out")" "pass $H, 1 confirm" "confirm-only renders pass <sha>, n confirm (never all pass)"
+eq "$(jq -r .summary <<<"$out")" "pass $H (0 fail, 1 confirm; ran: R2; skipped: R1 R3 R4)" "confirm-only: pass names counts and skipped checks"
 
 # round 3 red: scope, cfg attrs, raw C strings, pr-body encoding, binary diffs, non-utf8 and control-char names, ordinals
 
@@ -1476,7 +1433,7 @@ H2=$(commit "$R" cfg-feature)
 out=$(mr "$R" "$B" "$H2"); rc=$?
 eq "$rc" 0 "cfg(feature) on a test fn is not an ignore marker"
 
-# item 6: non-UTF-8 --pr-body: no traceback, decoded with replacement; list item still downgrades
+# item 6 (#27): non-UTF-8 --pr-body is a usage error (guard exceptions removed): no traceback
 R=$(mkrepo r6body)
 put "$R" tests/a.rs <<'EOF2'
 #[test]
@@ -1501,7 +1458,7 @@ ID="R2-$(printf '%s' 'R2tests/a.rsb' | sha1sum | cut -c1-8)"
 printf '## Guard exceptions\n- %s: b superseded by a stronger test \377 in a.rs\n' "$ID" > "$T/badbody.md"
 out=$(mr "$R" "$B" "$H" --pr-body "$T/badbody.md" 2>&1); rc=$?
 lacks "$out" "Traceback" "non-utf8 pr body: no traceback"
-eq "$rc" 0 "non-utf8 pr body: list item still downgrades"
+eq "$rc" 2 "non-utf8 pr body: usage error exit 2"
 
 # item 7: binary-marked source (-diff attr, or NUL byte) must still show suppressions
 R=$(mkrepo r6binattr)
@@ -1605,5 +1562,663 @@ out=$(mr "$R" "$B" "$H"); rc=$?
 eq "$(jq -r '.entries|length' <<<"$out")" 2 "two changed expected values sharing an operand: two entries"
 eq "$(jq -r '[.entries[].id]|unique|length' <<<"$out")" 2 "those entries have distinct ids"
 eq "$(jq -r '.entries[0].id' <<<"$out")" "R2-$(printf '%s' 'R2tests/a.rsexpected:a|x' | sha1sum | cut -c1-8)" "first expected entry keeps the plain id"
+
+# #27 summary: `all pass <sha>` only when every check ran and passed with no entries; fail names counts and checks
+pyeng() { python3 -I -c "import sys; sys.path.insert(0, '$ROOT/scripts'); from mech_review import engine; print(engine.summarize('abc', $1, $2))"; }
+ALLPASS='{"R1":{"status":"pass"},"R2":{"status":"pass"},"R3":{"status":"pass"},"R4":{"status":"pass"}}'
+SKIP='{"R1":{"status":"skipped"},"R2":{"status":"pass"},"R3":{"status":"skipped"},"R4":{"status":"skipped"}}'
+ONEC='[{"severity":"confirm"}]'
+TWOF='[{"severity":"fail"},{"severity":"fail"}]'
+eq "$(pyeng "$ALLPASS" '[]')" "all pass abc" "summary: all four pass, no entries: all pass"
+eq "$(pyeng "$SKIP" '[]')" "pass abc (0 fail, 0 confirm; ran: R2; skipped: R1 R3 R4)" "summary: skipped checks never all pass"
+eq "$(pyeng "$ALLPASS" "$ONEC")" "pass abc (0 fail, 1 confirm; ran: R1 R2 R3 R4)" "summary: confirm with every check ran is not all pass"
+eq "$(pyeng "$SKIP" "$TWOF")" "fail abc (2 fail, 0 confirm; ran: R2; skipped: R1 R3 R4)" "summary: fail names counts, ran and skipped"
+
+R=$(mkrepo s9fail)
+put "$R" tests/a.rs <<'EOF2'
+#[test]
+fn a() {
+    assert_eq!(1, 1);
+}
+
+#[test]
+fn b() {
+    assert_eq!(2, 2);
+}
+EOF2
+B=$(commit "$R" base)
+put "$R" tests/a.rs <<'EOF2'
+#[test]
+#[ignore]
+fn a() {
+    assert_eq!(1, 1);
+}
+EOF2
+H=$(commit "$R" two-fails)
+out=$(mr "$R" "$B" "$H"); rc=$?
+eq "$rc" 1 "two fails: exit 1"
+eq "$(jq -r .summary <<<"$out")" "fail $H (2 fail, 0 confirm; ran: R2; skipped: R1 R3 R4)" "two fails: summary names counts and skipped checks"
+
+# #26: asserts counted per surviving test fn. A move from test a to test b is a fail for a (not a helper)
+R=$(mkrepo r26move)
+put "$R" tests/a.rs <<'EOF2'
+#[test]
+fn a() {
+    assert_eq!(1, 1);
+    assert_eq!(2, 2);
+}
+
+#[test]
+fn b() {
+    assert_eq!(3, 3);
+}
+EOF2
+B=$(commit "$R" base)
+put "$R" tests/a.rs <<'EOF2'
+#[test]
+fn a() {
+    assert_eq!(1, 1);
+}
+
+#[test]
+fn b() {
+    assert_eq!(3, 3);
+    assert_eq!(2, 2);
+}
+EOF2
+H=$(commit "$R" move-assert-a-to-b)
+out=$(mr "$R" "$B" "$H"); rc=$?
+eq "$rc" 1 "assert moved a to b: exit 1"
+eq "$(jq -r '.entries|length' <<<"$out")" 1 "assert moved a to b: one entry, for a"
+eq "$(jq -r '.entries[0].severity' <<<"$out")" fail "moved assert: severity fail"
+eq "$(jq -r '.entries[0].class' <<<"$out")" agent-fixable "moved assert: class agent-fixable"
+has "$(jq -r '.entries[0].problem' <<<"$out")" "test \`a\` dropped from 2 to 1" "moved assert: problem names a, 2 to 1"
+eq "$(jq -r '.entries[0].id' <<<"$out")" "R2-$(printf '%s' 'R2tests/a.rsassert-count:a' | sha1sum | cut -c1-8)" "moved assert: id keyed by fn a"
+
+# ids line-independent: same move with lines shifted in head keeps the id
+put "$R" tests/a.rs <<'EOF2'
+// header
+// lines
+// shifted
+
+#[test]
+fn a() {
+    assert_eq!(1, 1);
+}
+
+#[test]
+fn b() {
+    assert_eq!(3, 3);
+    assert_eq!(2, 2);
+}
+EOF2
+H2=$(commit "$R" move-lines-shifted)
+id2=$(mr "$R" "$B" "$H2" | jq -r '.entries[0].id')
+eq "$id2" "R2-$(printf '%s' 'R2tests/a.rsassert-count:a' | sha1sum | cut -c1-8)" "moved assert: id unchanged when lines shift"
+
+# a moved assert into a helper (not a test fn) is an extraction: clean
+R=$(mkrepo r26helper)
+put "$R" tests/a.rs <<'EOF2'
+#[test]
+fn a() {
+    assert_eq!(f(1), 1);
+    assert_eq!(f(2), 2);
+}
+EOF2
+B=$(commit "$R" base)
+put "$R" tests/a.rs <<'EOF2'
+fn check(x: i32) {
+    assert_eq!(f(x), x);
+}
+
+#[test]
+fn a() {
+    check(1);
+    assert_eq!(f(2), 2);
+}
+EOF2
+H=$(commit "$R" extract-helper-26)
+out=$(mr "$R" "$B" "$H"); rc=$?
+eq "$rc" 0 "per-fn: assert extracted into helper, helper gains the count: clean"
+
+# in-place weakening: assert_eq!(out, 3) -> assert!(out.is_some()) is at least confirm
+R=$(mkrepo r26weak)
+put "$R" tests/a.rs <<'EOF2'
+#[test]
+fn t() {
+    let out = Some(3);
+    assert_eq!(out, Some(3));
+}
+EOF2
+B=$(commit "$R" base)
+put "$R" tests/a.rs <<'EOF2'
+#[test]
+fn t() {
+    let out = Some(3);
+    assert!(out.is_some());
+}
+EOF2
+H=$(commit "$R" weaken-in-place)
+out=$(mr "$R" "$B" "$H"); rc=$?
+eq "$rc" 0 "in-place weakening: confirm, exit 0"
+eq "$(jq -r '.entries|length' <<<"$out")" 1 "in-place weakening: one entry"
+eq "$(jq -r '.entries[0].severity' <<<"$out")" confirm "in-place weakening: severity confirm"
+eq "$(jq -r '.entries[0].id' <<<"$out")" "R2-$(printf '%s' 'R2tests/a.rsassert-replaced:t' | sha1sum | cut -c1-8)" "in-place weakening: id keyed by fn t"
+has "$(jq -r '.entries[0].problem' <<<"$out")" "assert_eq!(out, Some(3))" "in-place weakening: problem shows old assert"
+has "$(jq -r '.entries[0].problem' <<<"$out")" "assert!(out.is_some())" "in-place weakening: problem shows new assert"
+
+# assert_eq! to assert! with a different operand: confirm too
+R=$(mkrepo r26weak2)
+put "$R" tests/a.rs <<'EOF2'
+#[test]
+fn t() {
+    assert_eq!(x, 3);
+}
+EOF2
+B=$(commit "$R" base)
+put "$R" tests/a.rs <<'EOF2'
+#[test]
+fn t() {
+    assert!(y > 0);
+}
+EOF2
+H=$(commit "$R" weaken-both-sides)
+out=$(mr "$R" "$B" "$H"); rc=$?
+eq "$rc" 0 "assert_eq! to assert!(y > 0): confirm, exit 0"
+eq "$(jq -r '.entries[0].severity' <<<"$out")" confirm "assert_eq! to assert!: severity confirm"
+
+# review F6: an empty or whitespace-only reason is no reason
+R=$(mkrepo f6reason)
+put "$R" src/lib.rs <<'EOF2'
+pub fn f() -> i32 { 1 }
+EOF2
+B=$(commit "$R" base)
+put "$R" src/lib.rs <<'EOF2'
+pub fn f() -> i32 { 1 }
+
+#[allow(dead_code, reason = "")]
+fn g() {}
+EOF2
+H=$(commit "$R" empty-reason)
+out=$(mr "$R" "$B" "$H"); rc=$?
+eq "$rc" 1 "allow with reason = \"\": fail exit 1"
+eq "$(jq -r '.entries[0].severity' <<<"$out")" fail "empty reason: severity fail"
+put "$R" src/lib.rs <<'EOF2'
+pub fn f() -> i32 { 1 }
+
+#[allow(dead_code, reason = "   ")]
+fn g() {}
+EOF2
+H2=$(commit "$R" blank-reason)
+out=$(mr "$R" "$B" "$H2"); rc=$?
+eq "$rc" 1 "allow with whitespace-only reason: fail exit 1"
+
+# review F4: test-path classification per side. Helper asserts leaving a test path are a drop
+R=$(mkrepo f4move)
+put "$R" tests/helpers.rs <<'EOF2'
+pub fn check(v: i32) {
+    assert!(v > 0);
+    assert!(v < 10);
+}
+EOF2
+B=$(commit "$R" base)
+rm "$R/tests/helpers.rs"
+put "$R" src/helpers.rs <<'EOF2'
+pub fn check(v: i32) {
+    assert!(v > 0);
+}
+EOF2
+H=$(commit "$R" move-helpers-to-src)
+out=$(mr "$R" "$B" "$H"); rc=$?
+eq "$rc" 1 "helper asserts moved from test path to src: exit 1"
+has "$(jq -r '[.entries[].problem] | join(" ")' <<<"$out")" "from 2 to 0" "helper drop 2 to 0 named"
+
+# review F5a: a cfg that disables a whole test mod disables each test in it: an ignore of each
+for ATTR in '#[cfg(any())]' '#[cfg(FALSE)]' '#[cfg(not(test))]'; do
+  R=$(mkrepo "f5a$(echo "$ATTR" | tr -dc 'a-z')")
+  put "$R" src/lib.rs <<'EOF2'
+pub fn f() -> i32 { 1 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn f_is_one() {
+        assert_eq!(f(), 1);
+    }
+}
+EOF2
+  B=$(commit "$R" base)
+  { printf 'pub fn f() -> i32 { 1 }\n\n#[cfg(test)]\n%s\nmod tests {\n    use super::*;\n\n    #[test]\n    fn f_is_one() {\n        assert_eq!(f(), 1);\n    }\n}\n' "$ATTR"; } > "$R/src/lib.rs"
+  H=$(commit "$R" disable-mod)
+  out=$(mr "$R" "$B" "$H"); rc=$?
+  eq "$rc" 1 "mod disabled by $ATTR: its tests are ignored, exit 1"
+  has "$(jq -r '[.entries[].problem] | join(" ")' <<<"$out")" "marked #[ignore]" "mod disabled by $ATTR: ignore entry"
+done
+R=$(mkrepo f5acontrol)
+put "$R" src/lib.rs <<'EOF2'
+pub fn f() -> i32 { 1 }
+
+#[cfg(any())]
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn f_is_one() {
+        assert_eq!(super::f(), 1);
+    }
+}
+EOF2
+B=$(commit "$R" base)
+put "$R" src/lib.rs <<'EOF2'
+pub fn f() -> i32 { 1 }
+
+#[cfg(any())]
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn f_is_one() {
+        assert_eq!(super::f(), 1);
+    }
+    #[test]
+    fn f_is_still_one() {
+        assert_eq!(super::f(), 1);
+    }
+}
+EOF2
+H=$(commit "$R" control-add-test-in-disabled-mod)
+out=$(mr "$R" "$B" "$H"); rc=$?
+eq "$rc" 1 "new test in an already-disabled mod: ignore entry (new ignored test is a fail)"
+
+# review F5b: #[should_panic] added to an existing test turns a failure into a pass: confirm
+R=$(mkrepo f5bpanic)
+put "$R" tests/a.rs <<'EOF2'
+#[test]
+fn a() {
+    assert_eq!(1, 1);
+}
+EOF2
+B=$(commit "$R" base)
+put "$R" tests/a.rs <<'EOF2'
+#[test]
+#[should_panic]
+fn a() {
+    assert_eq!(1, 1);
+}
+EOF2
+H=$(commit "$R" should-panic-added)
+out=$(mr "$R" "$B" "$H"); rc=$?
+eq "$rc" 0 "should_panic added to existing test: confirm, exit 0"
+eq "$(jq -r '.entries[0].severity' <<<"$out")" confirm "should_panic added: severity confirm"
+eq "$(jq -r '.entries[0].class' <<<"$out")" agent-fixable "should_panic added: class agent-fixable"
+eq "$(jq -r '.entries[0].id' <<<"$out")" "R2-$(printf '%s' 'R2tests/a.rsshould-panic:a' | sha1sum | cut -c1-8)" "should_panic added: id keyed by should-panic:fn"
+R=$(mkrepo f5bnew)
+put "$R" tests/a.rs <<'EOF2'
+#[test]
+fn a() {
+    assert_eq!(1, 1);
+}
+EOF2
+B=$(commit "$R" base)
+put "$R" tests/a.rs <<'EOF2'
+#[test]
+fn a() {
+    assert_eq!(1, 1);
+}
+
+#[test]
+#[should_panic]
+fn b() {
+    panic!("boom");
+}
+EOF2
+H=$(commit "$R" new-should-panic-test)
+out=$(mr "$R" "$B" "$H"); rc=$?
+eq "$rc" 0 "new test with should_panic: clean"
+
+# review F3: test fn identity is mod-qualified; same name in two mods is two tests
+R=$(mkrepo f3shift)
+put "$R" tests/a.rs <<'EOF2'
+mod m1 {
+    #[test]
+    fn works() {
+        assert_eq!(1, 1);
+        assert_eq!(2, 2);
+    }
+}
+
+mod m2 {
+    #[test]
+    fn works() {
+        assert_eq!(3, 3);
+    }
+}
+EOF2
+B=$(commit "$R" base)
+put "$R" tests/a.rs <<'EOF2'
+mod m1 {
+    #[test]
+    fn works() {
+        assert_eq!(1, 1);
+    }
+}
+
+mod m2 {
+    #[test]
+    fn works() {
+        assert_eq!(3, 3);
+        assert_eq!(2, 2);
+    }
+}
+EOF2
+H=$(commit "$R" shift-assert-m1-to-m2)
+out=$(mr "$R" "$B" "$H"); rc=$?
+eq "$rc" 1 "assert moved from m1::works to m2::works: exit 1"
+has "$(jq -r '[.entries[].problem] | join(" ")' <<<"$out")" "m1::works" "problem names m1::works"
+
+R=$(mkrepo f3removed)
+put "$R" tests/a.rs <<'EOF2'
+mod m1 {
+    #[test]
+    fn works() {
+        assert_eq!(1, 1);
+    }
+}
+
+mod m2 {
+    #[test]
+    fn works() {
+        assert_eq!(3, 3);
+    }
+}
+EOF2
+B=$(commit "$R" base)
+put "$R" tests/a.rs <<'EOF2'
+mod m2 {
+    #[test]
+    fn works() {
+        assert_eq!(3, 3);
+    }
+}
+EOF2
+H=$(commit "$R" delete-m1-works)
+out=$(mr "$R" "$B" "$H"); rc=$?
+eq "$rc" 1 "deleting m1::works while m2::works exists: exit 1"
+has "$(jq -r '[.entries[].problem] | join(" ")' <<<"$out")" "m1::works" "removed entry names m1::works"
+
+# review F1: in-place weakening of any assert kind is confirm; reorder stays clean
+R=$(mkrepo f1other)
+put "$R" tests/a.rs <<'EOF2'
+#[test]
+fn t() {
+    let v = vec![1, 2, 3];
+    assert!(v.len() > 2);
+}
+EOF2
+B=$(commit "$R" base)
+put "$R" tests/a.rs <<'EOF2'
+#[test]
+fn t() {
+    let v = vec![1, 2, 3];
+    assert!(true);
+}
+EOF2
+H=$(commit "$R" weaken-bool-assert)
+out=$(mr "$R" "$B" "$H"); rc=$?
+eq "$rc" 0 "assert!(v.len() > 2) -> assert!(true): confirm, exit 0"
+eq "$(jq -r '.entries[0].id' <<<"$out")" "R2-$(printf '%s' 'R2tests/a.rsassert-replaced:t' | sha1sum | cut -c1-8)" "bool weakening: id keyed by assert-replaced:t"
+eq "$(jq -r '.entries[0].severity' <<<"$out")" confirm "bool weakening: severity confirm"
+has "$(jq -r '.entries[0].problem' <<<"$out")" "assert!(v.len() > 2)" "bool weakening: problem shows old assert"
+
+R=$(mkrepo f1parse)
+put "$R" tests/a.rs <<'EOF2'
+#[test]
+fn t() {
+    assert!(parse("1").is_some());
+}
+EOF2
+B=$(commit "$R" base)
+put "$R" tests/a.rs <<'EOF2'
+#[test]
+fn t() {
+    assert!(true);
+}
+EOF2
+H=$(commit "$R" weaken-is-some)
+out=$(mr "$R" "$B" "$H"); rc=$?
+eq "$rc" 0 "assert!(parse(\"1\").is_some()) -> assert!(true): confirm, exit 0"
+eq "$(jq -r '.entries|length' <<<"$out")" 1 "is_some weakening: one entry"
+
+R=$(mkrepo f1reorder)
+put "$R" tests/a.rs <<'EOF2'
+#[test]
+fn t() {
+    let v = vec![1, 2, 3];
+    assert!(v.len() > 2);
+    assert!(v[0] == 1);
+}
+EOF2
+B=$(commit "$R" base)
+put "$R" tests/a.rs <<'EOF2'
+#[test]
+fn t() {
+    let v = vec![1, 2, 3];
+    assert!(v[0] == 1);
+    assert!(v.len() > 2);
+}
+EOF2
+H=$(commit "$R" reorder-asserts)
+out=$(mr "$R" "$B" "$H"); rc=$?
+eq "$rc" 0 "reordered asserts: exit 0"
+eq "$(jq -c .entries <<<"$out")" "[]" "reordered asserts: no entries"
+
+# review F2: a dropped test assert is explained only by a helper that this test calls
+R=$(mkrepo f2unused)
+put "$R" tests/a.rs <<'EOF2'
+#[test]
+fn a() {
+    assert_eq!(1, 1);
+    assert_eq!(2, 2);
+}
+EOF2
+B=$(commit "$R" base)
+put "$R" tests/a.rs <<'EOF2'
+#[test]
+fn a() {
+    assert_eq!(1, 1);
+}
+
+fn unused() {
+    assert!(true);
+}
+EOF2
+H=$(commit "$R" drop-assert-add-unused-helper)
+out=$(mr "$R" "$B" "$H"); rc=$?
+eq "$rc" 1 "dropped assert offset by an unused helper: exit 1"
+has "$(jq -r '[.entries[].problem] | join(" ")' <<<"$out")" "test \`a\` dropped from 2 to 1" "unused helper: a named"
+
+R=$(mkrepo f2unusedmod)
+put "$R" src/lib.rs <<'EOF2'
+pub fn f() -> i32 { 1 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a() {
+        assert_eq!(f(), 1);
+        assert_eq!(f(), 1);
+    }
+}
+EOF2
+B=$(commit "$R" base)
+put "$R" src/lib.rs <<'EOF2'
+pub fn f() -> i32 { 1 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a() {
+        assert_eq!(f(), 1);
+    }
+
+    fn unused() {
+        assert!(true);
+    }
+}
+EOF2
+H=$(commit "$R" drop-assert-add-unused-in-mod)
+out=$(mr "$R" "$B" "$H"); rc=$?
+eq "$rc" 1 "unused helper inside cfg(test) mod does not offset: exit 1"
+
+R=$(mkrepo f2other)
+put "$R" tests/a.rs <<'EOF2'
+fn check(x: i32) {
+    assert_eq!(x, 1);
+}
+
+#[test]
+fn a() {
+    assert_eq!(1, 1);
+    assert_eq!(2, 2);
+}
+
+#[test]
+fn b() {
+    check(1);
+}
+EOF2
+B=$(commit "$R" base)
+put "$R" tests/a.rs <<'EOF2'
+fn check(x: i32) {
+    assert_eq!(x, 1);
+    assert_eq!(x, 1);
+}
+
+#[test]
+fn a() {
+    assert_eq!(1, 1);
+}
+
+#[test]
+fn b() {
+    check(1);
+}
+EOF2
+H=$(commit "$R" a-drops-helper-called-by-b)
+out=$(mr "$R" "$B" "$H"); rc=$?
+eq "$rc" 1 "a drops an assert while only b calls the gaining helper: exit 1"
+has "$(jq -r '[.entries[].problem] | join(" ")' <<<"$out")" "test \`a\` dropped from 2 to 1" "helper called by b does not explain a"
+
+# review F7: a renamed test with the same asserts is a rename, not a removal + addition
+R=$(mkrepo f7rename)
+put "$R" tests/a.rs <<'EOF2'
+#[test]
+fn adds() {
+    assert_eq!(1 + 1, 2);
+    assert_eq!(2 + 2, 4);
+}
+EOF2
+B=$(commit "$R" base)
+put "$R" tests/a.rs <<'EOF2'
+#[test]
+fn adds_numbers() {
+    assert_eq!(1 + 1, 2);
+    assert_eq!(2 + 2, 4);
+}
+EOF2
+H=$(commit "$R" rename-adds)
+out=$(mr "$R" "$B" "$H"); rc=$?
+eq "$rc" 0 "rename with identical asserts: exit 0"
+eq "$(jq -c .entries <<<"$out")" "[]" "rename with identical asserts: no entries"
+
+R=$(mkrepo f7renamedrop)
+put "$R" tests/a.rs <<'EOF2'
+#[test]
+fn adds() {
+    assert_eq!(1 + 1, 2);
+    assert_eq!(2 + 2, 4);
+}
+EOF2
+B=$(commit "$R" base)
+put "$R" tests/a.rs <<'EOF2'
+#[test]
+fn adds_numbers() {
+    assert_eq!(1 + 1, 2);
+}
+EOF2
+H=$(commit "$R" rename-and-drop)
+out=$(mr "$R" "$B" "$H"); rc=$?
+eq "$rc" 1 "rename that drops an assert: exit 1"
+has "$(jq -r '[.entries[].problem] | join(" ")' <<<"$out")" "test fn \`adds\` removed" "rename+drop: removed entry names adds"
+
+R=$(mkrepo f7renameignored)
+put "$R" tests/a.rs <<'EOF2'
+#[test]
+#[ignore]
+fn adds() {
+    assert_eq!(1 + 1, 2);
+}
+EOF2
+B=$(commit "$R" base)
+put "$R" tests/a.rs <<'EOF2'
+#[test]
+#[ignore]
+fn adds_numbers() {
+    assert_eq!(1 + 1, 2);
+}
+EOF2
+H=$(commit "$R" rename-already-ignored)
+out=$(mr "$R" "$B" "$H"); rc=$?
+eq "$rc" 0 "rename of an already-ignored test: not a new ignore, exit 0"
+
+R=$(mkrepo f7renamepanic)
+put "$R" tests/a.rs <<'EOF2'
+#[test]
+fn adds() {
+    assert_eq!(1 + 1, 2);
+}
+EOF2
+B=$(commit "$R" base)
+put "$R" tests/a.rs <<'EOF2'
+#[test]
+#[should_panic]
+fn adds_numbers() {
+    assert_eq!(1 + 1, 2);
+}
+EOF2
+H=$(commit "$R" rename-and-should-panic)
+out=$(mr "$R" "$B" "$H"); rc=$?
+eq "$rc" 0 "rename adding should_panic: confirm, exit 0"
+eq "$(jq -r '.entries[0].id' <<<"$out")" "R2-$(printf '%s' 'R2tests/a.rsshould-panic:adds_numbers' | sha1sum | cut -c1-8)" "rename adding should_panic: keyed by new name"
+
+# review round 2: a method call x.check() is not a call to the free fn check
+R=$(mkrepo f2method)
+put "$R" tests/a.rs <<'EOF2'
+#[test]
+fn a() {
+    assert_eq!(1, 1);
+    assert_eq!(2, 2);
+}
+EOF2
+B=$(commit "$R" base)
+put "$R" tests/a.rs <<'EOF2'
+fn check() {
+    assert!(true);
+}
+
+#[test]
+fn a() {
+    x.check();
+    assert_eq!(1, 1);
+}
+EOF2
+H=$(commit "$R" method-call-is-not-a-helper-call)
+out=$(mr "$R" "$B" "$H"); rc=$?
+eq "$rc" 1 "method call x.check() does not explain a drop: exit 1"
+has "$(jq -r '[.entries[].problem] | join(" ")' <<<"$out")" "test \`a\` dropped from 2 to 1" "method call: a named"
 
 done_tests

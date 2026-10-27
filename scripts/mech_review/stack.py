@@ -2,10 +2,12 @@
 
 Adapter interface:
   classify(path, test_globs) -> "test" | "prod" | None (None: not a source file of this stack)
-  test_fns(text) -> [TestFn(name, line, markers)]   markers: "ignore" (skip-like; more for future stacks)
-  assertions(text) -> [Assertion(line, fn, scope, kind, left, right)]  fn: enclosing test fn name or None;
+  test_fns(text) -> [TestFn(name, line, markers)]   markers: "ignore" (skip-like), "should_panic";
+      name: fn name qualified by its enclosing mods (`m1::works`); top-level fns are bare
+  assertions(text) -> [Assertion(line, fn, scope, kind, left, right, text)]  fn: enclosing test fn name or None;
       scope: inside a test fn or a #[cfg(test)] mod (production code is never in scope);
-      kind: eq | ne | other (assert!(a == b) is eq); left/right: whitespace-normalized operands (eq/ne only)
+      kind: eq | ne | other (assert!(a == b) is eq); left/right: whitespace-normalized operands (eq/ne only);
+      text: the whole assert call, whitespace-normalized (for messages)
 """
 import re
 from collections import namedtuple
@@ -13,13 +15,19 @@ from collections import namedtuple
 from .globs import any_glob
 
 TestFn = namedtuple("TestFn", "name line markers")
-Assertion = namedtuple("Assertion", "line fn scope kind left right")
+Assertion = namedtuple("Assertion", "line fn scope kind left right text owner")
+Item = namedtuple("Item", "qname line is_test markers body")
+CFG_TEST = re.compile(r"#\[\s*cfg\s*\(\s*test\s*\)\s*\]")
+BODY_END = re.compile(r"[{;]")
+ATTR = re.compile(r"#\[[^\]]*\]")
 Suppression = namedtuple("Suppression", "line end_line kind lints lint_text reason")
 
 RAW = re.compile(r'(?:br|cr|r)(#*)"')
 FN = re.compile(r'((?:#\[[^\]]*\]\s*)*)(?:pub(?:\s*\([^)]*\))?\s+)?(?:async\s+)?(?:unsafe\s+)?fn\s+(\w+)')
 ATTR_START = re.compile(r"#!?\[")
 ASSERT = re.compile(r"\b(\w*assert\w*)!\s*[(\[{]")
+SHOULD_PANIC = re.compile(r"#\[\s*should_panic\b")
+MOD = re.compile(r"((?:#\[[^\]]*\]\s*)*)(?:pub(?:\s*\([^)]*\))?\s+)?mod\s+(\w+)\s*\{")
 MODULE = re.compile(r"#\[\s*cfg\s*\(\s*test\s*\)\s*\]\s*(?:#\[[^\]]*\]\s*)*(?:pub(?:\s*\([^)]*\))?\s+)?mod\s+\w+\s*\{")
 TEST_ATTR = re.compile(r"#\[\s*(?:\w+::)*(?:test|rstest|test_case)\b")
 IGNORE_ATTR = re.compile(r"#\[\s*(?:ignore\b|cfg_attr\s*\(.*\bignore\b|cfg\s*\(\s*(?:any\s*\(\s*\)|FALSE|false|not\s*\(\s*test\s*\))\s*\)\s*\])")
@@ -155,6 +163,15 @@ class Adapter:
     def suppressions(self, text):
         raise NotImplementedError
 
+    def calls(self, text):
+        raise NotImplementedError
+
+
+def _innermost(spans, pos):
+    """name of the innermost (name, open, close) span containing pos, or None."""
+    hits = [s for s in spans if s[1] <= pos < s[2]]
+    return max(hits, key=lambda s: s[1])[0] if hits else None
+
 
 class RustAdapter(Adapter):
     name = "rust"
@@ -164,31 +181,46 @@ class RustAdapter(Adapter):
             return None
         return "test" if any_glob(path, test_globs) else "prod"
 
-    def _scan(self, text):
+    @staticmethod
+    def _body(m, pos):
+        """(open, close) of the fn body whose signature starts at pos, or None (declaration only)."""
+        p = m.find("(", pos)
+        if p < 0:
+            return None
+        mm = BODY_END.search(m, close_of(m, p) + 1)
+        if not mm or mm.group() == ";":
+            return None
+        return (mm.start(), close_of(m, mm.start()))
+
+    def _items(self, text):
+        """(masked text, mods, fn items). mods: (attrs, open, close, name). Names are qualified by enclosing mods."""
         m = mask(text)
-        fns = []
+        mods = [(mo.group(1), mo.end() - 1, close_of(m, mo.end() - 1), mo.group(2)) for mo in MOD.finditer(m)]
+        items = []
         for f in FN.finditer(m):
-            attrs = re.findall(r"#\[[^\]]*\]", f.group(1))
-            if not any(TEST_ATTR.match(a) for a in attrs):
-                continue
-            markers = ["ignore"] if any(IGNORE_ATTR.match(a) for a in attrs) else []
-            body = m.find("{", f.end())
-            span = (body, close_of(m, body)) if body >= 0 else (f.end(), f.end())
-            fns.append((TestFn(f.group(2), m.count("\n", 0, f.start(2)) + 1, markers), span))
-        return m, fns
+            attrs = ATTR.findall(f.group(1))
+            inside = [(grp, name) for grp, b, e, name in mods if b < f.start() < e]
+            # a test inside a mod disabled by cfg (cfg(any()), cfg(FALSE), cfg(not(test))) is disabled too
+            mod_attrs = [a for grp, _ in inside for a in ATTR.findall(grp)]
+            markers = ["ignore"] if any(IGNORE_ATTR.match(a) for a in attrs + mod_attrs) else []
+            if any(SHOULD_PANIC.match(a) for a in attrs):
+                markers.append("should_panic")
+            qname = "::".join([name for _, name in inside] + [f.group(2)])
+            items.append(Item(qname, m.count("\n", 0, f.start(2)) + 1, any(TEST_ATTR.match(a) for a in attrs),
+                              markers, self._body(m, f.end())))
+        return m, mods, items
 
     def test_fns(self, text):
-        return [t for t, _ in self._scan(text)[1]]
+        return [TestFn(it.qname, it.line, it.markers) for it in self._items(text)[2] if it.is_test]
 
     def assertions(self, text):
-        m, fns = self._scan(text)
-        spans = [(t.name, b, e) for t, (b, e) in fns]
-        spans += [(None, mo.end() - 1, close_of(m, mo.end() - 1)) for mo in MODULE.finditer(m)]
+        m, mods, items = self._items(text)
+        tests = [(it.qname, *it.body) for it in items if it.is_test and it.body]
+        owners = [(it.qname, *it.body) for it in items if it.body]
+        scoped = tests + [(None, o, c) for attrs, o, c, _ in mods if any(CFG_TEST.match(a) for a in ATTR.findall(attrs))]
         out = []
         for a in ASSERT.finditer(m):
             pos = a.start()
-            inside = [(n, b, e) for n, b, e in spans if b <= pos < e]
-            fn = next((n for n, _, _ in inside if n), None)
             base = re.sub(r"^debug_", "", a.group(1))
             kind = "eq" if base.endswith("_eq") else "ne" if base.endswith("_ne") else "other"
             left = right = None
@@ -200,13 +232,19 @@ class RustAdapter(Adapter):
                     cmp = top_cmp(args[0])
                     if cmp:
                         kind, left, right = cmp
-            out.append(Assertion(m.count("\n", 0, pos) + 1, fn, bool(inside), kind, norm(left), norm(right)))
+            call = " ".join(text[pos:close_of(m, a.end() - 1) + 1].split())
+            out.append(Assertion(m.count("\n", 0, pos) + 1, _innermost(tests, pos), any(b <= pos < e for _, b, e in scoped),
+                                 kind, norm(left), norm(right), call, _innermost(owners, pos)))
         return out
 
+    def calls(self, text):
+        """{fn qname: bare names it calls as plain or path calls (f(), self::f(), super::f()); method calls (x.f()) excluded}"""
+        m, _, items = self._items(text)
+        return {it.qname: set(re.findall(r"(?<![\w.])(?:\w+::)*(\w+)\s*\(", m[it.body[0]:it.body[1]])) for it in items if it.body}
 
     def suppressions(self, text):
         """lint-suppression attributes (allow/expect, also inside cfg_attr) found in code, not comments or strings.
-        reason: `reason = ...` inside the attribute, or a // comment after it on its last line."""
+        reason: non-empty `reason = "..."` inside the attribute, or a // comment after it on its last line."""
         m = mask(text)
         out = []
         for a in ATTR_START.finditer(m):
@@ -222,7 +260,7 @@ class RustAdapter(Adapter):
             raw = text[lint_open + 1:close_of(m, lint_open)]
             eol = text.find("\n", end)
             tail = text[end + 1:len(text) if eol < 0 else eol]
-            reason = bool(re.search(r"\breason\s*=", raw)) or bool(re.search(r"//\s*\S", tail))
+            reason = bool(re.search(r'\breason\s*=\s*"[^"]*[^\s"][^"]*"', raw)) or bool(re.search(r"//\s*\S", tail))
             out.append(Suppression(m.count("\n", 0, a.start()) + 1, m.count("\n", 0, end) + 1, mm.group(1),
                                    norm(raw), " ".join(raw.split()), reason))
         return out
