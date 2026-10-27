@@ -872,6 +872,38 @@ eq "$rc" 1 "insta snapshot assert counted"
 has "$(jq -r '[.entries[].problem] | join(" ")' <<<"$out")" "from 3 to 2" "macro asserts counted 3 to 2"
 
 R=$(mkrepo r1mv)
+{ for k in $(seq 1 30); do echo "// filler $k"; done; cat <<'EOF2'
+#[test]
+fn a() {
+    assert_eq!(1, 1);
+}
+
+#[test]
+fn b() {
+    assert_eq!(2, 2);
+}
+EOF2
+} | put "$R" tests/a.rs
+B=$(commit "$R" base)
+git -C "$R" mv tests/a.rs tests/a.rs.off
+{ for k in $(seq 1 30); do echo "// filler $k"; done; cat <<'EOF2'
+#[test]
+fn a() {
+    assert_eq!(1, 1);
+}
+EOF2
+} | put "$R" tests/a.rs.off
+H=$(commit "$R" rename-off-drop-b)
+eq "$(git -C "$R" diff -M --name-status "$B" "$H" | cut -c1)" R "git sees a rename (R), not delete plus add"
+out=$(mr "$R" "$B" "$H"); rc=$?
+eq "$rc" 1 "rename out of .rs that drops b is caught"
+eq "$(jq -r '[.entries[] | select(.problem|contains("removed"))][0].file' <<<"$out")" tests/a.rs "renamed-out removal reported at old path"
+
+# item 11: lexer survivors (pass on HEAD; each kills a mutation of the masking)
+R=$(mkrepo lexg1)
+put "$R" src/lib.rs <<'EOF2'
+pub const P: &str = r"C:\";
+EOF2
 put "$R" tests/a.rs <<'EOF2'
 #[test]
 fn a() {
@@ -884,17 +916,90 @@ fn b() {
 }
 EOF2
 B=$(commit "$R" base)
-git -C "$R" mv tests/a.rs tests/a.rs.off
-put "$R" tests/a.rs.off <<'EOF2'
+put "$R" tests/a.rs <<'EOF2'
 #[test]
 fn a() {
     assert_eq!(1, 1);
 }
 EOF2
-H=$(commit "$R" rename-off-drop-b)
+H=$(commit "$R" drop-b)
 out=$(mr "$R" "$B" "$H"); rc=$?
-eq "$rc" 1 "rename out of .rs that drops b is caught"
-eq "$(jq -r '[.entries[] | select(.problem|contains("removed"))][0].file' <<<"$out")" tests/a.rs "renamed-out removal reported at old path"
+eq "$rc" 1 "G1 raw string ending in backslash, then tests: removed b caught"
+
+R=$(mkrepo lexg2)
+put "$R" tests/a.rs <<'EOF2'
+#[test]
+fn a() {
+    let c = '}';
+    assert_eq!(c, '}');
+    assert_eq!(1, 1);
+}
+EOF2
+B=$(commit "$R" base)
+put "$R" tests/a.rs <<'EOF2'
+#[test]
+fn a() {
+    let c = '}';
+    assert_eq!(c, '}');
+}
+EOF2
+H=$(commit "$R" drop-trailing-assert)
+out=$(mr "$R" "$B" "$H"); rc=$?
+eq "$rc" 1 "G2 char literal '}' does not end the body: trailing assert drop caught"
+
+R=$(mkrepo lexg3)
+put "$R" src/lib.rs <<'EOF2'
+pub const Q: char = '\"';
+EOF2
+put "$R" tests/a.rs <<'EOF2'
+#[test]
+fn a() {
+    assert_eq!(1, 1);
+}
+
+#[test]
+fn b() {
+    assert_eq!(2, 2);
+}
+EOF2
+B=$(commit "$R" base)
+put "$R" tests/a.rs <<'EOF2'
+#[test]
+fn a() {
+    assert_eq!(1, 1);
+}
+EOF2
+H=$(commit "$R" drop-b)
+out=$(mr "$R" "$B" "$H"); rc=$?
+eq "$rc" 1 "G3 escaped-quote char literal: removed b caught"
+
+R=$(mkrepo lexg4)
+put "$R" src/lib.rs <<'EOF2'
+pub const S: &str = "a\"/*";
+EOF2
+put "$R" tests/a.rs <<'EOF2'
+#[test]
+fn a() {
+    assert_eq!(1, 1);
+}
+
+#[test]
+fn b() {
+    assert_eq!(2, 2);
+}
+*/
+EOF2
+B=$(commit "$R" base)
+put "$R" tests/a.rs <<'EOF2'
+#[test]
+fn a() {
+    assert_eq!(1, 1);
+}
+*/
+EOF2
+H=$(commit "$R" drop-b)
+out=$(mr "$R" "$B" "$H"); rc=$?
+eq "$rc" 1 "G4 string with escaped quote and /*: removed b caught"
 
 # round 2 area 2: expected-value pairing (whitespace, either side, == in assert!), reflow, keys, scope
 R=$(mkrepo r2ws)
