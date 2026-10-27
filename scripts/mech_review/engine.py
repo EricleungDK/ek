@@ -206,8 +206,8 @@ def r2(repo, mb, head, adapter, test_globs, protected_globs):
         # expected value: same fn, one operand unchanged (whitespace-normalized), the other changed
         removed = unmatched(bas, aas)
         added_a = unmatched(aas, bas)
-        used = set()
-        for r in removed:
+        used, paired = set(), set()
+        for ri, r in enumerate(removed):
             if r.kind not in ("eq", "ne"):
                 continue
             for i, h in enumerate(added_a):
@@ -217,6 +217,7 @@ def r2(repo, mb, head, adapter, test_globs, protected_globs):
                 if l_same == r_same:
                     continue
                 used.add(i)
+                paired.add(ri)
                 unchanged = r.left if l_same else r.right
                 was, now = (r.right, h.right) if l_same else (r.left, h.left)
                 where = r.fn or "<module>"
@@ -224,6 +225,21 @@ def r2(repo, mb, head, adapter, test_globs, protected_globs):
                                      f"expected value changed in `{where}`: was {was}, now {now}",
                                      "confirm the new value is the spec'd behaviour, not the buggy output",
                                      "editing an expected value to match the code's current output"))
+                break
+        # replaced in place: an eq/ne assert removed and another assert added in the same fn (any operands or kind)
+        spare = [h for i, h in enumerate(added_a) if i not in used]
+        for ri, r in enumerate(removed):
+            if ri in paired or r.kind not in ("eq", "ne"):
+                continue
+            for j, h in enumerate(spare):
+                if h.fn != r.fn:
+                    continue
+                del spare[j]
+                where = r.fn or "<module>"
+                entries.append(entry("R2", path, h.line, f"assert-replaced:{r.fn or ''}", "agent-fixable", "confirm",
+                                     f"assertion replaced in `{where}`: `{r.text}` -> `{h.text}`",
+                                     "keep the assertion at least as strict; the reviewer confirms an intended change",
+                                     "weakening an assertion in place"))
                 break
         if new is not None:
             added_nums = {ln for ln, _ in added.get(new, [])}

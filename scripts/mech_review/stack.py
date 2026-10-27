@@ -3,9 +3,10 @@
 Adapter interface:
   classify(path, test_globs) -> "test" | "prod" | None (None: not a source file of this stack)
   test_fns(text) -> [TestFn(name, line, markers)]   markers: "ignore" (skip-like; more for future stacks)
-  assertions(text) -> [Assertion(line, fn, scope, kind, left, right)]  fn: enclosing test fn name or None;
+  assertions(text) -> [Assertion(line, fn, scope, kind, left, right, text)]  fn: enclosing test fn name or None;
       scope: inside a test fn or a #[cfg(test)] mod (production code is never in scope);
-      kind: eq | ne | other (assert!(a == b) is eq); left/right: whitespace-normalized operands (eq/ne only)
+      kind: eq | ne | other (assert!(a == b) is eq); left/right: whitespace-normalized operands (eq/ne only);
+      text: the whole assert call, whitespace-normalized (for messages)
 """
 import re
 from collections import namedtuple
@@ -13,7 +14,7 @@ from collections import namedtuple
 from .globs import any_glob
 
 TestFn = namedtuple("TestFn", "name line markers")
-Assertion = namedtuple("Assertion", "line fn scope kind left right")
+Assertion = namedtuple("Assertion", "line fn scope kind left right text")
 Suppression = namedtuple("Suppression", "line end_line kind lints lint_text reason")
 
 RAW = re.compile(r'(?:br|cr|r)(#*)"')
@@ -200,7 +201,8 @@ class RustAdapter(Adapter):
                     cmp = top_cmp(args[0])
                     if cmp:
                         kind, left, right = cmp
-            out.append(Assertion(m.count("\n", 0, pos) + 1, fn, bool(inside), kind, norm(left), norm(right)))
+            call = " ".join(text[pos:close_of(m, a.end() - 1) + 1].split())
+            out.append(Assertion(m.count("\n", 0, pos) + 1, fn, bool(inside), kind, norm(left), norm(right), call))
         return out
 
 
