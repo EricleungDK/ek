@@ -9,6 +9,7 @@ Agent workflow kit for Claude Code: one plugin, same setup on every machine and 
 | `skills/taste-it` | `/ek:taste-it`: verify by using it. Black-box taster, `.ek/scenarios/` regression suite, fix/human verdicts |
 | `scripts/scenarios.py` | scenario runner: `run [ID]`, `check`, `can-fail REF`, `tree-hash`; path shown in the SessionStart `[ek] Scenario runner:` line |
 | `skills/finish` | end-of-work report: done (evidence per criterion) or blocked (Needs-you block) |
+| [`docs/testing-standard.md`](docs/testing-standard.md) | testing standard: what a good test is, forbidden cheats, mech-review vs code review |
 | `SessionStart` hook | preflight warnings + working rules into context |
 | `PostToolUseFailure` hook | known Bash failure signatures → one context line |
 | `Stop` / `SubagentStop` hook | blocks once per new change set until the finish report is given |
