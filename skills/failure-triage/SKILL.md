@@ -1,9 +1,13 @@
 ---
 name: failure-triage
-description: Classify a red test, check, or CI job before editing code to fix it. Use when a test, build, or CI job fails, or the user pastes a failure and asks for cause or plan.
+description: Classify a red test, check, or CI job before editing code to fix it. Use when a test, build, or CI job fails, mech-review reports a failing check, or the user pastes a failure and asks for cause or plan.
 ---
 
 A red result is a claim about the code only once ruled in. Classify each failure into one class, with **evidence**, before any code edit. Loaded once per session: on later failures, classify against this, without re-invoking.
+
+## Mech-review JSON present
+
+A mech-review JSON (PR comment `<!-- mech-review -->` or CLI output) → follow [mech.md](mech.md). Classify from its entries, not logs. No JSON → the classes below.
 
 ## Classes
 

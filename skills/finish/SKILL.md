@@ -14,6 +14,7 @@ At report time, rerun the decisive commands: tests, typecheck, build. Counts and
 - CLI or app deliverable: run the real install and launch the way the user will (`pip install -e .` / `cargo install --path .` / `npm i -g .`, then the command). A built binary or `playwright --list` counts as not run.
 - State the env each command ran in: sandboxed or unsandboxed.
 
+- Mech-review envelope (PR comment or CLI): per check, `<check> <status> <head sha>` copied from it. `skipped`/`n/a` = not run: a ⚠️ row, with its note as debt. Quote `summary` only when no check is skipped; never write "all pass" yourself. Envelope `head` ≠ HEAD → stale: rerun mech-review at HEAD first.
 - Repo with `.ek/scenarios/` (taste-it skill): a scenario-backed criterion is verified by the runner, never the taster's say-so. Run `RUN run`, then `RUN check`. Evidence: the `PASS`/`FAIL` line, the results.json or transcript path, tree hash fresh (`check` exit 0). Any `FAIL`, stale or partial `check` (exit 1) = not done: no ✅ row, no plain "done"; a fix-class FAIL stays an agent job (fix, full `RUN run`, `RUN check`), listed under Open, never handed to the user as a question or check.
 
 Done when: every criterion has a fresh result or a reason it can't run here.
@@ -37,25 +38,28 @@ Pick the branch.
 | <criterion> | ✅ verified | `<cmd>` → exit 0, <key output> |
 | <criterion> | ⚠️ not verified | <why>; run: `<exact cmd>` |
 | <criterion> | 👤 human-only | <what the user checks>; Needs-you block below |
+Mech <head sha>: R1 <status> · R2 <status> · R3 <status> · R4 <status>
 TDD: <test> red (`<failure line>`) → green (`<cmd>` exit 0)
 Env: <sandboxed|unsandboxed>
 Verification debt: <items, or none>
-Open: <issues, flakes, follow-ups, or none>
+Open: <issues, flakes, follow-ups, confirm entries for reviewer, or none>
 ```
 
 Scenario row evidence: `RUN run <id>` → `PASS <id>`, `<results.json / transcript path>`, `RUN check` exit 0.
 
 Each 👤 row gets a Needs-you block (same shape as in Blocked; Run/Expect become the exact steps and expected result, Why = what the check protects). Verdict stays "done except the rows marked ⚠️/👤".
 
+Each unresolved `needs-human` mech entry gets one too, with `Decide:` in place of `Run:`. Such an entry means not done.
+
 Any ⚠️ row means the report says "done except the rows marked ⚠️", never plain "done".
 
 ### Blocked
 
-The same blocker 3×, a denied command, a missing credential or quota: stop retrying, and mark the goal **blocked**, not complete.
+The same blocker 3×, a mech id at its 3rd fix round (failure-triage, mech.md rounds), a denied command, a missing credential or quota: stop retrying, and mark the goal **blocked**, not complete.
 
 ```
 ## Finish: blocked
-Blocker: <what failed, 3× evidence>
+Blocker: <what failed, 3× evidence, or mech id + its fix rounds>
 Needs you:
   Run: ! <exact command>
   Expect: <output that means it worked>
