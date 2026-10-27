@@ -25,6 +25,8 @@ Fix rounds per id = commits on this branch whose body names it:
 
 `git log --fixed-strings --grep="mech: <id>" --format=%h <base>..HEAD | wc -l`
 
+`<base>` = the envelope's `base` SHA. No envelope base → merge-base of the PR base branch and HEAD.
+
 Each fix commit for an id carries the body line `mech: <id>`.
 
 - Count ≥ 2 and the id still fails → **3rd round**: no fix. Needs-you block: `Blocker: <id> unresolved after 2 fix rounds`, with the entry, its file, and the decision needed.
