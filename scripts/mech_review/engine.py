@@ -106,16 +106,19 @@ def r2(repo, mb, head, adapter, test_globs, protected_globs):
     entries = []
     added = added_lines(repo, mb, head)
     for ch in changes(repo, mb, head):
-        path = ch.new or ch.old
         if any_glob(ch.old or "", protected_globs) or any_glob(ch.new or "", protected_globs):
-            entries.append(entry("R2", path, 0, "protected-path", "needs-human", "fail",
-                                 f"protected path changed: {path}",
+            entries.append(entry("R2", ch.new or ch.old, 0, "protected-path", "needs-human", "fail",
+                                 f"protected path changed: {ch.new or ch.old}",
                                  "move this change to its own human-reviewed PR, or list the id under Guard exceptions with a reason",
                                  "editing CI, gate scripts or agent docs to get the gate green"))
-        if adapter.classify(path, test_globs) is None:
+        # a source file renamed to a non-source path is a deletion; a non-source file renamed to source is an addition
+        old = ch.old if ch.old and adapter.classify(ch.old, test_globs) is not None else None
+        new = ch.new if ch.new and adapter.classify(ch.new, test_globs) is not None else None
+        if old is None and new is None:
             continue
-        before = blob(repo, mb, ch.old) if ch.old else None
-        after = blob(repo, head, ch.new) if ch.new else None
+        path = new or old
+        before = blob(repo, mb, old) if old else None
+        after = blob(repo, head, new) if new else None
         bfns = adapter.test_fns(before) if before is not None else []
         afns = adapter.test_fns(after) if after is not None else []
         names = {f.name for f in afns}
@@ -161,12 +164,12 @@ def r2(repo, mb, head, adapter, test_globs, protected_globs):
                                      f"assertions in `{path}` dropped from {nb} to {na}",
                                      "restore the dropped assertions; strengthen a test instead of removing one",
                                      f"fewer asserts in changed test file {path}"))
-        for ln, text in (added.get(ch.new) or []) if ch.new else []:
+        for ln, text in (added.get(new) or []) if new else []:
             for m in SUPPRESS.finditer(text):
                 inner = m.group(2)
                 if re.search(r"\breason\s*=", inner) or re.search(r"//\s*\S", text[m.end():]):
                     continue
-                entries.append(entry("R2", ch.new, ln, re.sub(r"\s+", "", inner), "agent-fixable", "fail",
+                entries.append(entry("R2", new, ln, re.sub(r"\s+", "", inner), "agent-fixable", "fail",
                                      f"#[{m.group(1)}({inner})] added without a reason",
                                      'fix the lint, or give the suppression a reason: #[allow(lint, reason = "...")]',
                                      "silencing a lint without a reason"))

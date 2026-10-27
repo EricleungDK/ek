@@ -14,15 +14,76 @@ from .globs import any_glob
 TestFn = namedtuple("TestFn", "name line markers")
 Assertion = namedtuple("Assertion", "line fn kind subject expected")
 
-# strings, raw strings, comments and char literals -> blanked (same length, newlines kept)
-MASK = re.compile(r'//[^\n]*|/\*.*?\*/|\br(#*)"(.*?)"\1|"(?:\\.|[^"\\\n])*"|\'(?:\\.|[^\'\\\n])\'', re.S)
+RAW = re.compile(r'(?:br|r)(#*)"')
 FN = re.compile(r'((?:#\[[^\]]*\]\s*)*)(?:pub(?:\s*\([^)]*\))?\s+)?(?:async\s+)?(?:unsafe\s+)?fn\s+(\w+)')
-ASSERT = re.compile(r"\b(?:debug_)?assert(_eq|_ne|_matches)?!\s*[(\[{]")
+ASSERT = re.compile(r"\b(\w*assert\w*)!\s*[(\[{]")
+TEST_ATTR = re.compile(r"#\[\s*(?:\w+::)*(?:test|rstest|test_case)\b")
+IGNORE_ATTR = re.compile(r"#\[\s*(?:ignore\b|cfg_attr\s*\(.*\bignore\b|cfg\s*\(\s*(?:any\s*\(\s*\)|FALSE|false)\s*\)\s*\])")
 OPEN, CLOSE = "([{", ")]}"
 
 
+def _ident(ch):
+    return ch.isalnum() or ch == "_"
+
+
 def mask(text):
-    return MASK.sub(lambda m: re.sub(r"[^\n]", " ", m.group(0)), text)
+    """blank comments (nested block comments too) and literal contents; newlines and length kept.
+    Strings may span lines. Char literals are told apart from lifetimes by the closing quote."""
+    out = list(text)
+    n = len(text)
+
+    def blank(a, b):
+        for k in range(a, b):
+            if out[k] != "\n":
+                out[k] = " "
+
+    i = 0
+    while i < n:
+        c = text[i]
+        if c == "/" and text.startswith("//", i):
+            j = text.find("\n", i)
+            j = n if j < 0 else j
+            blank(i, j)
+            i = j
+        elif c == "/" and text.startswith("/*", i):
+            depth, j = 1, i + 2
+            while j < n and depth:
+                if text.startswith("/*", j):
+                    depth, j = depth + 1, j + 2
+                elif text.startswith("*/", j):
+                    depth, j = depth - 1, j + 2
+                else:
+                    j += 1
+            blank(i, j)
+            i = j
+        elif c in "rb" and (i == 0 or not _ident(text[i - 1])) and RAW.match(text, i):
+            m = RAW.match(text, i)
+            close = '"' + m.group(1)
+            j = text.find(close, m.end())
+            j = n if j < 0 else j + len(close)
+            blank(i, j)
+            i = j
+        elif c == '"':
+            j = i + 1
+            while j < n and text[j] != '"':
+                j += 2 if text[j] == "\\" else 1
+            j = min(j + 1, n)
+            blank(i, j)
+            i = j
+        elif c == "'":
+            if text.startswith("\\", i + 1):
+                j = text.find("'", i + 3)
+                j = n if j < 0 else j + 1
+                blank(i, j)
+                i = j
+            elif i + 2 < n and text[i + 2] == "'":
+                blank(i, i + 3)
+                i += 3
+            else:
+                i += 1  # lifetime or label
+        else:
+            i += 1
+    return "".join(out)
 
 
 def close_of(m, i):
@@ -82,9 +143,9 @@ class RustAdapter(Adapter):
         fns = []
         for f in FN.finditer(m):
             attrs = re.findall(r"#\[[^\]]*\]", f.group(1))
-            if not any(re.match(r"#\[\s*(tokio::)?test\b", a) for a in attrs):
+            if not any(TEST_ATTR.match(a) for a in attrs):
                 continue
-            markers = ["ignore"] if any(re.match(r"#\[\s*ignore\b", a) for a in attrs) else []
+            markers = ["ignore"] if any(IGNORE_ATTR.match(a) for a in attrs) else []
             body = m.find("{", f.end())
             span = (body, close_of(m, body)) if body >= 0 else (f.end(), f.end())
             fns.append((TestFn(f.group(2), m.count("\n", 0, f.start(2)) + 1, markers), span))
@@ -99,7 +160,8 @@ class RustAdapter(Adapter):
         for a in ASSERT.finditer(m):
             pos = a.start()
             fn = next((t.name for t, (s, e) in fns if s <= pos < e), None)
-            kind = {"_eq": "eq", "_ne": "ne"}.get(a.group(1), "other")
+            name = re.sub(r"^debug_", "", a.group(1))
+            kind = "eq" if name.endswith("_eq") else "ne" if name.endswith("_ne") else "other"
             subj = exp = None
             if kind in ("eq", "ne") and m[a.end() - 1] == "(":
                 args = args_of(text, m, a.end() - 1)
