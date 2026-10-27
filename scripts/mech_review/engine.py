@@ -224,18 +224,28 @@ def r2(repo, mb, head, adapter, test_globs, protected_globs):
     return entries
 
 
+def summarize(head, checks, entries):
+    """`all pass <head>` only when every check passed and there are no entries. Otherwise
+    `<pass|fail> <head> (<F> fail, <C> confirm; ran: <checks>[; skipped: <checks>])`."""
+    fails = sum(1 for e in entries if e["severity"] == "fail")
+    confirms = len(entries) - fails
+    if not entries and all(checks[c]["status"] == "pass" for c in CHECKS):
+        return f"all pass {head}"
+    skipped = [c for c in CHECKS if checks[c]["status"] == "skipped"]
+    ran = [c for c in CHECKS if c not in skipped]
+    parts = f"{fails} fail, {confirms} confirm; ran: {' '.join(ran) or 'none'}"
+    if skipped:
+        parts += f"; skipped: {' '.join(skipped)}"
+    return f"{'fail' if fails else 'pass'} {head} ({parts})"
+
+
 def envelope(base, head, entries):
     fails = [e for e in entries if e["severity"] == "fail"]
     confirms = [e for e in entries if e["severity"] == "confirm"]
     checks = {c: {"status": "skipped", "note": "not implemented"} for c in CHECKS}
     checks["R2"] = {"status": "fail" if fails else "pass", "note": f"{len(fails)} fail, {len(confirms)} confirm"}
-    if not entries:
-        summary = f"all pass {head}"
-    elif fails:
-        summary = f"fail {head} ({len(fails)} fail, {len(confirms)} confirm)"
-    else:
-        summary = f"pass {head}, {len(confirms)} confirm"
-    return {"ek": ek_version(), "base": base, "head": head, "checks": checks, "entries": entries, "summary": summary}
+    return {"ek": ek_version(), "base": base, "head": head, "checks": checks, "entries": entries,
+            "summary": summarize(head, checks, entries)}
 
 
 def run(repo, base_ref, head_ref, stack, test_globs, protected_globs=()):

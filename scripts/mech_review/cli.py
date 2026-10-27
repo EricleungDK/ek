@@ -1,4 +1,4 @@
-"""CLI: parse args, run the engine, print contract JSON, exit 0 (all pass) / 1 (any fail entry) / 2 (usage, git)."""
+"""CLI: parse args, run the engine, print contract JSON, exit 0 (no fail entries) / 1 (any fail entry) / 2 (usage, git)."""
 import argparse
 import json
 import sys
@@ -12,18 +12,25 @@ mechanical PR checks over base...head (merge-base diff). Prints the contract JSO
 
 checks (status in envelope: pass | fail | partial | n/a | skipped):
   R2  test-diff guard (implemented): removed test fn; added #[ignore]; fewer asserts
-      in a changed test file; added #[allow]/#[expect] without reason= or same-line
-      comment; changed expected value (confirm); change under protected paths (needs-human)
+      in a surviving test fn (per fn name) or in helpers outside test fns (per file);
+      assert replaced in place (confirm); changed expected value (confirm); added
+      #[allow]/#[expect] without reason= or same-line comment; change under protected
+      paths (needs-human)
   R1, R3, R4: not implemented yet, always skipped.
   `r2` and `all` run the same implemented checks.
 
 entry: id, check, class (agent-fixable | needs-human | env), severity (fail | confirm),
   file, line (0 = file-level), problem, hint, forbidden.
   id = <check>-<first 8 hex of sha1(check + file + key)>; key = test fn name or rule
-  (e.g. dead_code, assert-count, protected-path). Never depends on line numbers.
+  (e.g. ignore:<fn>, assert-count:<fn>, assert-count = helpers of a file). Never depends on line numbers.
+
+summary (one line, text format first line and envelope `summary`):
+  `all pass <head sha>`: no entries and every check passed (never while a check is skipped).
+  otherwise `<pass|fail> <head sha> (<F> fail, <C> confirm; ran: <checks>[; skipped: <checks>])`,
+  e.g. `pass <sha> (0 fail, 1 confirm; ran: R2; skipped: R1 R3 R4)`.
+  `pass` = no fail entries; `fail` = at least one fail entry.
 
 envelope: ek (plugin version), base, head (full SHAs), checks, entries, summary.
-  summary is `all pass <head sha>` when there are no entries.
 
 exit: 0 no fail entries (confirm entries allowed), 1 any fail entry, 2 usage or git error.
 
