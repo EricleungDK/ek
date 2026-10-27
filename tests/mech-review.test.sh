@@ -456,4 +456,75 @@ eq "$(jq -r '.entries[0].file' <<<"$out")" .github/workflows/ci.yml "protected f
 eq "$(jq -r '.entries[0].id' <<<"$out")" "R2-$(printf '%s' 'R2.github/workflows/ci.ymlprotected-path' | sha1sum | cut -c1-8)" "protected id keyed by file+protected-path"
 eq "$(jq -r '.entries[0].line' <<<"$out")" 0 "protected entry file-level"
 
+# slice 7: guard exceptions (PR body) downgrade agent-fixable fails to confirm
+R=$(mkrepo s7)
+put "$R" tests/a.rs <<'EOF2'
+#[test]
+fn a() {
+    assert_eq!(1, 1);
+}
+
+#[test]
+fn b() {
+    assert_eq!(2, 2);
+}
+EOF2
+B=$(commit "$R" base)
+put "$R" tests/a.rs <<'EOF2'
+#[test]
+fn a() {
+    assert_eq!(1, 1);
+}
+EOF2
+H=$(commit "$R" drop-b)
+ID="R2-$(printf '%s' 'R2tests/a.rsb' | sha1sum | cut -c1-8)"
+AC="R2-$(printf '%s' 'R2tests/a.rsassert-count' | sha1sum | cut -c1-8)"
+OTHER="R2-$(printf '%s' 'R2tests/a.rszzz' | sha1sum | cut -c1-8)"
+body() { printf '%s\n' "$@" > "$T/body.md"; echo "$T/body.md"; }
+
+f=$(body "## Summary" "removes b" "## Guard exceptions" "- $ID: b superseded by a stronger test in a.rs" "- $AC: a lost its assert on purpose, see $ID")
+out=$(mr "$R" "$B" "$H" --pr-body "$f"); rc=$?
+eq "$rc" 0 "listed ids with reason: exit 0 (removed fn and its companion assert-count)"
+eq "$(jq -r '.entries[0].severity' <<<"$out")" confirm "listed id downgraded to confirm"
+eq "$(jq -r '.entries[0].class' <<<"$out")" agent-fixable "downgrade keeps class"
+eq "$(jq -r '[.entries[].severity]|unique|join(",")' <<<"$out")" confirm "every listed entry downgraded"
+has "$(jq -r .summary <<<"$out")" "confirm" "summary confirm after downgrade"
+
+f=$(body "## Guard exceptions" "**Guard exceptions**" "- $ID")
+out=$(mr "$R" "$B" "$H" --pr-body "$f"); rc=$?
+eq "$rc" 1 "listed id without reason stays fail"
+eq "$(jq -r '.entries[0].severity' <<<"$out")" fail "no-reason severity still fail"
+
+f=$(body "## Guard exceptions" "- $OTHER: unrelated id, reason given here")
+out=$(mr "$R" "$B" "$H" --pr-body "$f"); rc=$?
+eq "$rc" 1 "other id does not match"
+
+f=$(body "## Summary" "- $ID: mentioned outside the section, reason here")
+out=$(mr "$R" "$B" "$H" --pr-body "$f"); rc=$?
+eq "$rc" 1 "id outside Guard exceptions section does not match"
+
+f=$(body "# PR" "Guard exceptions" "no list here")
+out=$(mr "$R" "$B" "$H" --pr-body "$f"); rc=$?
+eq "$rc" 1 "heading without ids does nothing"
+
+out=$(mr "$R" "$B" "$H" --pr-body "$T/missing.md" 2>&1); rc=$?
+eq "$rc" 2 "missing pr body file exit 2"
+
+# protected entries are never downgraded by guard exceptions
+R=$(mkrepo s7prot)
+put "$R" .github/workflows/ci.yml <<'EOF2'
+on: push
+EOF2
+B=$(commit "$R" base)
+put "$R" .github/workflows/ci.yml <<'EOF2'
+on: pull_request
+EOF2
+H=$(commit "$R" ci-change)
+PID="R2-$(printf '%s' 'R2.github/workflows/ci.ymlprotected-path' | sha1sum | cut -c1-8)"
+f=$(body "## Guard exceptions" "- $PID: ci change needed for the fix, reviewer please confirm")
+out=$(mr "$R" "$B" "$H" --protected-paths '.github/**' --pr-body "$f"); rc=$?
+eq "$rc" 1 "protected entry not downgraded by exception: exit 1"
+eq "$(jq -r '.entries[0].severity' <<<"$out")" fail "protected stays fail"
+eq "$(jq -r '.entries[0].class' <<<"$out")" needs-human "protected stays needs-human"
+
 done_tests
