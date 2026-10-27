@@ -172,16 +172,18 @@ def r2(repo, mb, head, adapter, test_globs, protected_globs):
                                      "restore the test and make the code satisfy it; a removed test is not a fix",
                                      "deleting or renaming a test to hide a failure"))
         for f in afns:
-            old = by_name.get(f.name)
-            if "ignore" in f.markers and not (old and "ignore" in old.markers):
+            prev = by_name.get(f.name)
+            if "ignore" in f.markers and not (prev and "ignore" in prev.markers):
                 entries.append(entry("R2", path, f.line, f"ignore:{f.name}", "agent-fixable", "fail",
                                      f"test `{f.name}` marked #[ignore]",
                                      "make it pass or fix the code it covers; do not mark it ignored",
                                      "#[ignore] / skip / xfail / only on a test"))
         # test-path files: the whole file is test code (helpers too); elsewhere only test fns and cfg(test) mods
-        whole = adapter.classify(path, test_globs) == "test"
-        bas = [a for a in adapter.assertions(before) if whole or a.scope] if before is not None else []
-        aas = [a for a in adapter.assertions(after) if whole or a.scope] if after is not None else []
+        # each side is classified by its own path: a file moved between test and prod paths is judged per side
+        whole_b = old is not None and adapter.classify(old, test_globs) == "test"
+        whole_a = new is not None and adapter.classify(new, test_globs) == "test"
+        bas = [a for a in adapter.assertions(before) if whole_b or a.scope] if before is not None else []
+        aas = [a for a in adapter.assertions(after) if whole_a or a.scope] if after is not None else []
         # assert count per surviving test fn (by name). A fn that loses asserts is a fail unless asserts
         # outside test fns (helpers) grew by at least as much (extraction). Helpers keep a per-file count.
         head_fns = {f.name for f in afns}
