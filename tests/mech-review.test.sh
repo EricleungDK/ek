@@ -1076,4 +1076,84 @@ H=$(commit "$R" drop-prod-debug)
 out=$(python3 -I "$MR" r2 --repo "$R" --base "$B" --head "$H" --stack rust --test-paths 'src/**'); rc=$?
 eq "$rc" 0 "broad test glob: production debug_assert removal is not counted"
 
+# round 2 area 3: suppressions on masked head text (multi-line, cfg_attr, doc/raw strings), path with space
+R=$(mkrepo r3multi)
+put "$R" src/lib.rs <<'EOF2'
+pub fn f() -> i32 { 1 }
+EOF2
+B=$(commit "$R" base)
+put "$R" src/lib.rs <<'EOF2'
+pub fn f() -> i32 { 1 }
+
+#[allow(
+    dead_code
+)]
+fn g() {}
+EOF2
+H=$(commit "$R" multiline-allow)
+out=$(mr "$R" "$B" "$H"); rc=$?
+eq "$rc" 1 "multi-line #[allow( dead_code )] without reason: exit 1"
+eq "$(jq -r '.entries[0].line' <<<"$out")" 3 "multi-line allow: line = attr start"
+has "$(jq -r '.entries[0].problem' <<<"$out")" "dead_code" "multi-line allow names lint"
+
+R=$(mkrepo r3cfg)
+put "$R" src/lib.rs <<'EOF2'
+pub fn f() -> i32 { 1 }
+EOF2
+B=$(commit "$R" base)
+put "$R" src/lib.rs <<'EOF2'
+pub fn f() -> i32 { 1 }
+
+#[cfg_attr(not(test), allow(dead_code))]
+fn g() {}
+EOF2
+H=$(commit "$R" cfg-attr-allow)
+out=$(mr "$R" "$B" "$H"); rc=$?
+eq "$rc" 1 "cfg_attr(..., allow(dead_code)) without reason: exit 1"
+
+R=$(mkrepo r3doc)
+put "$R" src/lib.rs <<'EOF2'
+pub fn f() -> i32 { 1 }
+EOF2
+B=$(commit "$R" base)
+put "$R" src/lib.rs <<'EOF2'
+pub fn f() -> i32 { 1 }
+
+/// use `#[allow(dead_code)]` to silence this
+pub fn g() -> i32 { 2 }
+EOF2
+H=$(commit "$R" doc-mention)
+out=$(mr "$R" "$B" "$H"); rc=$?
+eq "$rc" 0 "#[allow] inside a doc comment is not a suppression"
+
+R=$(mkrepo r3raw)
+put "$R" src/lib.rs <<'EOF2'
+pub fn f() -> i32 { 1 }
+EOF2
+B=$(commit "$R" base)
+put "$R" src/lib.rs <<'EOF2'
+pub fn f() -> i32 { 1 }
+
+pub fn doc() -> &'static str { r#"#[allow(dead_code)]"# }
+EOF2
+H=$(commit "$R" raw-mention)
+out=$(mr "$R" "$B" "$H"); rc=$?
+eq "$rc" 0 "#[allow] inside a raw string is not a suppression"
+
+R=$(mkrepo r3space)
+put "$R" "src/my mod.rs" <<'EOF2'
+pub fn f() -> i32 { 1 }
+EOF2
+B=$(commit "$R" base)
+put "$R" "src/my mod.rs" <<'EOF2'
+pub fn f() -> i32 { 1 }
+
+#[allow(dead_code)]
+fn g() {}
+EOF2
+H=$(commit "$R" space-path)
+out=$(mr "$R" "$B" "$H"); rc=$?
+eq "$rc" 1 "path with a space: suppression caught"
+eq "$(jq -r '.entries[0].file' <<<"$out")" "src/my mod.rs" "path with a space reported verbatim"
+
 done_tests
