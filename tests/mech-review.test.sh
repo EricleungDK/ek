@@ -1830,4 +1830,50 @@ H=$(commit "$R" control-add-test-in-disabled-mod)
 out=$(mr "$R" "$B" "$H"); rc=$?
 eq "$rc" 1 "new test in an already-disabled mod: ignore entry (new ignored test is a fail)"
 
+# review F5b: #[should_panic] added to an existing test turns a failure into a pass: confirm
+R=$(mkrepo f5bpanic)
+put "$R" tests/a.rs <<'EOF2'
+#[test]
+fn a() {
+    assert_eq!(1, 1);
+}
+EOF2
+B=$(commit "$R" base)
+put "$R" tests/a.rs <<'EOF2'
+#[test]
+#[should_panic]
+fn a() {
+    assert_eq!(1, 1);
+}
+EOF2
+H=$(commit "$R" should-panic-added)
+out=$(mr "$R" "$B" "$H"); rc=$?
+eq "$rc" 0 "should_panic added to existing test: confirm, exit 0"
+eq "$(jq -r '.entries[0].severity' <<<"$out")" confirm "should_panic added: severity confirm"
+eq "$(jq -r '.entries[0].class' <<<"$out")" agent-fixable "should_panic added: class agent-fixable"
+eq "$(jq -r '.entries[0].id' <<<"$out")" "R2-$(printf '%s' 'R2tests/a.rsshould-panic:a' | sha1sum | cut -c1-8)" "should_panic added: id keyed by should-panic:fn"
+R=$(mkrepo f5bnew)
+put "$R" tests/a.rs <<'EOF2'
+#[test]
+fn a() {
+    assert_eq!(1, 1);
+}
+EOF2
+B=$(commit "$R" base)
+put "$R" tests/a.rs <<'EOF2'
+#[test]
+fn a() {
+    assert_eq!(1, 1);
+}
+
+#[test]
+#[should_panic]
+fn b() {
+    panic!("boom");
+}
+EOF2
+H=$(commit "$R" new-should-panic-test)
+out=$(mr "$R" "$B" "$H"); rc=$?
+eq "$rc" 0 "new test with should_panic: clean"
+
 done_tests
