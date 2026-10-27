@@ -48,7 +48,8 @@ def finalize(entries):
         if e["id"] not in seen:
             seen.add(e["id"])
             out.append(e)
-    return sorted(out, key=lambda e: (e["file"], e["line"], e["id"]))
+    # file-level entries (line 0) sort after line-anchored ones within a file
+    return sorted(out, key=lambda e: (e["file"], e["line"] == 0, e["line"], e["id"]))
 
 
 def changes(repo, mb, head):
@@ -94,6 +95,15 @@ def r2(repo, mb, head, adapter, test_globs):
                                      f"test `{f.name}` marked #[ignore]",
                                      "make it pass or fix the code it covers; do not mark it ignored",
                                      "#[ignore] / skip / xfail / only on a test"))
+        if before is not None:
+            whole = adapter.classify(path, test_globs) == "test"
+            nb = sum(1 for a in adapter.assertions(before) if whole or a.fn)
+            na = sum(1 for a in (adapter.assertions(after) if after is not None else []) if whole or a.fn)
+            if na < nb:
+                entries.append(entry("R2", path, 0, "assert-count", "agent-fixable", "fail",
+                                     f"assertions in `{path}` dropped from {nb} to {na}",
+                                     "restore the dropped assertions; strengthen a test instead of removing one",
+                                     f"fewer asserts in changed test file {path}"))
     return entries
 
 
