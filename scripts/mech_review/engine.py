@@ -12,10 +12,6 @@ from .stack import ADAPTERS
 PLUGIN = os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", ".claude-plugin", "plugin.json"))
 CHECKS = ("R1", "R2", "R3", "R4")
 HUNK = re.compile(r"^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@")
-ID = re.compile(r"\b(?:R[1-4]|CI)-[0-9a-f]{8}\b")
-LIST = re.compile(r"^\s*[-*]\s+")
-BOLD_HEAD = re.compile(r"^\*\*.*\*\*:?$")
-GUARD_HEAD = re.compile(r"^(?:#+\s*)?\**\s*guard exceptions\s*\**\s*:?\s*$", re.I)
 SUPPRESS = re.compile(r"#!?\[\s*(allow|expect)\s*\((.*?)\)\s*\]")
 Change = namedtuple("Change", "status old new")
 
@@ -155,7 +151,7 @@ def r2(repo, mb, head, adapter, test_globs, protected_globs):
         if any_glob(ch.old or "", protected_globs) or any_glob(ch.new or "", protected_globs):
             entries.append(entry("R2", ch.new or ch.old, 0, "protected-path", "needs-human", "fail",
                                  f"protected path changed: {ch.new or ch.old}",
-                                 "move this change to its own human-reviewed PR, or list the id under Guard exceptions with a reason",
+                                 "move this change to its own human-reviewed PR; a human decides",
                                  "editing CI, gate scripts or agent docs to get the gate green"))
         # a source file renamed to a non-source path is a deletion; a non-source file renamed to source is an addition
         old = ch.old if ch.old and adapter.classify(ch.old, test_globs) is not None else None
@@ -228,38 +224,6 @@ def r2(repo, mb, head, adapter, test_globs, protected_globs):
     return entries
 
 
-PLACEHOLDER = {"tbd", "todo", "n a", "na", "none", "nothing", "fixme", "wip", "xxx"}
-
-
-def guard_exceptions(pr_body):
-    """ids on list items under a 'Guard exceptions' heading, with a real reason.
-    The section ends at any heading or bold-only line. Reason needs >= 3 letters and not a placeholder."""
-    ids, in_sec = set(), False
-    for line in (pr_body or "").split("\n"):
-        s = line.strip()
-        if GUARD_HEAD.match(s):
-            in_sec = True
-            continue
-        if s.startswith("#") or BOLD_HEAD.match(s):
-            in_sec = False
-            continue
-        if not (in_sec and LIST.match(line)):
-            continue
-        for m in ID.finditer(line):
-            words = re.sub(r"[^A-Za-z]+", " ", line[:m.start()] + " " + line[m.end():]).strip().lower()
-            if len(words.replace(" ", "")) >= 3 and words not in PLACEHOLDER:
-                ids.add(m.group(0))
-    return ids
-
-
-def apply_exceptions(entries, ids):
-    """only agent-fixable fails downgrade; needs-human stays fail (reviewer cannot waive it from the PR body)."""
-    for e in entries:
-        if e["severity"] == "fail" and e["class"] == "agent-fixable" and e["id"] in ids:
-            e["severity"] = "confirm"
-    return entries
-
-
 def envelope(base, head, entries):
     fails = [e for e in entries if e["severity"] == "fail"]
     confirms = [e for e in entries if e["severity"] == "confirm"]
@@ -274,7 +238,7 @@ def envelope(base, head, entries):
     return {"ek": ek_version(), "base": base, "head": head, "checks": checks, "entries": entries, "summary": summary}
 
 
-def run(repo, base_ref, head_ref, stack, test_globs, protected_globs=(), pr_body=None):
+def run(repo, base_ref, head_ref, stack, test_globs, protected_globs=()):
     base = resolve(repo, base_ref)
     head = resolve(repo, head_ref)
     try:
@@ -282,6 +246,5 @@ def run(repo, base_ref, head_ref, stack, test_globs, protected_globs=(), pr_body
     except Die:
         raise Die(f"no merge base for {base_ref} and {head_ref}")
     adapter = ADAPTERS[stack]()
-    entries = apply_exceptions(finalize(r2(repo, mb, head, adapter, test_globs, list(protected_globs))),
-                               guard_exceptions(pr_body))
+    entries = finalize(r2(repo, mb, head, adapter, test_globs, list(protected_globs)))
     return envelope(base, head, entries)

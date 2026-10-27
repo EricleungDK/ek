@@ -27,14 +27,20 @@ envelope: ek (plugin version), base, head (full SHAs), checks, entries, summary.
 
 exit: 0 no fail entries (confirm entries allowed), 1 any fail entry, 2 usage or git error.
 
-Guard exceptions: a PR body (--pr-body) with a heading 'Guard exceptions' listing
-  `<id>: <reason>` lines downgrades that id's fail (class agent-fixable only) to confirm.
-  needs-human entries are never downgraded. Reason needs at least 3 letters beside the id.
+Guard exceptions removed (#27): --pr-body is a usage error (exit 2). A fail stays fail until
+  the code is fixed; a protected-path change is needs-human. Owner decides out of band.
 
 test paths: a .rs file matching a --test-paths glob is test code; every assert in it (helpers too) counts.
   Other .rs files count asserts inside #[test] fns and #[cfg(test)] mods only, never production code.
   Globs: ** any depth, * one segment.
 """
+
+
+class Removed(argparse.Action):
+    """--pr-body tombstone: guard exceptions are gone (#27). Any use is a usage error."""
+
+    def __call__(self, parser, namespace, values, option_string=None):
+        parser.error("--pr-body removed: guard exceptions were removed (#27); a fail stays fail until the code is fixed")
 
 
 def build_parser():
@@ -48,19 +54,9 @@ def build_parser():
     p.add_argument("--stack", required=True, choices=sorted(ADAPTERS), help="language adapter")
     p.add_argument("--test-paths", action="append", default=[], metavar="GLOB", help="test file glob, repeatable")
     p.add_argument("--protected-paths", action="append", default=[], metavar="GLOB", help="protected file glob, repeatable")
-    p.add_argument("--pr-body", metavar="FILE", help="PR body file; its Guard exceptions section downgrades fails")
+    p.add_argument("--pr-body", nargs="?", action=Removed, help=argparse.SUPPRESS)
     p.add_argument("--format", choices=["json", "text"], default="json", help="json (contract, default) or text (summary + entries)")
     return p
-
-
-def read_body(path):
-    if path is None:
-        return None
-    try:
-        with open(path, encoding="utf-8", errors="replace") as f:
-            return f.read()
-    except OSError as e:
-        raise engine.Die(f"cannot read --pr-body {path}: {e.strerror}")
 
 
 def render_text(env):
@@ -75,8 +71,7 @@ def render_text(env):
 def main(argv):
     args = build_parser().parse_args(argv)
     try:
-        body = read_body(args.pr_body)
-        env = engine.run(args.repo, args.base, args.head, args.stack, args.test_paths, args.protected_paths, body)
+        env = engine.run(args.repo, args.base, args.head, args.stack, args.test_paths, args.protected_paths)
     except engine.Die as e:
         print(f"mech-review: {e}", file=sys.stderr)
         return 2
