@@ -44,7 +44,7 @@ Show the units (name, files owned, checklist items, depends on) with the checkli
 - One agent per unit; units touching disjoint files run in parallel, in one message. Run them in the background.
 - Every brief follows [brief-template.md](brief-template.md). An agent starts with none of your context, so the brief is self-contained.
 - **Subagents cannot spawn subagents.** A subagent whose flow (e.g. `/implement`) reaches a step that fans out, code review above all, hands that step to you through the **review relay** below. Research skills and workflows stay with you from the start.
-- Fix loop: each failing unit gets at most **3 rounds** (initial fix plus two retries after CI or verification fails). Count rounds per unit and per mech entry `id`; the first to reach 3 escalates. Hand each failing entry to the engineer verbatim (id, file, line, problem, hint, forbidden). No agent waives a `fail`. After round 3, stop and escalate to the user with evidence.
+- Fix loop: each failing unit gets at most **3 rounds** (initial fix plus two retries after CI or verification fails). Count rounds per unit and per mech entry `id`; the first to reach 3 escalates. Hand each failing or open entry to the engineer verbatim (id, file, line, problem, hint, forbidden), brief or review relay alike, with the rule: its fix commit carries body line `mech: <id>`. No agent waives a `fail`. After round 3, stop and escalate to the user with evidence.
 
 Done when: every unit has a running agent.
 
