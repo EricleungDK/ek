@@ -13,6 +13,8 @@ PLUGIN = os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)
 CHECKS = ("R1", "R2", "R3", "R4")
 HUNK = re.compile(r"^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@")
 ID = re.compile(r"\b(?:R[1-4]|CI)-[0-9a-f]{8}\b")
+LIST = re.compile(r"^\s*[-*]\s+")
+BOLD_HEAD = re.compile(r"^\*\*.*\*\*:?$")
 GUARD_HEAD = re.compile(r"^(?:#+\s*)?\**\s*guard exceptions\s*\**\s*:?\s*$", re.I)
 SUPPRESS = re.compile(r"#!?\[\s*(allow|expect)\s*\((.*?)\)\s*\]")
 Change = namedtuple("Change", "status old new")
@@ -217,21 +219,27 @@ def r2(repo, mb, head, adapter, test_globs, protected_globs):
     return entries
 
 
+PLACEHOLDER = {"tbd", "todo", "n a", "na", "none", "nothing", "fixme", "wip", "xxx"}
+
+
 def guard_exceptions(pr_body):
-    """ids listed under a 'Guard exceptions' heading, each with a reason (>= 3 letters beside the id)."""
+    """ids on list items under a 'Guard exceptions' heading, with a real reason.
+    The section ends at any heading or bold-only line. Reason needs >= 3 letters and not a placeholder."""
     ids, in_sec = set(), False
     for line in (pr_body or "").split("\n"):
         s = line.strip()
         if GUARD_HEAD.match(s):
             in_sec = True
             continue
-        if s.startswith("#"):
+        if s.startswith("#") or BOLD_HEAD.match(s):
             in_sec = False
-        if in_sec:
-            for m in ID.finditer(line):
-                reason = line[:m.start()] + line[m.end():]
-                if len(re.findall(r"[A-Za-z]", reason)) >= 3:
-                    ids.add(m.group(0))
+            continue
+        if not (in_sec and LIST.match(line)):
+            continue
+        for m in ID.finditer(line):
+            words = re.sub(r"[^A-Za-z]+", " ", line[:m.start()] + " " + line[m.end():]).strip().lower()
+            if len(words.replace(" ", "")) >= 3 and words not in PLACEHOLDER:
+                ids.add(m.group(0))
     return ids
 
 
@@ -250,9 +258,10 @@ def envelope(base, head, entries):
     checks["R2"] = {"status": "fail" if fails else "pass", "note": f"{len(fails)} fail, {len(confirms)} confirm"}
     if not entries:
         summary = f"all pass {head}"
+    elif fails:
+        summary = f"fail {head} ({len(fails)} fail, {len(confirms)} confirm)"
     else:
-        verdict = "fail" if fails else "confirm"
-        summary = f"{verdict} {head} ({len(fails)} fail, {len(confirms)} confirm)"
+        summary = f"pass {head}, {len(confirms)} confirm"
     return {"ek": ek_version(), "base": base, "head": head, "checks": checks, "entries": entries, "summary": summary}
 
 
