@@ -2113,4 +2113,86 @@ out=$(mr "$R" "$B" "$H"); rc=$?
 eq "$rc" 1 "a drops an assert while only b calls the gaining helper: exit 1"
 has "$(jq -r '[.entries[].problem] | join(" ")' <<<"$out")" "test \`a\` dropped from 2 to 1" "helper called by b does not explain a"
 
+# review F7: a renamed test with the same asserts is a rename, not a removal + addition
+R=$(mkrepo f7rename)
+put "$R" tests/a.rs <<'EOF2'
+#[test]
+fn adds() {
+    assert_eq!(1 + 1, 2);
+    assert_eq!(2 + 2, 4);
+}
+EOF2
+B=$(commit "$R" base)
+put "$R" tests/a.rs <<'EOF2'
+#[test]
+fn adds_numbers() {
+    assert_eq!(1 + 1, 2);
+    assert_eq!(2 + 2, 4);
+}
+EOF2
+H=$(commit "$R" rename-adds)
+out=$(mr "$R" "$B" "$H"); rc=$?
+eq "$rc" 0 "rename with identical asserts: exit 0"
+eq "$(jq -c .entries <<<"$out")" "[]" "rename with identical asserts: no entries"
+
+R=$(mkrepo f7renamedrop)
+put "$R" tests/a.rs <<'EOF2'
+#[test]
+fn adds() {
+    assert_eq!(1 + 1, 2);
+    assert_eq!(2 + 2, 4);
+}
+EOF2
+B=$(commit "$R" base)
+put "$R" tests/a.rs <<'EOF2'
+#[test]
+fn adds_numbers() {
+    assert_eq!(1 + 1, 2);
+}
+EOF2
+H=$(commit "$R" rename-and-drop)
+out=$(mr "$R" "$B" "$H"); rc=$?
+eq "$rc" 1 "rename that drops an assert: exit 1"
+has "$(jq -r '[.entries[].problem] | join(" ")' <<<"$out")" "test fn \`adds\` removed" "rename+drop: removed entry names adds"
+
+R=$(mkrepo f7renameignored)
+put "$R" tests/a.rs <<'EOF2'
+#[test]
+#[ignore]
+fn adds() {
+    assert_eq!(1 + 1, 2);
+}
+EOF2
+B=$(commit "$R" base)
+put "$R" tests/a.rs <<'EOF2'
+#[test]
+#[ignore]
+fn adds_numbers() {
+    assert_eq!(1 + 1, 2);
+}
+EOF2
+H=$(commit "$R" rename-already-ignored)
+out=$(mr "$R" "$B" "$H"); rc=$?
+eq "$rc" 0 "rename of an already-ignored test: not a new ignore, exit 0"
+
+R=$(mkrepo f7renamepanic)
+put "$R" tests/a.rs <<'EOF2'
+#[test]
+fn adds() {
+    assert_eq!(1 + 1, 2);
+}
+EOF2
+B=$(commit "$R" base)
+put "$R" tests/a.rs <<'EOF2'
+#[test]
+#[should_panic]
+fn adds_numbers() {
+    assert_eq!(1 + 1, 2);
+}
+EOF2
+H=$(commit "$R" rename-and-should-panic)
+out=$(mr "$R" "$B" "$H"); rc=$?
+eq "$rc" 0 "rename adding should_panic: confirm, exit 0"
+eq "$(jq -r '.entries[0].id' <<<"$out")" "R2-$(printf '%s' 'R2tests/a.rsshould-panic:adds_numbers' | sha1sum | cut -c1-8)" "rename adding should_panic: keyed by new name"
+
 done_tests
