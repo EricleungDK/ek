@@ -3,7 +3,9 @@
 
 usage: python3 -I scripts/mech-comment.py --pr N [--envelope FILE] [--head SHA] [--reason TEXT]
 env: GITHUB_TOKEN, GITHUB_REPOSITORY (owner/repo), GITHUB_API_URL (default https://api.github.com),
-     GITHUB_STEP_SUMMARY (optional: rendered comment is also appended there).
+     GITHUB_STEP_SUMMARY (optional: rendered comment is also appended there),
+     MECH_COMMENT_AUTHOR (login whose marker comment is edited; default github-actions[bot]).
+superseded: if the PR head is no longer this run's head, the comment is left alone (exit = own rc, 0 on crash).
 exit: 0 no fail entries; 1 any fail entry; 2 usage; 3 GitHub API error;
       4 no usable result (a crash comment is posted in place of the result).
 """
@@ -48,6 +50,7 @@ def main(argv):
         print("mech-comment: GITHUB_REPOSITORY not set", file=sys.stderr)
         return 2
     api = os.environ.get("GITHUB_API_URL", "https://api.github.com").rstrip("/")
+    author = os.environ.get("MECH_COMMENT_AUTHOR") or C.DEFAULT_AUTHOR
 
     env = load(args.envelope)
     if env is not None and args.head and env["head"] != args.head:
@@ -68,12 +71,16 @@ def main(argv):
         with open(summary, "a") as fh:
             fh.write(body)
 
+    run_head = env["head"] if env is not None else args.head
     try:
-        action, cid = C.upsert(C.http_call(token), api, repo, args.pr, body)
+        action, out = C.publish(C.http_call(token), api, repo, args.pr, run_head, body, author)
     except C.ApiError as e:
         print(f"mech-comment: {e}", file=sys.stderr)
         return 3
-    print(f"mech-comment: {action} comment {cid}", file=sys.stderr)
+    if action == "superseded":
+        print(f"mech-comment: superseded by {out}; comment left as is", file=sys.stderr)
+        return rc if env is not None else 0
+    print(f"mech-comment: {action} comment {out}", file=sys.stderr)
     return rc
 
 

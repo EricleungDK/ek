@@ -87,29 +87,40 @@ class ApiError(Exception):
 
 
 PER_PAGE = 100
+DEFAULT_AUTHOR = "github-actions[bot]"  # login of the GITHUB_TOKEN actor; override with MECH_COMMENT_AUTHOR
 
 
-def find_marker(call, api, repo, pr):
-    """Id of the first issue comment whose body starts with MARKER, paging until a short page. None if absent."""
+def find_marker(call, api, repo, pr, author=DEFAULT_AUTHOR):
+    """Id of the first issue comment by `author` whose body starts with MARKER, paging until a short page. None if absent."""
     page = 1
     while True:
         items = call("GET", f"{api}/repos/{repo}/issues/{pr}/comments?per_page={PER_PAGE}&page={page}", None)
         for c in items:
-            if c.get("body", "").startswith(MARKER):
+            if c.get("body", "").startswith(MARKER) and (c.get("user") or {}).get("login") == author:
                 return c["id"]
         if len(items) < PER_PAGE:
             return None
         page += 1
 
 
-def upsert(call, api, repo, pr, body):
-    """Edit the marker comment in place, or create it. Returns (action, comment id)."""
-    cid = find_marker(call, api, repo, pr)
+def upsert(call, api, repo, pr, body, author=DEFAULT_AUTHOR):
+    """Edit the author's marker comment in place, or create it. Returns (action, comment id)."""
+    cid = find_marker(call, api, repo, pr, author)
     if cid is None:
         res = call("POST", f"{api}/repos/{repo}/issues/{pr}/comments", {"body": body})
         return "created", res["id"]
     call("PATCH", f"{api}/repos/{repo}/issues/comments/{cid}", {"body": body})
     return "updated", cid
+
+
+def publish(call, api, repo, pr, head, body, author=DEFAULT_AUTHOR):
+    """upsert, unless the PR head has moved past `head`: then leave the comment alone.
+    Returns ("superseded", current head sha) or the upsert result. Check-then-write: a
+    newer run landing between the GET and the write can still be overwritten."""
+    current = call("GET", f"{api}/repos/{repo}/pulls/{pr}", None)["head"]["sha"]
+    if current != head:
+        return "superseded", current
+    return upsert(call, api, repo, pr, body, author)
 
 
 def http_call(token):
