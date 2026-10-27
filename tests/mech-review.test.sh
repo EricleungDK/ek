@@ -2195,4 +2195,30 @@ out=$(mr "$R" "$B" "$H"); rc=$?
 eq "$rc" 0 "rename adding should_panic: confirm, exit 0"
 eq "$(jq -r '.entries[0].id' <<<"$out")" "R2-$(printf '%s' 'R2tests/a.rsshould-panic:adds_numbers' | sha1sum | cut -c1-8)" "rename adding should_panic: keyed by new name"
 
+# review round 2: a method call x.check() is not a call to the free fn check
+R=$(mkrepo f2method)
+put "$R" tests/a.rs <<'EOF2'
+#[test]
+fn a() {
+    assert_eq!(1, 1);
+    assert_eq!(2, 2);
+}
+EOF2
+B=$(commit "$R" base)
+put "$R" tests/a.rs <<'EOF2'
+fn check() {
+    assert!(true);
+}
+
+#[test]
+fn a() {
+    x.check();
+    assert_eq!(1, 1);
+}
+EOF2
+H=$(commit "$R" method-call-is-not-a-helper-call)
+out=$(mr "$R" "$B" "$H"); rc=$?
+eq "$rc" 1 "method call x.check() does not explain a drop: exit 1"
+has "$(jq -r '[.entries[].problem] | join(" ")' <<<"$out")" "test \`a\` dropped from 2 to 1" "method call: a named"
+
 done_tests
