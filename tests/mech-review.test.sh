@@ -243,10 +243,11 @@ eq "$(jq -r '.entries[0].check' <<<"$out")" R2 "dropped assert R2"
 eq "$(jq -r '.entries[0].class' <<<"$out")" agent-fixable "dropped assert class"
 eq "$(jq -r '.entries[0].severity' <<<"$out")" fail "dropped assert severity fail"
 eq "$(jq -r '.entries[0].file' <<<"$out")" tests/a.rs "dropped assert file"
-eq "$(jq -r '.entries[0].line' <<<"$out")" 0 "file-level entry line 0"
+eq "$(jq -r '.entries[0].line' <<<"$out")" 2 "per-fn entry line = head fn line"
 has "$(jq -r '.entries[0].problem' <<<"$out")" "from 2 to 1" "problem gives counts"
-eq "$(jq -r '.entries[0].forbidden' <<<"$out")" "fewer asserts in changed test file tests/a.rs" "forbidden names file"
-eq "$(jq -r '.entries[0].id' <<<"$out")" "R2-$(printf '%s' 'R2tests/a.rsassert-count' | sha1sum | cut -c1-8)" "assert id keyed by file+assert-count"
+eq "$(jq -r '.entries[0].forbidden' <<<"$out")" "fewer asserts in test a" "forbidden names the test fn"
+eq "$(jq -r '.entries[0].id' <<<"$out")" "R2-$(printf '%s' 'R2tests/a.rsassert-count:a' | sha1sum | cut -c1-8)" "assert id keyed by file+fn name"
+has "$(jq -r '.entries[0].problem' <<<"$out")" "test \`a\`" "problem names the test fn"
 
 # commenting an assert out is a drop
 put "$R" tests/a.rs <<'EOF2'
@@ -1597,5 +1598,87 @@ H=$(commit "$R" two-fails)
 out=$(mr "$R" "$B" "$H"); rc=$?
 eq "$rc" 1 "two fails: exit 1"
 eq "$(jq -r .summary <<<"$out")" "fail $H (2 fail, 0 confirm; ran: R2; skipped: R1 R3 R4)" "two fails: summary names counts and skipped checks"
+
+# #26: asserts counted per surviving test fn. A move from test a to test b is a fail for a (not a helper)
+R=$(mkrepo r26move)
+put "$R" tests/a.rs <<'EOF2'
+#[test]
+fn a() {
+    assert_eq!(1, 1);
+    assert_eq!(2, 2);
+}
+
+#[test]
+fn b() {
+    assert_eq!(3, 3);
+}
+EOF2
+B=$(commit "$R" base)
+put "$R" tests/a.rs <<'EOF2'
+#[test]
+fn a() {
+    assert_eq!(1, 1);
+}
+
+#[test]
+fn b() {
+    assert_eq!(3, 3);
+    assert_eq!(2, 2);
+}
+EOF2
+H=$(commit "$R" move-assert-a-to-b)
+out=$(mr "$R" "$B" "$H"); rc=$?
+eq "$rc" 1 "assert moved a to b: exit 1"
+eq "$(jq -r '.entries|length' <<<"$out")" 1 "assert moved a to b: one entry, for a"
+eq "$(jq -r '.entries[0].severity' <<<"$out")" fail "moved assert: severity fail"
+eq "$(jq -r '.entries[0].class' <<<"$out")" agent-fixable "moved assert: class agent-fixable"
+has "$(jq -r '.entries[0].problem' <<<"$out")" "test \`a\` dropped from 2 to 1" "moved assert: problem names a, 2 to 1"
+eq "$(jq -r '.entries[0].id' <<<"$out")" "R2-$(printf '%s' 'R2tests/a.rsassert-count:a' | sha1sum | cut -c1-8)" "moved assert: id keyed by fn a"
+
+# ids line-independent: same move with lines shifted in head keeps the id
+put "$R" tests/a.rs <<'EOF2'
+// header
+// lines
+// shifted
+
+#[test]
+fn a() {
+    assert_eq!(1, 1);
+}
+
+#[test]
+fn b() {
+    assert_eq!(3, 3);
+    assert_eq!(2, 2);
+}
+EOF2
+H2=$(commit "$R" move-lines-shifted)
+id2=$(mr "$R" "$B" "$H2" | jq -r '.entries[0].id')
+eq "$id2" "R2-$(printf '%s' 'R2tests/a.rsassert-count:a' | sha1sum | cut -c1-8)" "moved assert: id unchanged when lines shift"
+
+# a moved assert into a helper (not a test fn) is an extraction: clean
+R=$(mkrepo r26helper)
+put "$R" tests/a.rs <<'EOF2'
+#[test]
+fn a() {
+    assert_eq!(f(1), 1);
+    assert_eq!(f(2), 2);
+}
+EOF2
+B=$(commit "$R" base)
+put "$R" tests/a.rs <<'EOF2'
+fn check(x: i32) {
+    assert_eq!(f(x), x);
+}
+
+#[test]
+fn a() {
+    check(1);
+    assert_eq!(f(2), 2);
+}
+EOF2
+H=$(commit "$R" extract-helper-26)
+out=$(mr "$R" "$B" "$H"); rc=$?
+eq "$rc" 0 "per-fn: assert extracted into helper, helper gains the count: clean"
 
 done_tests
