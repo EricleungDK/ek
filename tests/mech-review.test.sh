@@ -71,7 +71,7 @@ H=$(commit "$R" drop-b)
 out=$(mr "$R" "$B" "$H"); rc=$?
 eq "$rc" 1 "removed test fn exit 1"
 eq "$(jq -r .checks.R2.status <<<"$out")" fail "R2 status fail"
-eq "$(jq -r '.entries|length' <<<"$out")" 1 "one entry"
+eq "$(jq -r '.entries|length' <<<"$out")" 2 "removed fn + file-level fewer-asserts (rules are independent)"
 e() { jq -r ".entries[0].$1" <<<"$out"; }
 eq "$(e check)" R2 "entry check R2"
 eq "$(e class)" agent-fixable "entry class agent-fixable"
@@ -218,5 +218,132 @@ EOF2
 H=$(commit "$R" add-quick)
 out=$(mr "$R" "$B" "$H"); rc=$?
 eq "$rc" 0 "pre-existing ignore untouched is clean"
+
+# slice 4: R2 fewer asserts in a changed test file (per file)
+R=$(mkrepo s4)
+put "$R" tests/a.rs <<'EOF2'
+#[test]
+fn a() {
+    assert_eq!(1, 1);
+    assert_eq!(2, 2);
+}
+EOF2
+B=$(commit "$R" base)
+put "$R" tests/a.rs <<'EOF2'
+#[test]
+fn a() {
+    assert_eq!(1, 1);
+}
+EOF2
+H=$(commit "$R" drop-assert)
+out=$(mr "$R" "$B" "$H"); rc=$?
+eq "$rc" 1 "dropped assert exit 1"
+eq "$(jq -r '.entries|length' <<<"$out")" 1 "dropped assert one entry"
+eq "$(jq -r '.entries[0].check' <<<"$out")" R2 "dropped assert R2"
+eq "$(jq -r '.entries[0].class' <<<"$out")" agent-fixable "dropped assert class"
+eq "$(jq -r '.entries[0].severity' <<<"$out")" fail "dropped assert severity fail"
+eq "$(jq -r '.entries[0].file' <<<"$out")" tests/a.rs "dropped assert file"
+eq "$(jq -r '.entries[0].line' <<<"$out")" 0 "file-level entry line 0"
+has "$(jq -r '.entries[0].problem' <<<"$out")" "from 2 to 1" "problem gives counts"
+eq "$(jq -r '.entries[0].forbidden' <<<"$out")" "fewer asserts in changed test file tests/a.rs" "forbidden names file"
+eq "$(jq -r '.entries[0].id' <<<"$out")" "R2-$(printf '%s' 'R2tests/a.rsassert-count' | sha1sum | cut -c1-8)" "assert id keyed by file+assert-count"
+
+# commenting an assert out is a drop
+put "$R" tests/a.rs <<'EOF2'
+#[test]
+fn a() {
+    assert_eq!(1, 1);
+    // assert_eq!(2, 2);
+}
+EOF2
+H2=$(commit "$R" comment-assert)
+out=$(mr "$R" "$B" "$H2"); rc=$?
+eq "$rc" 1 "commented-out assert counts as dropped"
+
+# same count, edited body: clean
+R=$(mkrepo s4same)
+put "$R" tests/a.rs <<'EOF2'
+#[test]
+fn a() {
+    assert!(v.len() == 1);
+}
+EOF2
+B=$(commit "$R" base)
+put "$R" tests/a.rs <<'EOF2'
+#[test]
+fn a() {
+    assert!(v.len() == 1 && v[0] == 3);
+}
+EOF2
+H=$(commit "$R" stronger)
+out=$(mr "$R" "$B" "$H"); rc=$?
+eq "$rc" 0 "same assert count edited is clean"
+
+# production debug_assert removed: not a test assert, clean
+R=$(mkrepo s4prod)
+put "$R" src/lib.rs <<'EOF2'
+pub fn f(x: i32) -> i32 {
+    debug_assert!(x > 0);
+    x
+}
+EOF2
+B=$(commit "$R" base)
+put "$R" src/lib.rs <<'EOF2'
+pub fn f(x: i32) -> i32 {
+    x
+}
+EOF2
+H=$(commit "$R" drop-debug)
+out=$(mr "$R" "$B" "$H"); rc=$?
+eq "$rc" 0 "production debug_assert removal is clean"
+
+# inline test assert dropped in src file: fail
+R=$(mkrepo s4inline)
+put "$R" src/lib.rs <<'EOF2'
+pub fn f() -> i32 { 1 }
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn f_is_one() {
+        assert_eq!(super::f(), 1);
+        assert!(super::f() > 0);
+    }
+}
+EOF2
+B=$(commit "$R" base)
+put "$R" src/lib.rs <<'EOF2'
+pub fn f() -> i32 { 1 }
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn f_is_one() {
+        assert_eq!(super::f(), 1);
+    }
+}
+EOF2
+H=$(commit "$R" drop-inline)
+out=$(mr "$R" "$B" "$H"); rc=$?
+eq "$rc" 1 "inline test assert drop exit 1"
+eq "$(jq -r '.entries[0].file' <<<"$out")" src/lib.rs "inline drop names src file"
+
+# helper (no #[test]) in a test path: whole file counts
+R=$(mkrepo s4helper)
+put "$R" tests/helpers.rs <<'EOF2'
+pub fn check(v: i32) {
+    assert!(v > 0);
+    assert!(v < 10);
+}
+EOF2
+B=$(commit "$R" base)
+put "$R" tests/helpers.rs <<'EOF2'
+pub fn check(v: i32) {
+    assert!(v > 0);
+}
+EOF2
+H=$(commit "$R" drop-helper)
+out=$(mr "$R" "$B" "$H"); rc=$?
+eq "$rc" 1 "helper assert drop in test path exit 1"
 
 done_tests
