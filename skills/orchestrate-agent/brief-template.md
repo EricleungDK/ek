@@ -21,7 +21,7 @@ Tasks:
 3. Keep guards and checks at full strength. Forbidden: delete, skip or weaken a test; change an expected value to match output; suppress a lint without reason; edit protected paths; pass a test before the fix. Full table: testing standard §3. No waivers.
 4. Verify: <exact commands, and how many runs>.
 5. Docs: <task log entry, report section, SOP rule if reusable>.
-6. Commit on <branch>. Commit message ends with:
+6. Commit on <branch>. A fix for a mech entry carries body line `mech: <id>` (rounds count per id). Commit message ends with:
    <attribution trailer>
 7. Review: you cannot spawn agents, so the orchestrator runs R2, then your review. Stop and report a REVIEW REQUEST: branch, base SHA, head SHA, checklist items covered, files changed, focus areas. Wait; findings arrive by message. Fix the real ones red-first, re-verify, then finish or request review again.
 8. Push: <yes after review passes, then watch `gh pr checks <n> --watch` / no>.
