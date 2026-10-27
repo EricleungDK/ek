@@ -1876,4 +1876,74 @@ H=$(commit "$R" new-should-panic-test)
 out=$(mr "$R" "$B" "$H"); rc=$?
 eq "$rc" 0 "new test with should_panic: clean"
 
+# review F3: test fn identity is mod-qualified; same name in two mods is two tests
+R=$(mkrepo f3shift)
+put "$R" tests/a.rs <<'EOF2'
+mod m1 {
+    #[test]
+    fn works() {
+        assert_eq!(1, 1);
+        assert_eq!(2, 2);
+    }
+}
+
+mod m2 {
+    #[test]
+    fn works() {
+        assert_eq!(3, 3);
+    }
+}
+EOF2
+B=$(commit "$R" base)
+put "$R" tests/a.rs <<'EOF2'
+mod m1 {
+    #[test]
+    fn works() {
+        assert_eq!(1, 1);
+    }
+}
+
+mod m2 {
+    #[test]
+    fn works() {
+        assert_eq!(3, 3);
+        assert_eq!(2, 2);
+    }
+}
+EOF2
+H=$(commit "$R" shift-assert-m1-to-m2)
+out=$(mr "$R" "$B" "$H"); rc=$?
+eq "$rc" 1 "assert moved from m1::works to m2::works: exit 1"
+has "$(jq -r '[.entries[].problem] | join(" ")' <<<"$out")" "m1::works" "problem names m1::works"
+
+R=$(mkrepo f3removed)
+put "$R" tests/a.rs <<'EOF2'
+mod m1 {
+    #[test]
+    fn works() {
+        assert_eq!(1, 1);
+    }
+}
+
+mod m2 {
+    #[test]
+    fn works() {
+        assert_eq!(3, 3);
+    }
+}
+EOF2
+B=$(commit "$R" base)
+put "$R" tests/a.rs <<'EOF2'
+mod m2 {
+    #[test]
+    fn works() {
+        assert_eq!(3, 3);
+    }
+}
+EOF2
+H=$(commit "$R" delete-m1-works)
+out=$(mr "$R" "$B" "$H"); rc=$?
+eq "$rc" 1 "deleting m1::works while m2::works exists: exit 1"
+has "$(jq -r '[.entries[].problem] | join(" ")' <<<"$out")" "m1::works" "removed entry names m1::works"
+
 done_tests
