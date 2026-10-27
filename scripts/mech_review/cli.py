@@ -7,8 +7,39 @@ from . import engine
 from .stack import ADAPTERS
 
 
+HELP = """\
+mechanical PR checks over base...head (merge-base diff). Prints the contract JSON.
+
+checks (status in envelope: pass | fail | partial | n/a | skipped):
+  R2  test-diff guard (implemented): removed test fn; added #[ignore]; fewer asserts
+      in a changed test file; added #[allow]/#[expect] without reason= or same-line
+      comment; changed expected value (confirm); change under protected paths (needs-human)
+  R1, R3, R4: not implemented yet, always skipped.
+  `r2` and `all` run the same implemented checks.
+
+entry: id, check, class (agent-fixable | needs-human | env), severity (fail | confirm),
+  file, line (0 = file-level), problem, hint, forbidden.
+  id = <check>-<first 8 hex of sha1(check + file + key)>; key = test fn name or rule
+  (e.g. dead_code, assert-count, protected-path). Never depends on line numbers.
+
+envelope: ek (plugin version), base, head (full SHAs), checks, entries, summary.
+  summary is `all pass <head sha>` when there are no entries.
+
+exit: 0 no fail entries (confirm entries allowed), 1 any fail entry, 2 usage or git error.
+
+Guard exceptions: a PR body (--pr-body) with a heading 'Guard exceptions' listing
+  `<id>: <reason>` lines downgrades that id's fail (class agent-fixable only) to confirm.
+  needs-human entries are never downgraded. Reason needs at least 3 letters beside the id.
+
+test paths: a .rs file matching a --test-paths glob is a test file; its assert count covers the
+  whole file. Other .rs files count only asserts inside #[test] fns. Globs: ** any depth, * one segment.
+"""
+
+
 def build_parser():
-    p = argparse.ArgumentParser(prog="mech-review.py", description="mechanical PR checks; prints contract JSON")
+    p = argparse.ArgumentParser(prog="mech-review.py", description=HELP, formatter_class=argparse.RawDescriptionHelpFormatter,
+                                epilog="example: python3 -I scripts/mech-review.py r2 --repo . --base main --head HEAD "
+                                       "--stack rust --test-paths 'tests/**' --protected-paths '.github/**'")
     p.add_argument("check", choices=["r2", "all"], help="r2: test-diff guard; all: every implemented check")
     p.add_argument("--repo", default=".", help="git repo (default .)")
     p.add_argument("--base", required=True, help="base ref")
