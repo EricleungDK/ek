@@ -63,12 +63,15 @@ def json_block(body):
 class Fake:
     """Offline transport: GET pages of comments, POST/PATCH recorded."""
 
-    def __init__(self, pages=None):
+    def __init__(self, pages=None, pr_head=None):
         self.pages = pages or {}
+        self.pr_head = pr_head
         self.calls = []
 
     def __call__(self, method, url, payload=None):
         self.calls.append((method, url, payload))
+        if method == "GET" and "/pulls/" in url:
+            return {"head": {"sha": self.pr_head}}
         if method == "GET":
             page = int(parse_qs(urlparse(url).query).get("page", ["1"])[0])
             return self.pages.get(page, [])
@@ -138,7 +141,7 @@ check("upsert: POST carries the body", f.calls[-1][2] == {"body": C.MARKER + "\n
 check("upsert: single page not re-requested", methods(f).count("GET") == 1, str(methods(f)))
 
 f = Fake({1: [{"id": i, "body": "unrelated"} for i in range(1, 101)],
-          2: [{"id": 77, "body": C.MARKER + "\nold"}]})
+          2: [{"id": 77, "user": {"login": "github-actions[bot]"}, "body": C.MARKER + "\nold"}]})
 action, cid = C.upsert(f, API, REPO, 5, C.MARKER + "\nnew")
 check("upsert: paginates to find marker comment on page 2", action == "updated" and cid == 77, f"{action} {cid}")
 check("upsert: PATCH the existing comment id",
@@ -154,8 +157,34 @@ f = Fake({1: [{"id": 5, "body": "quoting the marker\n" + C.MARKER}]})
 action, cid = C.upsert(f, API, REPO, 5, C.MARKER + "\nnew")
 check("upsert: marker quoted mid-body is not our comment", action == "created", str(action))
 
+f = Fake({1: [{"id": 5, "user": {"login": "mallory"}, "body": C.MARKER + "\nforged"}]})
+action, cid = C.upsert(f, API, REPO, 5, C.MARKER + "\nnew")
+check("upsert: forged marker from another user is ignored -> created", action == "created" and "PATCH" not in methods(f), str(f.calls))
+
+f = Fake({1: [{"id": 5, "user": {"login": "mallory"}, "body": C.MARKER + "\nforged"},
+              {"id": 77, "user": {"login": "github-actions[bot]"}, "body": C.MARKER + "\nold"}]})
+action, cid = C.upsert(f, API, REPO, 5, C.MARKER + "\nnew")
+check("upsert: own bot comment patched past a forged one", action == "updated" and cid == 77, f"{action} {cid}")
+
+f = Fake({1: [{"id": 9, "user": {"login": "my-app[bot]"}, "body": C.MARKER + "\nold"}]})
+action, cid = C.upsert(f, API, REPO, 5, C.MARKER + "\nnew", author="my-app[bot]")
+check("upsert: author override matches that login", action == "updated" and cid == 9, f"{action} {cid}")
+
+f = Fake(pr_head="d" * 40)
+out = C.publish(f, API, REPO, 5, SHA, C.MARKER + "\nnew")
+check("publish: PR head moved on -> superseded, no write",
+      out == ("superseded", "d" * 40) and methods(f) == ["GET"], f"{out} {f.calls}")
+f = Fake(pr_head=SHA)
+out = C.publish(f, API, REPO, 5, SHA, C.MARKER + "\nnew")
+check("publish: PR head is this run's head -> written", out[0] == "created", str(out))
+
 # ---- CLI against a local HTTP server (real transport, offline) ----
 LOG = []
+PR_HEAD = [SHA]
+COMMENTS_P1 = [
+    {"id": 88, "user": {"login": "mallory"}, "body": C.MARKER + "\nforged"},
+    {"id": 77, "user": {"login": "github-actions[bot]"}, "body": C.MARKER + "\nold"},
+]
 
 
 class H(BaseHTTPRequestHandler):
@@ -169,8 +198,10 @@ class H(BaseHTTPRequestHandler):
 
     def do_GET(self):
         LOG.append(("GET", self.path, self.headers.get("Authorization")))
+        if "/pulls/" in self.path:
+            return self._send(200, {"head": {"sha": PR_HEAD[0]}})
         page = int(parse_qs(urlparse(self.path).query).get("page", ["1"])[0])
-        self._send(200, [{"id": 77, "body": C.MARKER + "\nold"}] if page == 1 else [])
+        self._send(200, COMMENTS_P1 if page == 1 else [])
 
     def do_PATCH(self):
         body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
@@ -233,6 +264,7 @@ check("cli: crash edits the sticky comment, no duplicate", any(m == "PATCH" for 
 
 # a stale envelope (head is not the PR head) must never be posted as the result
 OTHER = "c" * 40
+PR_HEAD[0] = OTHER
 LOG.clear()
 p = run_cli(["--pr", "5", "--envelope", envp, "--head", OTHER])
 check("cli: stale envelope (other head) exits 4", p.returncode == 4, f"rc={p.returncode} {p.stderr}")
@@ -240,6 +272,25 @@ patched = [b.get("body", "") for m, _, b in LOG if m == "PATCH"]
 check("cli: stale envelope edits in a crash notice for the PR head",
       patched and "no result" in patched[0] and OTHER in patched[0] and "R2-deadbeef" not in patched[0],
       str(patched))
+
+PR_HEAD[0] = SHA
+
+# superseded: the PR head moved on, so this run must leave the comment alone
+PR_HEAD[0] = "d" * 40
+LOG.clear()
+p = run_cli(["--pr", "5", "--envelope", envp])
+check("cli: superseded run exits its own rc", p.returncode == 1, f"rc={p.returncode} {p.stderr}")
+check("cli: superseded run writes nothing", LOG and not any(m in ("POST", "PATCH") for m, _, _ in LOG), str(LOG))
+check("cli: superseded names the newer sha", ("superseded by " + "d" * 40) in p.stderr, p.stderr)
+LOG.clear()
+p = run_cli(["--pr", "5", "--envelope", os.path.join(tmp, "missing.json"), "--head", SHA, "--reason", "x"])
+check("cli: superseded crash run exits 0", p.returncode == 0, f"rc={p.returncode} {p.stderr}")
+check("cli: superseded crash run writes nothing", LOG and not any(m in ("POST", "PATCH") for m, _, _ in LOG), str(LOG))
+PR_HEAD[0] = SHA
+
+LOG.clear()
+p = run_cli(["--pr", "5", "--envelope", envp], {"MECH_COMMENT_AUTHOR": "mallory"})
+check("cli: MECH_COMMENT_AUTHOR overrides the author", any(m == "PATCH" and u == "/repos/o/r/issues/comments/88" for m, u, _ in LOG), str(LOG))
 
 p = run_cli(["--pr", "5", "--envelope", envp], {"GITHUB_TOKEN": None})
 check("cli: missing GITHUB_TOKEN is a usage error (exit 2)", p.returncode == 2 and "GITHUB_TOKEN" in p.stderr, p.stderr)
