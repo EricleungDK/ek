@@ -1946,4 +1946,70 @@ out=$(mr "$R" "$B" "$H"); rc=$?
 eq "$rc" 1 "deleting m1::works while m2::works exists: exit 1"
 has "$(jq -r '[.entries[].problem] | join(" ")' <<<"$out")" "m1::works" "removed entry names m1::works"
 
+# review F1: in-place weakening of any assert kind is confirm; reorder stays clean
+R=$(mkrepo f1other)
+put "$R" tests/a.rs <<'EOF2'
+#[test]
+fn t() {
+    let v = vec![1, 2, 3];
+    assert!(v.len() > 2);
+}
+EOF2
+B=$(commit "$R" base)
+put "$R" tests/a.rs <<'EOF2'
+#[test]
+fn t() {
+    let v = vec![1, 2, 3];
+    assert!(true);
+}
+EOF2
+H=$(commit "$R" weaken-bool-assert)
+out=$(mr "$R" "$B" "$H"); rc=$?
+eq "$rc" 0 "assert!(v.len() > 2) -> assert!(true): confirm, exit 0"
+eq "$(jq -r '.entries[0].id' <<<"$out")" "R2-$(printf '%s' 'R2tests/a.rsassert-replaced:t' | sha1sum | cut -c1-8)" "bool weakening: id keyed by assert-replaced:t"
+eq "$(jq -r '.entries[0].severity' <<<"$out")" confirm "bool weakening: severity confirm"
+has "$(jq -r '.entries[0].problem' <<<"$out")" "assert!(v.len() > 2)" "bool weakening: problem shows old assert"
+
+R=$(mkrepo f1parse)
+put "$R" tests/a.rs <<'EOF2'
+#[test]
+fn t() {
+    assert!(parse("1").is_some());
+}
+EOF2
+B=$(commit "$R" base)
+put "$R" tests/a.rs <<'EOF2'
+#[test]
+fn t() {
+    assert!(true);
+}
+EOF2
+H=$(commit "$R" weaken-is-some)
+out=$(mr "$R" "$B" "$H"); rc=$?
+eq "$rc" 0 "assert!(parse(\"1\").is_some()) -> assert!(true): confirm, exit 0"
+eq "$(jq -r '.entries|length' <<<"$out")" 1 "is_some weakening: one entry"
+
+R=$(mkrepo f1reorder)
+put "$R" tests/a.rs <<'EOF2'
+#[test]
+fn t() {
+    let v = vec![1, 2, 3];
+    assert!(v.len() > 2);
+    assert!(v[0] == 1);
+}
+EOF2
+B=$(commit "$R" base)
+put "$R" tests/a.rs <<'EOF2'
+#[test]
+fn t() {
+    let v = vec![1, 2, 3];
+    assert!(v[0] == 1);
+    assert!(v.len() > 2);
+}
+EOF2
+H=$(commit "$R" reorder-asserts)
+out=$(mr "$R" "$B" "$H"); rc=$?
+eq "$rc" 0 "reordered asserts: exit 0"
+eq "$(jq -c .entries <<<"$out")" "[]" "reordered asserts: no entries"
+
 done_tests
