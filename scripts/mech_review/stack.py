@@ -15,7 +15,11 @@ from collections import namedtuple
 from .globs import any_glob
 
 TestFn = namedtuple("TestFn", "name line markers")
-Assertion = namedtuple("Assertion", "line fn scope kind left right text")
+Assertion = namedtuple("Assertion", "line fn scope kind left right text owner")
+Item = namedtuple("Item", "qname line is_test markers body")
+CFG_TEST = re.compile(r"#\[\s*cfg\s*\(\s*test\s*\)\s*\]")
+BODY_END = re.compile(r"[{;]")
+ATTR = re.compile(r"#\[[^\]]*\]")
 Suppression = namedtuple("Suppression", "line end_line kind lints lint_text reason")
 
 RAW = re.compile(r'(?:br|cr|r)(#*)"')
@@ -159,6 +163,15 @@ class Adapter:
     def suppressions(self, text):
         raise NotImplementedError
 
+    def calls(self, text):
+        raise NotImplementedError
+
+
+def _innermost(spans, pos):
+    """name of the innermost (name, open, close) span containing pos, or None."""
+    hits = [s for s in spans if s[1] <= pos < s[2]]
+    return max(hits, key=lambda s: s[1])[0] if hits else None
+
 
 class RustAdapter(Adapter):
     name = "rust"
@@ -168,38 +181,46 @@ class RustAdapter(Adapter):
             return None
         return "test" if any_glob(path, test_globs) else "prod"
 
-    def _scan(self, text):
+    @staticmethod
+    def _body(m, pos):
+        """(open, close) of the fn body whose signature starts at pos, or None (declaration only)."""
+        p = m.find("(", pos)
+        if p < 0:
+            return None
+        mm = BODY_END.search(m, close_of(m, p) + 1)
+        if not mm or mm.group() == ";":
+            return None
+        return (mm.start(), close_of(m, mm.start()))
+
+    def _items(self, text):
+        """(masked text, mods, fn items). mods: (attrs, open, close, name). Names are qualified by enclosing mods."""
         m = mask(text)
-        # a test inside a mod disabled by cfg (cfg(any()), cfg(FALSE), cfg(not(test))) is disabled too
         mods = [(mo.group(1), mo.end() - 1, close_of(m, mo.end() - 1), mo.group(2)) for mo in MOD.finditer(m)]
-        fns = []
+        items = []
         for f in FN.finditer(m):
-            attrs = re.findall(r"#\[[^\]]*\]", f.group(1))
-            if not any(TEST_ATTR.match(a) for a in attrs):
-                continue
-            inside_mods = [(grp, name) for grp, b, e, name in mods if b < f.start() < e]
-            mod_attrs = [a for grp, _ in inside_mods for a in re.findall(r"#\[[^\]]*\]", grp)]
-            qname = "::".join([name for _, name in inside_mods] + [f.group(2)])
+            attrs = ATTR.findall(f.group(1))
+            inside = [(grp, name) for grp, b, e, name in mods if b < f.start() < e]
+            # a test inside a mod disabled by cfg (cfg(any()), cfg(FALSE), cfg(not(test))) is disabled too
+            mod_attrs = [a for grp, _ in inside for a in ATTR.findall(grp)]
             markers = ["ignore"] if any(IGNORE_ATTR.match(a) for a in attrs + mod_attrs) else []
             if any(SHOULD_PANIC.match(a) for a in attrs):
                 markers.append("should_panic")
-            body = m.find("{", f.end())
-            span = (body, close_of(m, body)) if body >= 0 else (f.end(), f.end())
-            fns.append((TestFn(qname, m.count("\n", 0, f.start(2)) + 1, markers), span))
-        return m, fns
+            qname = "::".join([name for _, name in inside] + [f.group(2)])
+            items.append(Item(qname, m.count("\n", 0, f.start(2)) + 1, any(TEST_ATTR.match(a) for a in attrs),
+                              markers, self._body(m, f.end())))
+        return m, mods, items
 
     def test_fns(self, text):
-        return [t for t, _ in self._scan(text)[1]]
+        return [TestFn(it.qname, it.line, it.markers) for it in self._items(text)[2] if it.is_test]
 
     def assertions(self, text):
-        m, fns = self._scan(text)
-        spans = [(t.name, b, e) for t, (b, e) in fns]
-        spans += [(None, mo.end() - 1, close_of(m, mo.end() - 1)) for mo in MODULE.finditer(m)]
+        m, mods, items = self._items(text)
+        tests = [(it.qname, *it.body) for it in items if it.is_test and it.body]
+        owners = [(it.qname, *it.body) for it in items if it.body]
+        scoped = tests + [(None, o, c) for attrs, o, c, _ in mods if any(CFG_TEST.match(a) for a in ATTR.findall(attrs))]
         out = []
         for a in ASSERT.finditer(m):
             pos = a.start()
-            inside = [(n, b, e) for n, b, e in spans if b <= pos < e]
-            fn = next((n for n, _, _ in inside if n), None)
             base = re.sub(r"^debug_", "", a.group(1))
             kind = "eq" if base.endswith("_eq") else "ne" if base.endswith("_ne") else "other"
             left = right = None
@@ -212,9 +233,14 @@ class RustAdapter(Adapter):
                     if cmp:
                         kind, left, right = cmp
             call = " ".join(text[pos:close_of(m, a.end() - 1) + 1].split())
-            out.append(Assertion(m.count("\n", 0, pos) + 1, fn, bool(inside), kind, norm(left), norm(right), call))
+            out.append(Assertion(m.count("\n", 0, pos) + 1, _innermost(tests, pos), any(b <= pos < e for _, b, e in scoped),
+                                 kind, norm(left), norm(right), call, _innermost(owners, pos)))
         return out
 
+    def calls(self, text):
+        """{fn qname: bare names it calls in its body}"""
+        m, _, items = self._items(text)
+        return {it.qname: set(re.findall(r"\b(\w+)\s*\(", m[it.body[0]:it.body[1]])) for it in items if it.body}
 
     def suppressions(self, text):
         """lint-suppression attributes (allow/expect, also inside cfg_attr) found in code, not comments or strings.

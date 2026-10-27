@@ -193,19 +193,35 @@ def r2(repo, mb, head, adapter, test_globs, protected_globs):
         # assert count per surviving test fn (by name). A fn that loses asserts is a fail unless asserts
         # outside test fns (helpers) grew by at least as much (extraction). Helpers keep a per-file count.
         head_fns = {f.name for f in afns}
-        line_of = {f.name: f.line for f in afns}
         if before is not None:
             b_cnt = Counter(a.fn for a in bas if a.fn in head_fns)
             a_cnt = Counter(a.fn for a in aas if a.fn in head_fns)
-            lost = [n for n in dict.fromkeys(f.name for f in bfns) if b_cnt[n] > a_cnt[n]]
-            helper_before = sum(1 for a in bas if a.fn is None)
-            helper_after = sum(1 for a in aas if a.fn is None)
-            if sum(b_cnt[n] - a_cnt[n] for n in lost) > max(0, helper_after - helper_before):
-                for n in lost:
-                    entries.append(entry("R2", path, line_of[n], f"assert-count:{n}", "agent-fixable", "fail",
+            # a helper (non-test fn) that gained asserts can explain a test's loss only if the test calls it;
+            # each gained assert explains one lost assert, once
+            gain = Counter()
+            for h in {a.owner for a in aas if a.fn is None and a.owner}:
+                hb = sum(1 for a in bas if a.fn is None and a.owner == h)
+                ha = sum(1 for a in aas if a.fn is None and a.owner == h)
+                if ha > hb:
+                    gain[h] = ha - hb
+            calls = adapter.calls(after) if after is not None else {}
+            for f in afns:
+                n = f.name
+                lost = b_cnt[n] - a_cnt[n]
+                if lost <= 0:
+                    continue
+                called = calls.get(n, set())
+                for h in sorted(gain):
+                    take = min(gain[h], lost) if h.rsplit("::", 1)[-1] in called else 0
+                    gain[h] -= take
+                    lost -= take
+                if lost > 0:
+                    entries.append(entry("R2", path, f.line, f"assert-count:{n}", "agent-fixable", "fail",
                                          f"assertions in test `{n}` dropped from {b_cnt[n]} to {a_cnt[n]}",
                                          "restore the dropped assertions; strengthen a test instead of removing one",
                                          f"fewer asserts in test {n}"))
+            helper_before = sum(1 for a in bas if a.fn is None)
+            helper_after = sum(1 for a in aas if a.fn is None)
             if helper_after < helper_before:
                 entries.append(entry("R2", path, 0, "assert-count", "agent-fixable", "fail",
                                      f"assertions outside test fns in `{path}` dropped from {helper_before} to {helper_after}",
