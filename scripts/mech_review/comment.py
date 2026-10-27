@@ -77,3 +77,62 @@ def render_crash(head, reason):
 
 def exit_code(env):
     return 1 if any(e["severity"] == "fail" for e in env["entries"]) else 0
+
+
+class ApiError(Exception):
+    def __init__(self, status, body):
+        super().__init__(f"GitHub API {status}: {body}")
+        self.status = status
+        self.body = body
+
+
+PER_PAGE = 100
+
+
+def find_marker(call, api, repo, pr):
+    """Id of the first issue comment whose body starts with MARKER, paging until a short page. None if absent."""
+    page = 1
+    while True:
+        items = call("GET", f"{api}/repos/{repo}/issues/{pr}/comments?per_page={PER_PAGE}&page={page}", None)
+        for c in items:
+            if c.get("body", "").startswith(MARKER):
+                return c["id"]
+        if len(items) < PER_PAGE:
+            return None
+        page += 1
+
+
+def upsert(call, api, repo, pr, body):
+    """Edit the marker comment in place, or create it. Returns (action, comment id)."""
+    cid = find_marker(call, api, repo, pr)
+    if cid is None:
+        res = call("POST", f"{api}/repos/{repo}/issues/{pr}/comments", {"body": body})
+        return "created", res["id"]
+    call("PATCH", f"{api}/repos/{repo}/issues/comments/{cid}", {"body": body})
+    return "updated", cid
+
+
+def http_call(token):
+    """Real transport: urllib with the workflow token. Non-2xx and unreachable hosts raise ApiError."""
+    import urllib.error
+    import urllib.request
+
+    def call(method, url, payload=None):
+        data = None if payload is None else json.dumps(payload).encode()
+        req = urllib.request.Request(url, data=data, method=method, headers={
+            "Authorization": f"Bearer {token}",
+            "Accept": "application/vnd.github+json",
+            "X-GitHub-Api-Version": "2022-11-28",
+            "Content-Type": "application/json",
+            "User-Agent": "ek-mech-review",
+        })
+        try:
+            with urllib.request.urlopen(req, timeout=30) as resp:
+                raw = resp.read()
+        except urllib.error.HTTPError as e:
+            raise ApiError(e.code, e.read().decode(errors="replace")) from None
+        except urllib.error.URLError as e:
+            raise ApiError(0, f"unreachable: {e.reason}") from None
+        return json.loads(raw) if raw else None
+
+    return call
