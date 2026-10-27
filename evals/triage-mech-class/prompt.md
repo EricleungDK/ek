@@ -1,5 +1,5 @@
 ---
-max_turns: 6
+max_turns: 10
 allowed_tools: [Skill, Read]
 runs: 2
 ---
