@@ -899,12 +899,10 @@ out=$(mr "$R" "$B" "$H"); rc=$?
 eq "$rc" 1 "rename out of .rs that drops b is caught"
 eq "$(jq -r '[.entries[] | select(.problem|contains("removed"))][0].file' <<<"$out")" tests/a.rs "renamed-out removal reported at old path"
 
-# item 11: lexer survivors (pass on HEAD; each kills a mutation of the masking)
+# item 11: lexer survivors, one file holds the literal and the tests (pass on HEAD; each kills a masking mutant)
 R=$(mkrepo lexg1)
 put "$R" src/lib.rs <<'EOF2'
 pub const P: &str = r"C:\";
-EOF2
-put "$R" tests/a.rs <<'EOF2'
 #[test]
 fn a() {
     assert_eq!(1, 1);
@@ -916,7 +914,8 @@ fn b() {
 }
 EOF2
 B=$(commit "$R" base)
-put "$R" tests/a.rs <<'EOF2'
+put "$R" src/lib.rs <<'EOF2'
+pub const P: &str = r"C:\";
 #[test]
 fn a() {
     assert_eq!(1, 1);
@@ -927,7 +926,7 @@ out=$(mr "$R" "$B" "$H"); rc=$?
 eq "$rc" 1 "G1 raw string ending in backslash, then tests: removed b caught"
 
 R=$(mkrepo lexg2)
-put "$R" tests/a.rs <<'EOF2'
+put "$R" src/lib.rs <<'EOF2'
 #[test]
 fn a() {
     let c = '}';
@@ -936,7 +935,7 @@ fn a() {
 }
 EOF2
 B=$(commit "$R" base)
-put "$R" tests/a.rs <<'EOF2'
+put "$R" src/lib.rs <<'EOF2'
 #[test]
 fn a() {
     let c = '}';
@@ -950,8 +949,6 @@ eq "$rc" 1 "G2 char literal '}' does not end the body: trailing assert drop caug
 R=$(mkrepo lexg3)
 put "$R" src/lib.rs <<'EOF2'
 pub const Q: char = '\"';
-EOF2
-put "$R" tests/a.rs <<'EOF2'
 #[test]
 fn a() {
     assert_eq!(1, 1);
@@ -963,7 +960,8 @@ fn b() {
 }
 EOF2
 B=$(commit "$R" base)
-put "$R" tests/a.rs <<'EOF2'
+put "$R" src/lib.rs <<'EOF2'
+pub const Q: char = '\"';
 #[test]
 fn a() {
     assert_eq!(1, 1);
@@ -976,8 +974,6 @@ eq "$rc" 1 "G3 escaped-quote char literal: removed b caught"
 R=$(mkrepo lexg4)
 put "$R" src/lib.rs <<'EOF2'
 pub const S: &str = "a\"/*";
-EOF2
-put "$R" tests/a.rs <<'EOF2'
 #[test]
 fn a() {
     assert_eq!(1, 1);
@@ -990,7 +986,8 @@ fn b() {
 */
 EOF2
 B=$(commit "$R" base)
-put "$R" tests/a.rs <<'EOF2'
+put "$R" src/lib.rs <<'EOF2'
+pub const S: &str = "a\"/*";
 #[test]
 fn a() {
     assert_eq!(1, 1);
