@@ -112,9 +112,9 @@ Statuses (per check, in the envelope):
 - `fail`: at least one `fail` entry. Blocks.
 - `partial`: R3 budget hit with no MISSED so far. Reported `R3 partial (tested/total)`. Does not block.
 - `n/a`: tool not installable (`n/a (env)`). Not a pass. Say so in the report.
-- `skipped`: check does not apply. Reason in the note. R1 is skipped for docs-only PRs and non-agent branches.
+- `skipped`: check does not apply, or not implemented yet. Reason in the note. R1 is skipped for docs-only PRs and non-agent branches.
 
-R1 is not built yet: report it as planned, never as skipped or passed.
+Checks not built yet (R1, R3, R4 today): engine emits `skipped` with note `not implemented`. Report them as not run, never as passed.
 
 ## 5. Mech-review vs code review
 
