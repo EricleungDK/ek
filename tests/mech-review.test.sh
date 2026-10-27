@@ -132,4 +132,91 @@ out=$(mr "$R" "$B" "$H"); rc=$?
 eq "$rc" 0 "added test is clean"
 eq "$(jq -r .summary <<<"$out")" "all pass $H" "added test all pass"
 
+# slice 3: R2 added #[ignore] (skip marker)
+R=$(mkrepo s3)
+put "$R" tests/a.rs <<'EOF2'
+#[test]
+fn a() {
+    assert_eq!(1, 1);
+}
+
+#[test]
+fn b() {
+    assert_eq!(2, 2);
+}
+EOF2
+B=$(commit "$R" base)
+put "$R" tests/a.rs <<'EOF2'
+#[test]
+fn a() {
+    assert_eq!(1, 1);
+}
+
+#[test]
+#[ignore]
+fn b() {
+    assert_eq!(2, 2);
+}
+EOF2
+H=$(commit "$R" ignore-b)
+out=$(mr "$R" "$B" "$H"); rc=$?
+eq "$rc" 1 "added #[ignore] exit 1"
+eq "$(jq -r '.entries[0].check' <<<"$out")" R2 "ignore entry R2"
+eq "$(jq -r '.entries[0].severity' <<<"$out")" fail "ignore severity fail"
+eq "$(jq -r '.entries[0].class' <<<"$out")" agent-fixable "ignore class agent-fixable"
+eq "$(jq -r '.entries[0].line' <<<"$out")" 8 "ignore line = fn b line in head"
+has "$(jq -r '.entries[0].problem' <<<"$out")" '`b`' "ignore problem names fn"
+want="R2-$(printf '%s' 'R2tests/a.rsb' | sha1sum | cut -c1-8)"
+eq "$(jq -r '.entries[0].id' <<<"$out")" "$want" "ignore id keyed by fn name"
+
+# new test with #[ignore = "..."] is also a fail
+put "$R" tests/a.rs <<'EOF2'
+#[test]
+fn a() {
+    assert_eq!(1, 1);
+}
+
+#[test]
+#[ignore = "flaky"]
+fn b() {
+    assert_eq!(2, 2);
+}
+
+#[test]
+#[ignore = "todo"]
+fn c() {
+    assert_eq!(3, 3);
+}
+EOF2
+H2=$(commit "$R" ignore-new)
+out=$(mr "$R" "$B" "$H2"); rc=$?
+eq "$rc" 1 "ignore = reason and new ignored test exit 1"
+has "$(jq -r '.entries[].problem' <<<"$out")" '`c`' "new ignored test c flagged"
+
+# marker already on base is not a new cheat
+R=$(mkrepo s3pre)
+put "$R" tests/a.rs <<'EOF2'
+#[test]
+#[ignore]
+fn slow() {
+    assert_eq!(1, 1);
+}
+EOF2
+B=$(commit "$R" base)
+put "$R" tests/a.rs <<'EOF2'
+#[test]
+#[ignore]
+fn slow() {
+    assert_eq!(1, 1);
+}
+
+#[test]
+fn quick() {
+    assert_eq!(2, 2);
+}
+EOF2
+H=$(commit "$R" add-quick)
+out=$(mr "$R" "$B" "$H"); rc=$?
+eq "$rc" 0 "pre-existing ignore untouched is clean"
+
 done_tests
