@@ -71,7 +71,7 @@ H=$(commit "$R" drop-b)
 out=$(mr "$R" "$B" "$H"); rc=$?
 eq "$rc" 1 "removed test fn exit 1"
 eq "$(jq -r .checks.R2.status <<<"$out")" fail "R2 status fail"
-eq "$(jq -r '.entries|length' <<<"$out")" 2 "removed fn + file-level fewer-asserts (rules are independent)"
+eq "$(jq -r '.entries|length' <<<"$out")" 1 "removed fn yields one entry (its asserts are not counted as dropped)"
 e() { jq -r ".entries[0].$1" <<<"$out"; }
 eq "$(e check)" R2 "entry check R2"
 eq "$(e class)" agent-fixable "entry class agent-fixable"
@@ -166,8 +166,8 @@ eq "$(jq -r '.entries[0].severity' <<<"$out")" fail "ignore severity fail"
 eq "$(jq -r '.entries[0].class' <<<"$out")" agent-fixable "ignore class agent-fixable"
 eq "$(jq -r '.entries[0].line' <<<"$out")" 8 "ignore line = fn b line in head"
 has "$(jq -r '.entries[0].problem' <<<"$out")" '`b`' "ignore problem names fn"
-want="R2-$(printf '%s' 'R2tests/a.rsb' | sha1sum | cut -c1-8)"
-eq "$(jq -r '.entries[0].id' <<<"$out")" "$want" "ignore id keyed by fn name"
+want="R2-$(printf '%s' 'R2tests/a.rsignore:b' | sha1sum | cut -c1-8)"
+eq "$(jq -r '.entries[0].id' <<<"$out")" "$want" "ignore id keyed by ignore:fn"
 
 # new test with #[ignore = "..."] is also a fail
 put "$R" tests/a.rs <<'EOF2'
@@ -328,7 +328,7 @@ out=$(mr "$R" "$B" "$H"); rc=$?
 eq "$rc" 1 "inline test assert drop exit 1"
 eq "$(jq -r '.entries[0].file' <<<"$out")" src/lib.rs "inline drop names src file"
 
-# helper (no #[test]) in a test path: whole file counts
+# helper (no #[test], not in cfg(test) mod) is not counted: scope = test fns + cfg(test) mods
 R=$(mkrepo s4helper)
 put "$R" tests/helpers.rs <<'EOF2'
 pub fn check(v: i32) {
@@ -344,7 +344,7 @@ pub fn check(v: i32) {
 EOF2
 H=$(commit "$R" drop-helper)
 out=$(mr "$R" "$B" "$H"); rc=$?
-eq "$rc" 1 "helper assert drop in test path exit 1"
+eq "$rc" 0 "helper assert outside test fns not counted"
 
 # slice 5: R2 added suppression without a reason
 R=$(mkrepo s5)
@@ -428,7 +428,7 @@ eq "$rc" 0 "changed expected value is confirm, exit 0"
 eq "$(jq -r '.entries[0].severity' <<<"$out")" confirm "changed expected severity confirm"
 eq "$(jq -r '.entries[0].class' <<<"$out")" agent-fixable "changed expected class agent-fixable"
 eq "$(jq -r '.entries[0].line' <<<"$out")" 3 "changed expected line = head assert line"
-eq "$(jq -r '.entries[0].id' <<<"$out")" "R2-$(printf '%s' 'R2tests/a.rsadds_two' | sha1sum | cut -c1-8)" "changed expected id keyed by test fn"
+eq "$(jq -r '.entries[0].id' <<<"$out")" "R2-$(printf '%s' 'R2tests/a.rsexpected:adds_two|add(2,2)' | sha1sum | cut -c1-8)" "changed expected id keyed by fn + unchanged side"
 has "$(jq -r .summary <<<"$out")" "confirm" "summary confirm, not all pass"
 has "$(jq -r '.entries[0].problem' <<<"$out")" "was 4, now 5" "problem gives old and new values"
 eq "$(jq -r '.entries[0].forbidden' <<<"$out")" "editing an expected value to match the code's current output" "changed expected forbidden text"
@@ -482,12 +482,11 @@ AC="R2-$(printf '%s' 'R2tests/a.rsassert-count' | sha1sum | cut -c1-8)"
 OTHER="R2-$(printf '%s' 'R2tests/a.rszzz' | sha1sum | cut -c1-8)"
 body() { printf '%s\n' "$@" > "$T/body.md"; echo "$T/body.md"; }
 
-f=$(body "## Summary" "removes b" "## Guard exceptions" "- $ID: b superseded by a stronger test in a.rs" "- $AC: a lost its assert on purpose, see $ID")
+f=$(body "## Summary" "removes b" "## Guard exceptions" "- $ID: b superseded by a stronger test in a.rs")
 out=$(mr "$R" "$B" "$H" --pr-body "$f"); rc=$?
-eq "$rc" 0 "listed ids with reason: exit 0 (removed fn and its companion assert-count)"
+eq "$rc" 0 "listed id with reason: exit 0"
 eq "$(jq -r '.entries[0].severity' <<<"$out")" confirm "listed id downgraded to confirm"
 eq "$(jq -r '.entries[0].class' <<<"$out")" agent-fixable "downgrade keeps class"
-eq "$(jq -r '[.entries[].severity]|unique|join(",")' <<<"$out")" confirm "every listed entry downgraded"
 has "$(jq -r .summary <<<"$out")" "confirm" "summary confirm after downgrade"
 
 f=$(body "## Guard exceptions" "**Guard exceptions**" "- $ID")
@@ -900,5 +899,181 @@ H=$(commit "$R" rename-off-drop-b)
 out=$(mr "$R" "$B" "$H"); rc=$?
 eq "$rc" 1 "rename out of .rs that drops b is caught"
 eq "$(jq -r '[.entries[] | select(.problem|contains("removed"))][0].file' <<<"$out")" tests/a.rs "renamed-out removal reported at old path"
+
+# round 2 area 2: expected-value pairing (whitespace, either side, == in assert!), reflow, keys, scope
+R=$(mkrepo r2ws)
+put "$R" tests/a.rs <<'EOF2'
+#[test]
+fn adds_two() {
+    assert_eq!(add(2, 2), 4);
+}
+EOF2
+B=$(commit "$R" base)
+put "$R" tests/a.rs <<'EOF2'
+#[test]
+fn adds_two() {
+    assert_eq!(add(2,2), 5);
+}
+EOF2
+H=$(commit "$R" ws-subject)
+out=$(mr "$R" "$B" "$H"); rc=$?
+eq "$rc" 0 "whitespace-changed subject with changed expected: confirm, exit 0"
+eq "$(jq -r '.entries[0].severity' <<<"$out")" confirm "whitespace subject: confirm"
+eq "$(jq -r '.entries[0].id' <<<"$out")" "R2-$(printf '%s' 'R2tests/a.rsexpected:adds_two|add(2,2)' | sha1sum | cut -c1-8)" "whitespace subject: id keyed by unchanged side"
+
+put "$R" tests/a.rs <<'EOF2'
+#[test]
+fn adds_two() {
+    assert_eq!(4, add(2, 2));
+}
+EOF2
+B2=$(commit "$R" base-lhs)
+put "$R" tests/a.rs <<'EOF2'
+#[test]
+fn adds_two() {
+    assert_eq!(5, add(2, 2));
+}
+EOF2
+H2=$(commit "$R" lhs-changed)
+out=$(mr "$R" "$B2" "$H2"); rc=$?
+eq "$(jq -r '.entries[0].severity' <<<"$out")" confirm "expected on the left side changed: confirm"
+eq "$(jq -r '.entries[0].id' <<<"$out")" "R2-$(printf '%s' 'R2tests/a.rsexpected:adds_two|add(2,2)' | sha1sum | cut -c1-8)" "left expected: key from unchanged right side"
+has "$(jq -r '.entries[0].problem' <<<"$out")" "was 4, now 5" "left expected: old and new"
+
+R=$(mkrepo r2cmp)
+put "$R" tests/a.rs <<'EOF2'
+#[test]
+fn t() {
+    assert!(v == 3);
+}
+EOF2
+B=$(commit "$R" base)
+put "$R" tests/a.rs <<'EOF2'
+#[test]
+fn t() {
+    assert!(v == 4);
+}
+EOF2
+H=$(commit "$R" cmp-changed)
+out=$(mr "$R" "$B" "$H"); rc=$?
+eq "$rc" 0 "assert!(a == b) expected change: confirm"
+eq "$(jq -r '.entries[0].severity' <<<"$out")" confirm "assert!(==) changed value is confirm"
+
+R=$(mkrepo r2reflow)
+put "$R" tests/a.rs <<'EOF2'
+#[test]
+fn t() {
+    assert_eq!(v, vec![1, 2]);
+}
+EOF2
+B=$(commit "$R" base)
+put "$R" tests/a.rs <<'EOF2'
+#[test]
+fn t() {
+    assert_eq!(
+        v,
+        vec![1, 2],
+    );
+}
+EOF2
+H=$(commit "$R" reflow)
+out=$(mr "$R" "$B" "$H"); rc=$?
+eq "$rc" 0 "rustfmt reflow of args is not a value change"
+eq "$(jq -c .entries <<<"$out")" "[]" "reflow: no entries"
+
+R=$(mkrepo r2both)
+put "$R" tests/a.rs <<'EOF2'
+#[test]
+fn a() {
+    assert_eq!(1, 1);
+}
+EOF2
+B=$(commit "$R" base)
+put "$R" tests/a.rs <<'EOF2'
+#[test]
+#[ignore]
+fn a() {
+    assert_eq!(1, 2);
+}
+EOF2
+H=$(commit "$R" ignore-and-value)
+out=$(mr "$R" "$B" "$H"); rc=$?
+eq "$(jq -r '.entries|length' <<<"$out")" 2 "ignore and value change in same fn: two entries"
+eq "$(jq -r '[.entries[].id]|unique|length' <<<"$out")" 2 "those two entries have distinct ids"
+eq "$(jq -r '[.entries[].severity]|sort|join(",")' <<<"$out")" "confirm,fail" "one fail (ignore) and one confirm (value)"
+
+R=$(mkrepo r2two)
+put "$R" tests/a.rs <<'EOF2'
+#[test]
+fn a() {
+    assert_eq!(x, 1);
+    assert_eq!(y, 2);
+}
+EOF2
+B=$(commit "$R" base)
+put "$R" tests/a.rs <<'EOF2'
+#[test]
+fn a() {
+    assert_eq!(x, 9);
+    assert_eq!(y, 8);
+}
+EOF2
+H=$(commit "$R" two-values)
+out=$(mr "$R" "$B" "$H"); rc=$?
+eq "$(jq -r '.entries|length' <<<"$out")" 2 "two value changes in one fn: two entries"
+eq "$(jq -r '[.entries[].severity]|unique|join(",")' <<<"$out")" confirm "both are confirm"
+
+R=$(mkrepo r2helper)
+put "$R" src/lib.rs <<'EOF2'
+pub fn f() -> i32 { 1 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn t() {
+        assert_eq!(f(), 1);
+    }
+}
+EOF2
+B=$(commit "$R" base)
+put "$R" src/lib.rs <<'EOF2'
+pub fn f() -> i32 { 1 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn check(v: i32) {
+        assert_eq!(v, 1);
+    }
+
+    #[test]
+    fn t() {
+        check(f());
+    }
+}
+EOF2
+H=$(commit "$R" extract-helper)
+out=$(mr "$R" "$B" "$H"); rc=$?
+eq "$rc" 0 "assert moved into a helper inside cfg(test) mod: not a drop"
+
+R=$(mkrepo r2prod)
+put "$R" src/lib.rs <<'EOF2'
+pub fn f(x: i32) -> i32 {
+    debug_assert!(x > 0);
+    x
+}
+EOF2
+B=$(commit "$R" base)
+put "$R" src/lib.rs <<'EOF2'
+pub fn f(x: i32) -> i32 {
+    x
+}
+EOF2
+H=$(commit "$R" drop-prod-debug)
+out=$(python3 -I "$MR" r2 --repo "$R" --base "$B" --head "$H" --stack rust --test-paths 'src/**'); rc=$?
+eq "$rc" 0 "broad test glob: production debug_assert removal is not counted"
 
 done_tests
