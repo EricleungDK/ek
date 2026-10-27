@@ -129,7 +129,8 @@ def added_lines(repo, mb, head):
 
 def unmatched(xs, ys):
     """xs minus exact (fn, kind, left, right) matches in ys, multiset-aware."""
-    key = lambda a: (a.fn, a.kind, a.left, a.right)
+    # eq/ne match on operands; other asserts (assert!(cond)) match on their text
+    key = lambda a: (a.fn, a.kind, a.left, a.right) if a.kind != "other" else (a.fn, a.kind, re.sub(r"\s+", "", a.text))
     pool = Counter(key(y) for y in ys)
     out = []
     for x in xs:
@@ -233,10 +234,10 @@ def r2(repo, mb, head, adapter, test_globs, protected_globs):
                                      "confirm the new value is the spec'd behaviour, not the buggy output",
                                      "editing an expected value to match the code's current output"))
                 break
-        # replaced in place: an eq/ne assert removed and another assert added in the same fn (any operands or kind)
+        # replaced in place: an assert removed and another assert added in the same fn (any kind or operands)
         spare = [h for i, h in enumerate(added_a) if i not in used]
         for ri, r in enumerate(removed):
-            if ri in paired or r.kind not in ("eq", "ne"):
+            if ri in paired:
                 continue
             for j, h in enumerate(spare):
                 if h.fn != r.fn:
