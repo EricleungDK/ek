@@ -17,6 +17,7 @@ def build_parser():
     p.add_argument("--test-paths", action="append", default=[], metavar="GLOB", help="test file glob, repeatable")
     p.add_argument("--protected-paths", action="append", default=[], metavar="GLOB", help="protected file glob, repeatable")
     p.add_argument("--pr-body", metavar="FILE", help="PR body file; its Guard exceptions section downgrades fails")
+    p.add_argument("--format", choices=["json", "text"], default="json", help="json (contract, default) or text (summary + entries)")
     return p
 
 
@@ -30,6 +31,15 @@ def read_body(path):
         raise engine.Die(f"cannot read --pr-body {path}: {e.strerror}")
 
 
+def render_text(env):
+    lines = [env["summary"]]
+    for e in env["entries"]:
+        lines.append(f"{e['severity']} {e['id']} {e['file']}:{e['line']} {e['problem']}")
+        lines.append(f"  hint: {e['hint']}")
+        lines.append(f"  forbidden: {e['forbidden']}")
+    return "\n".join(lines)
+
+
 def main(argv):
     args = build_parser().parse_args(argv)
     try:
@@ -38,5 +48,8 @@ def main(argv):
     except engine.Die as e:
         print(f"mech-review: {e}", file=sys.stderr)
         return 2
-    print(json.dumps(env, indent=2))
+    if args.format == "json":
+        print(json.dumps(env, indent=2))
+    else:
+        print(render_text(env))
     return 1 if any(e["severity"] == "fail" for e in env["entries"]) else 0
