@@ -686,4 +686,219 @@ has "$out" "tests/a.rs" "text lists file"
 has "$out" "hint:" "text shows hint"
 has "$out" "forbidden:" "text shows forbidden"
 
+# round 2 area 1: lexer (nested comments, multi-line strings), test attrs, ignore markers, macros, renames
+R=$(mkrepo r1nest)
+put "$R" tests/a.rs <<'EOF2'
+#[test]
+fn a() {
+    assert_eq!(1, 1);
+}
+
+#[test]
+fn b() {
+    assert_eq!(2, 2);
+}
+EOF2
+B=$(commit "$R" base)
+put "$R" tests/a.rs <<'EOF2'
+/* outer /* inner */ #[test] fn b() { assert_eq!(2, 2); } */
+#[test]
+fn a() {
+    assert_eq!(1, 1);
+}
+EOF2
+H=$(commit "$R" hide-b-nested)
+out=$(mr "$R" "$B" "$H"); rc=$?
+eq "$rc" 1 "nested block comment hides b: removal caught"
+has "$(jq -r '[.entries[].problem] | join(" ")' <<<"$out")" '`b`' "nested comment: removed b named"
+
+R=$(mkrepo r1str)
+put "$R" tests/a.rs <<'EOF2'
+#[test]
+fn a() {
+    let s = "run
+/* x";
+    assert_eq!(s.len(), 6);
+}
+#[test]
+fn b() {
+    assert_eq!(2, 2);
+}
+/* end */
+EOF2
+B=$(commit "$R" base)
+put "$R" tests/a.rs <<'EOF2'
+#[test]
+fn a() {
+    let s = "run
+/* x";
+    assert_eq!(s.len(), 6);
+}
+/* end */
+EOF2
+H=$(commit "$R" drop-b)
+out=$(mr "$R" "$B" "$H"); rc=$?
+eq "$rc" 1 "multi-line string containing /* does not hide fn b"
+has "$(jq -r '[.entries[].problem] | join(" ")' <<<"$out")" '`b`' "multi-line string: removed b named"
+
+R=$(mkrepo r1lt)
+put "$R" tests/a.rs <<'EOF2'
+fn id<'a>(x: &'a str) -> &'a str { x }
+#[test]
+fn a() {
+    let c = '{';
+    assert_eq!(id("x"), "x");
+    assert_eq!(c, '{');
+}
+#[test]
+fn b() {
+    assert_eq!(2, 2);
+}
+EOF2
+B=$(commit "$R" base)
+put "$R" tests/a.rs <<'EOF2'
+fn id<'a>(x: &'a str) -> &'a str { x }
+#[test]
+fn a() {
+    let c = '{';
+    assert_eq!(id("x"), "x");
+    assert_eq!(c, '{');
+}
+EOF2
+H=$(commit "$R" drop-b-lifetimes)
+out=$(mr "$R" "$B" "$H"); rc=$?
+eq "$rc" 1 "lifetimes and char literals: removed b caught"
+
+R=$(mkrepo r1cfg)
+put "$R" tests/a.rs <<'EOF2'
+#[test]
+fn a() {
+    assert_eq!(1, 1);
+}
+
+#[test]
+fn b() {
+    assert_eq!(2, 2);
+}
+EOF2
+B=$(commit "$R" base)
+put "$R" tests/a.rs <<'EOF2'
+#[test]
+fn a() {
+    assert_eq!(1, 1);
+}
+
+#[test]
+#[cfg_attr(test, ignore)]
+fn b() {
+    assert_eq!(2, 2);
+}
+EOF2
+H=$(commit "$R" cfg-attr-ignore)
+out=$(mr "$R" "$B" "$H"); rc=$?
+eq "$rc" 1 "cfg_attr(test, ignore) is an ignore marker"
+has "$(jq -r '[.entries[].problem] | join(" ")' <<<"$out")" '`b`' "cfg_attr ignore names b"
+put "$R" tests/a.rs <<'EOF2'
+#[test]
+fn a() {
+    assert_eq!(1, 1);
+}
+
+#[test]
+#[cfg(any())]
+fn b() {
+    assert_eq!(2, 2);
+}
+EOF2
+H=$(commit "$R" cfg-any-off)
+out=$(mr "$R" "$B" "$H"); rc=$?
+eq "$rc" 1 "cfg(any()) disabling a test is an ignore marker"
+put "$R" tests/a.rs <<'EOF2'
+#[test]
+fn a() {
+    assert_eq!(1, 1);
+}
+
+#[test]
+#[cfg(FALSE)]
+fn b() {
+    assert_eq!(2, 2);
+}
+EOF2
+H=$(commit "$R" cfg-false-off)
+out=$(mr "$R" "$B" "$H"); rc=$?
+eq "$rc" 1 "cfg(FALSE) disabling a test is an ignore marker"
+
+R=$(mkrepo r1attr)
+put "$R" tests/a.rs <<'EOF2'
+#[rstest]
+fn a() {
+    assert_eq!(1, 1);
+}
+
+#[test_case(2)]
+fn b() {
+    assert_eq!(2, 2);
+}
+
+#[async_std::test]
+async fn c() {
+    assert_eq!(3, 3);
+}
+EOF2
+B=$(commit "$R" base)
+put "$R" tests/a.rs <<'EOF2'
+EOF2
+H=$(commit "$R" drop-all-attr-tests)
+out=$(mr "$R" "$B" "$H"); rc=$?
+eq "$rc" 1 "rstest/test_case/path::test fns are test fns"
+eq "$(jq '[.entries[] | select(.problem|contains("removed"))] | length' <<<"$out")" 3 "three removed test fns found"
+
+R=$(mkrepo r1macro)
+put "$R" tests/a.rs <<'EOF2'
+#[test]
+fn a() {
+    assert_relative_eq!(x, 1.0, epsilon = 0.1);
+    prop_assert!(y);
+    insta::assert_snapshot!(z);
+}
+EOF2
+B=$(commit "$R" base)
+put "$R" tests/a.rs <<'EOF2'
+#[test]
+fn a() {
+    assert_relative_eq!(x, 1.0, epsilon = 0.1);
+    prop_assert!(y);
+}
+EOF2
+H=$(commit "$R" drop-snapshot)
+out=$(mr "$R" "$B" "$H"); rc=$?
+eq "$rc" 1 "insta snapshot assert counted"
+has "$(jq -r '[.entries[].problem] | join(" ")' <<<"$out")" "from 3 to 2" "macro asserts counted 3 to 2"
+
+R=$(mkrepo r1mv)
+put "$R" tests/a.rs <<'EOF2'
+#[test]
+fn a() {
+    assert_eq!(1, 1);
+}
+
+#[test]
+fn b() {
+    assert_eq!(2, 2);
+}
+EOF2
+B=$(commit "$R" base)
+git -C "$R" mv tests/a.rs tests/a.rs.off
+put "$R" tests/a.rs.off <<'EOF2'
+#[test]
+fn a() {
+    assert_eq!(1, 1);
+}
+EOF2
+H=$(commit "$R" rename-off-drop-b)
+out=$(mr "$R" "$B" "$H"); rc=$?
+eq "$rc" 1 "rename out of .rs that drops b is caught"
+eq "$(jq -r '[.entries[] | select(.problem|contains("removed"))][0].file' <<<"$out")" tests/a.rs "renamed-out removal reported at old path"
+
 done_tests
