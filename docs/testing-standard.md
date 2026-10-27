@@ -72,44 +72,40 @@ If a behaviour can be tested at unit level, test it there. Push e2e to the one p
 
 | Cheat | Caught by | Forbidden | Do instead |
 |---|---|---|---|
-| Delete a failing test | R2 | removed test `<name>` | Fix the code. If behaviour was removed on purpose, list a guard exception with reason. |
-| Skip or ignore a test: `#[ignore]`, `@pytest.mark.skip`, `@pytest.mark.xfail`, `it.skip`, `test.only` | R2 | new skip/ignore/xfail/only marker | Fix the test failure. Can't run here: note verification debt, don't skip in code. |
-| Drop assertions | R2 | fewer asserts in changed test file `<file>` | Keep the assert. Add a stronger one if needed. |
-| Change expected value to match output | R2 (`confirm`) | changed expected value in `<name>` | Check the spec or ticket. The spec sets the value; fix the code. Intended change: reviewer confirms the `confirm` entry; no guard exception needed. |
-| Lint/type suppression without reason: `#[allow]`, `# noqa`, `# type: ignore`, `@ts-ignore` | R2 | suppression without reason | Fix the lint. If it must stay, same-line reason (`#[allow(x, reason = "…")]`, `# noqa: E501 — url literal`). |
-| Edit a protected path: CI, gate scripts, agent docs | R2 (`fail`, `needs-human`) | edit to protected path `<path>` | Stop. A human decides. Never edit the gate to pass. Not downgradable by guard exception. |
+| Delete or rename a failing test | R2 (`fail`, agent-fixable) | deleting or renaming a test to hide a failure | Fix the code; the test is restored. A removal the owner wants is the owner's call, outside the agent loop. The entry stays `fail` until then; the agent never self-waives it. |
+| Skip or ignore a test: `#[ignore]`, `@pytest.mark.skip`, `@pytest.mark.xfail`, `it.skip`, `test.only`, a `cfg` that disables it or its enclosing mod (`cfg(any())`, `cfg(FALSE)`, `cfg(not(test))`) | R2 (`fail`) | #[ignore] / skip / xfail / only on a test | Fix the test failure. Can't run here: note verification debt, don't skip in code. |
+| Turn a failing test into a panic-expecting one: `#[should_panic]` added to an existing test | R2 (`confirm`) | adding #[should_panic] to an existing test | Assert the error or the value instead. Intended change: reviewer confirms the `confirm` entry. |
+| Drop or move assertions out of a test | R2 (`fail`) | fewer asserts in test `<name>`; fewer asserts in changed test file `<file>` (outside test fns) | Keep the assert. Add a stronger one if needed. Extracting asserts into a helper that the test itself calls is fine (the helper must gain the asserts); moving them into another test, or into a helper the test does not call, is not. |
+| Replace an assert in place with a weaker one, any kind: `assert_eq!(x, 3)` to `assert!(x.is_some())`, `assert!(v.len() > 2)` to `assert!(true)` | R2 (`confirm`) | weakening an assertion in place | Keep the assert at least as strict. Intended change: reviewer confirms the `confirm` entry. Reordering asserts is not a replacement. |
+| Change expected value to match output | R2 (`confirm`) | editing an expected value to match the code's current output | Check the spec or ticket. The spec sets the value; fix the code. Intended change: reviewer confirms the `confirm` entry. |
+| Lint/type suppression without reason: `#[allow]`, `# noqa`, `# type: ignore`, `@ts-ignore` | R2 (`fail`) | silencing a lint without a reason | Fix the lint. If it must stay, same-line reason (`#[allow(x, reason = "…")]` with a non-empty reason, `# noqa: E501 — url literal`). An empty reason is no reason. |
+| Edit a protected path: CI, gate scripts, agent docs | R2 (`fail`, `needs-human`) | editing CI, gate scripts or agent docs to get the gate green | Stop. A human decides. Never edit the gate to pass. No agent downgrade path. |
 | Test passes before the fix | R1 (planned) | no failing `test(red)` commit | Write the test first in a `test(red): …` commit. It must fail there for the ticket's reason. |
 | Weak or missing assert: test still passes with the code broken | R3 (planned) | MISSED mutant `<desc>` in `<file>` | Add the assert that kills the mutant. |
 | Flaky test: passes and fails on same code | R4 (planned) | flaky test `<name>` | Find the nondeterminism (time, order, shared state, sleep). Fix it. Never retry to green. |
 | Test asserts internals, mocks own code, bad name, logic in test | code review | n/a | Test through public interface. Mock only boundaries. Rename to the behaviour. Remove the logic. |
-
-### Guard exceptions
-
-Legit removal: list it in the PR body:
-
-```
-**Guard exceptions**
-- <entry id or test name>: <reason>
-```
-
-- Covers `fail` entries only. A matching entry drops to `confirm`.
-- Reviewer confirms each one or sends it back.
-- Protected-path entries are `fail` + `needs-human`. Guard exceptions do NOT downgrade them.
-- Empty reason is not an exception.
 
 ## 4. Checks
 
 | Check | Enforces | Status |
 |---|---|---|
 | R1 red-first | First `test(red): …` commit touches only test paths. Its new tests fail there (or build fails: `compile-red`). They pass at head. Agent branches only, when production files changed. | planned (#12) |
-| R2 test-diff guard | Cheat rows above: removed tests, new skip/ignore/xfail/only, fewer asserts, changed expected values, unreasoned suppressions, protected paths. | implemented (#13) |
+| R2 test-diff guard | Cheat rows above: removed tests (a rename with the same asserts is not a removal), new skip/ignore/xfail/only, `should_panic` added to an existing test (`confirm`), fewer asserts per surviving test fn, weakened or changed expected values (`confirm`), unreasoned suppressions, protected paths. No waiver in the PR body. | implemented (#13, #26, #27, review round 1) |
+
+R2 assert rules:
+
+- Test fns are keyed by name qualified with their enclosing mods (`m1::works`); top-level fns are bare.
+- A test that loses asserts is a `fail` unless a helper (non-test fn in the same file) it calls by name gained at least as many asserts. Each gained assert explains one lost assert, once. A helper that nothing calls explains nothing.
+- Asserts outside test fns (helpers) are counted per file; the count must not drop.
+- Each side is classified by its own path: moving a file between test and prod paths is judged per side.
+- Replacing an assert in place (any kind) is `confirm`; reordering is not a change.
 | R3 mutation on diff | Mutation runs on changed production code only. MISSED mutant = `fail`. Timeout and unviable ignored. Budgeted. Budget hit with no MISSED so far = `partial`: reports `R3 partial (tested/total)`, does not block. | planned (#12) |
 | R4 determinism | Each new or changed test runs 5× at head. Any failure = `fail`, class `agent-fixable`. | planned (#12) |
 
 Statuses (per check, in the envelope):
 
 - `pass`: ran, no `fail` entries.
-- `fail`: at least one `fail` entry. Blocks.
+- `fail`: at least one `fail` entry. Blocks. Only a code fix (or a human decision for `needs-human`) clears it.
 - `partial`: R3 budget hit with no MISSED so far. Reported `R3 partial (tested/total)`. Does not block.
 - `n/a`: tool not installable (`n/a (env)`). Not a pass. Say so in the report.
 - `skipped`: check does not apply, or not implemented yet. Reason in the note. R1 is skipped for docs-only PRs and non-agent branches.
@@ -125,12 +121,12 @@ Both are required for merge. Neither overrides the other.
 | Answers | Facts: did the rule break? | Judgment: is the test good? |
 | Input | git base..head, config, test and mutation runs | diff, mech-review JSON, spec |
 | Same input, same output | Yes | No |
-| Covers | Rows R1–R4 | Test design, naming, mock placement, spec fit, guard exception legitimacy |
+| Covers | Rows R1–R4 | Test design, naming, mock placement, spec fit, whether a `confirm` entry is the spec'd behaviour |
 
 Order:
 
 1. Mech-review runs first. Its JSON (`<!-- mech-review -->` PR comment) goes to the reviewer.
-2. Reviewer does not re-derive facts. It reads `confirm` entries and guard exceptions and decides each.
+2. Reviewer does not re-derive facts. It reads `confirm` entries and decides each.
 3. Reviewer cannot waive a `fail` entry. Fix it or report it.
 4. Mech green does not mean review passed. Review approve does not excuse a `fail`.
 
@@ -140,7 +136,7 @@ Entry fields (stable; add fields, never rename):
 
 | Field | Values |
 |---|---|
-| `id` | `<check>-<8 hex of sha1(check + file + test-or-rule)>`. Same across rounds, survives line moves. |
+| `id` | `<check>-<8 hex of sha1(check + file + key)>`, key = rule and test fn name (`ignore:<fn>`, `assert-count:<fn>`, ...). Same across rounds, survives line moves. A repeat of one key in one file (line order): the 2nd occurrence is keyed `<key>#1`, the 3rd `<key>#2`; the first keeps the plain key. |
 | `check` | `R1`, `R2`, `R3`, `R4`, `CI` (`CI` reserved for CI-level failures outside R1–R4, e.g. mech-review's own infra error) |
 | `class` | `agent-fixable`, `needs-human`, `env` |
 | `severity` | `fail` (blocks), `confirm` (reviewer decides) |
@@ -149,7 +145,13 @@ Entry fields (stable; add fields, never rename):
 | `hint` | intended fix |
 | `forbidden` | shortcut not allowed |
 
-Envelope: head SHA, base SHA, ek version, per-check status (`pass|fail|partial|n/a|skipped`) with note, entries. All green renders `all pass <sha>`.
+Envelope: head SHA, base SHA, ek version, per-check status (`pass|fail|partial|n/a|skipped`) with note, entries, summary.
+
+Summary:
+
+- `all pass <sha>`: no entries and every check passed. Never while a check is skipped.
+- Otherwise `<pass|fail> <sha> (<F> fail, <C> confirm; ran: <checks>[; skipped: <checks>])`. The `; skipped:` part appears only when some check is skipped, e.g. `pass <sha> (0 fail, 1 confirm; ran: R2; skipped: R1 R3 R4)`. `fail` when `F` > 0.
+- Same format in `--format text` (first line) and in the envelope.
 
 ## Per-app doc
 
@@ -172,7 +174,6 @@ Link must match the ek tag pinned in the caller workflow.
 - Gate: `make check` (fmt, clippy, test). Run before push.
 - Mock here: HTTP client (`src/net.rs` trait), clock (`src/time.rs` trait)
 - Protected paths: `.github/`, `scripts/gate.sh`, `AGENTS.md`, `CLAUDE.md`
-- Guard exceptions: PR body, **Guard exceptions** section
 ```
 
 Stack examples for test paths: Python `tests/test_*.py`, TS `src/**/*.test.ts`.
@@ -181,6 +182,6 @@ Stack examples for test paths: Python `tests/test_*.py`, TS `src/**/*.test.ts`.
 
 - `test(red)` commit exists, fails for the ticket's reason, before the fix.
 - No skip, ignore, only, or new suppression without reason.
-- No assert removed or weakened without a guard exception.
+- No assert removed, moved out of its test, or weakened in place.
 - Expected values match the spec, not the output.
 - Gate passes locally. Say which checks were not run.

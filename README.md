@@ -8,7 +8,7 @@ Agent workflow kit for Claude Code: one plugin, same setup on every machine and 
 | `skills/failure-triage` | classify a red result (sandbox/env, stale, flaky, unowned, real bug) before editing code; mech-review JSON: classify from entries, rounds per id (`mech.md`) |
 | `skills/taste-it` | `/ek:taste-it`: verify by using it. Black-box taster, `.ek/scenarios/` regression suite, fix/human verdicts |
 | `scripts/scenarios.py` | scenario runner: `run [ID]`, `check`, `can-fail REF`, `tree-hash`; path shown in the SessionStart `[ek] Scenario runner:` line |
-| `scripts/mech-review.py` | mechanical review engine: `r2`/`all --repo . --base main --head HEAD --stack rust --test-paths 'tests/**' --protected-paths '.github/**' [--pr-body FILE] [--format text]` → contract JSON, exit 0 pass / 1 fail / 2 usage. R2 test-diff guard (rust); R1/R3/R4 `skipped`. `--help` for contract |
+| `scripts/mech-review.py` | mechanical review engine: `r2`/`all --repo . --base main --head HEAD --stack rust --test-paths 'tests/**' --protected-paths '.github/**' [--format text]` → contract JSON, exit 0 pass / 1 fail / 2 usage. R2 test-diff guard (rust); R1/R3/R4 `skipped`. `--help` for contract |
 | `skills/finish` | end-of-work report: done (evidence per criterion) or blocked (Needs-you block); mech per-check status with head SHA, skipped = not run |
 | [`docs/testing-standard.md`](docs/testing-standard.md) | testing standard: what a good test is, forbidden cheats, mech-review vs code review |
 | `SessionStart` hook | preflight warnings + working rules into context |

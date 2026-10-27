@@ -1,4 +1,4 @@
-"""CLI: parse args, run the engine, print contract JSON, exit 0 (all pass) / 1 (any fail entry) / 2 (usage, git)."""
+"""CLI: parse args, run the engine, print contract JSON, exit 0 (no fail entries) / 1 (any fail entry) / 2 (usage, git)."""
 import argparse
 import json
 import sys
@@ -11,30 +11,47 @@ HELP = """\
 mechanical PR checks over base...head (merge-base diff). Prints the contract JSON.
 
 checks (status in envelope: pass | fail | partial | n/a | skipped):
-  R2  test-diff guard (implemented): removed test fn; added #[ignore]; fewer asserts
-      in a changed test file; added #[allow]/#[expect] without reason= or same-line
-      comment; changed expected value (confirm); change under protected paths (needs-human)
+  R2  test-diff guard (implemented): removed test fn (a rename with the same asserts is not
+      a removal); added #[ignore] or a cfg that disables it or its mod; should_panic added to an
+      existing test (confirm); fewer asserts in a surviving test fn, or helper asserts per file;
+      assert replaced in place, any kind (confirm); changed expected value (confirm); added
+      #[allow]/#[expect] without a non-empty reason= or same-line comment; change under protected
+      paths (needs-human).
+      Test fns are keyed by mod-qualified name (m1::works). A test that loses asserts is exempt
+      only up to the asserts gained by a helper it calls by name (call-site, each gain used once).
   R1, R3, R4: not implemented yet, always skipped.
   `r2` and `all` run the same implemented checks.
 
 entry: id, check, class (agent-fixable | needs-human | env), severity (fail | confirm),
   file, line (0 = file-level), problem, hint, forbidden.
-  id = <check>-<first 8 hex of sha1(check + file + key)>; key = test fn name or rule
-  (e.g. dead_code, assert-count, protected-path). Never depends on line numbers.
+  id = <check>-<first 8 hex of sha1(check + file + key)>; key = rule and test fn name
+  (e.g. ignore:<fn>, assert-count:<fn>, assert-count = helpers of a file). Never depends on line
+  numbers. A repeat of one key in a file (line order) gets key `<key>#1`, `<key>#2`; the first keeps the plain key.
+
+summary (one line, text format first line and envelope `summary`):
+  `all pass <head sha>`: no entries and every check passed (never while a check is skipped).
+  otherwise `<pass|fail> <head sha> (<F> fail, <C> confirm; ran: <checks>[; skipped: <checks>])`,
+  e.g. `pass <sha> (0 fail, 1 confirm; ran: R2; skipped: R1 R3 R4)`.
+  `pass` = no fail entries; `fail` = at least one fail entry.
 
 envelope: ek (plugin version), base, head (full SHAs), checks, entries, summary.
-  summary is `all pass <head sha>` when there are no entries.
 
 exit: 0 no fail entries (confirm entries allowed), 1 any fail entry, 2 usage or git error.
 
-Guard exceptions: a PR body (--pr-body) with a heading 'Guard exceptions' listing
-  `<id>: <reason>` lines downgrades that id's fail (class agent-fixable only) to confirm.
-  needs-human entries are never downgraded. Reason needs at least 3 letters beside the id.
+Guard exceptions removed (#27): --pr-body is a usage error (exit 2). A fail stays fail until
+  the code is fixed; a protected-path change is needs-human. Owner decides out of band.
 
 test paths: a .rs file matching a --test-paths glob is test code; every assert in it (helpers too) counts.
   Other .rs files count asserts inside #[test] fns and #[cfg(test)] mods only, never production code.
   Globs: ** any depth, * one segment.
 """
+
+
+class Removed(argparse.Action):
+    """--pr-body tombstone: guard exceptions are gone (#27). Any use is a usage error."""
+
+    def __call__(self, parser, namespace, values, option_string=None):
+        parser.error("--pr-body removed: guard exceptions were removed (#27); a fail stays fail until the code is fixed")
 
 
 def build_parser():
@@ -48,19 +65,9 @@ def build_parser():
     p.add_argument("--stack", required=True, choices=sorted(ADAPTERS), help="language adapter")
     p.add_argument("--test-paths", action="append", default=[], metavar="GLOB", help="test file glob, repeatable")
     p.add_argument("--protected-paths", action="append", default=[], metavar="GLOB", help="protected file glob, repeatable")
-    p.add_argument("--pr-body", metavar="FILE", help="PR body file; its Guard exceptions section downgrades fails")
+    p.add_argument("--pr-body", nargs="?", action=Removed, help=argparse.SUPPRESS)
     p.add_argument("--format", choices=["json", "text"], default="json", help="json (contract, default) or text (summary + entries)")
     return p
-
-
-def read_body(path):
-    if path is None:
-        return None
-    try:
-        with open(path, encoding="utf-8", errors="replace") as f:
-            return f.read()
-    except OSError as e:
-        raise engine.Die(f"cannot read --pr-body {path}: {e.strerror}")
 
 
 def render_text(env):
@@ -75,8 +82,7 @@ def render_text(env):
 def main(argv):
     args = build_parser().parse_args(argv)
     try:
-        body = read_body(args.pr_body)
-        env = engine.run(args.repo, args.base, args.head, args.stack, args.test_paths, args.protected_paths, body)
+        env = engine.run(args.repo, args.base, args.head, args.stack, args.test_paths, args.protected_paths)
     except engine.Die as e:
         print(f"mech-review: {e}", file=sys.stderr)
         return 2
