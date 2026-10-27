@@ -80,12 +80,20 @@ def r2(repo, mb, head, adapter, test_globs):
         bfns = adapter.test_fns(before) if before is not None else []
         afns = adapter.test_fns(after) if after is not None else []
         names = {f.name for f in afns}
+        by_name = {f.name: f for f in bfns}
         for f in bfns:
             if f.name not in names:
                 entries.append(entry("R2", path, f.line, f.name, "agent-fixable", "fail",
                                      f"test fn `{f.name}` removed",
                                      "restore the test and make the code satisfy it; a removed test is not a fix",
                                      "deleting or renaming a test to hide a failure"))
+        for f in afns:
+            old = by_name.get(f.name)
+            if "ignore" in f.markers and not (old and "ignore" in old.markers):
+                entries.append(entry("R2", path, f.line, f.name, "agent-fixable", "fail",
+                                     f"test `{f.name}` marked #[ignore]",
+                                     "make it pass or fix the code it covers; do not mark it ignored",
+                                     "#[ignore] / skip / xfail / only on a test"))
     return entries
 
 
