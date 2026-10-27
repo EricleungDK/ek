@@ -4,7 +4,7 @@ import json
 import os
 import re
 import subprocess
-from collections import namedtuple
+from collections import Counter, namedtuple
 
 from .globs import any_glob
 from .stack import ADAPTERS
@@ -98,6 +98,19 @@ def added_lines(repo, mb, head):
     return out
 
 
+def unmatched(xs, ys):
+    """xs minus exact (fn, kind, left, right) matches in ys, multiset-aware."""
+    key = lambda a: (a.fn, a.kind, a.left, a.right)
+    pool = Counter(key(y) for y in ys)
+    out = []
+    for x in xs:
+        if pool[key(x)]:
+            pool[key(x)] -= 1
+        else:
+            out.append(x)
+    return out
+
+
 def blob(repo, rev, path):
     return git(repo, "cat-file", "blob", f"{rev}:{path}")
 
@@ -132,38 +145,42 @@ def r2(repo, mb, head, adapter, test_globs, protected_globs):
         for f in afns:
             old = by_name.get(f.name)
             if "ignore" in f.markers and not (old and "ignore" in old.markers):
-                entries.append(entry("R2", path, f.line, f.name, "agent-fixable", "fail",
+                entries.append(entry("R2", path, f.line, f"ignore:{f.name}", "agent-fixable", "fail",
                                      f"test `{f.name}` marked #[ignore]",
                                      "make it pass or fix the code it covers; do not mark it ignored",
                                      "#[ignore] / skip / xfail / only on a test"))
-        bmap, hmap = {}, {}
-        for a in adapter.assertions(before) if before is not None else []:
-            if a.fn and a.kind in ("eq", "ne"):
-                bmap.setdefault((a.fn, a.subject), set()).add((a.kind, a.expected))
-        for a in adapter.assertions(after) if after is not None else []:
-            if a.fn and a.kind in ("eq", "ne"):
-                hmap.setdefault((a.fn, a.subject), {}).setdefault((a.kind, a.expected), a.line)
-        for (fn, subj), hv in hmap.items():
-            bv = bmap.get((fn, subj))
-            if not bv:
+        bas = [a for a in adapter.assertions(before) if a.scope] if before is not None else []
+        aas = [a for a in adapter.assertions(after) if a.scope] if after is not None else []
+        # assert count: asserts lost from surviving test fns (or module-level test code); removed fns are their own entry
+        head_fns = {f.name for f in afns}
+        nb = sum(1 for a in bas if a.fn is None or a.fn in head_fns)
+        if before is not None and len(aas) < nb:
+            entries.append(entry("R2", path, 0, "assert-count", "agent-fixable", "fail",
+                                 f"assertions in `{path}` dropped from {nb} to {len(aas)}",
+                                 "restore the dropped assertions; strengthen a test instead of removing one",
+                                 f"fewer asserts in changed test file {path}"))
+        # expected value: same fn, one operand unchanged (whitespace-normalized), the other changed
+        removed = unmatched(bas, aas)
+        added_a = unmatched(aas, bas)
+        used = set()
+        for r in removed:
+            if r.kind not in ("eq", "ne"):
                 continue
-            added_vals = [k for k in hv if k not in bv]
-            removed_vals = [k for k in bv if k not in hv]
-            if added_vals and removed_vals:
-                entries.append(entry("R2", path, min(hv[k] for k in added_vals), fn, "agent-fixable", "confirm",
-                                     f"expected value changed in `{fn}`: `{subj}` was {', '.join(sorted(v for _, v in removed_vals))}, "
-                                     f"now {', '.join(sorted(v for _, v in added_vals))}",
+            for i, h in enumerate(added_a):
+                if i in used or h.fn != r.fn or h.kind != r.kind:
+                    continue
+                l_same, r_same = h.left == r.left, h.right == r.right
+                if l_same == r_same:
+                    continue
+                used.add(i)
+                unchanged = r.left if l_same else r.right
+                was, now = (r.right, h.right) if l_same else (r.left, h.left)
+                where = r.fn or "<module>"
+                entries.append(entry("R2", path, h.line, f"expected:{r.fn or ''}|{unchanged}", "agent-fixable", "confirm",
+                                     f"expected value changed in `{where}`: was {was}, now {now}",
                                      "confirm the new value is the spec'd behaviour, not the buggy output",
                                      "editing an expected value to match the code's current output"))
-        if before is not None:
-            whole = adapter.classify(path, test_globs) == "test"
-            nb = sum(1 for a in adapter.assertions(before) if whole or a.fn)
-            na = sum(1 for a in (adapter.assertions(after) if after is not None else []) if whole or a.fn)
-            if na < nb:
-                entries.append(entry("R2", path, 0, "assert-count", "agent-fixable", "fail",
-                                     f"assertions in `{path}` dropped from {nb} to {na}",
-                                     "restore the dropped assertions; strengthen a test instead of removing one",
-                                     f"fewer asserts in changed test file {path}"))
+                break
         for ln, text in (added.get(new) or []) if new else []:
             for m in SUPPRESS.finditer(text):
                 inner = m.group(2)

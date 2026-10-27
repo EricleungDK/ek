@@ -3,8 +3,9 @@
 Adapter interface:
   classify(path, test_globs) -> "test" | "prod" | None (None: not a source file of this stack)
   test_fns(text) -> [TestFn(name, line, markers)]   markers: "ignore" (skip-like; more for future stacks)
-  assertions(text) -> [Assertion(line, fn, kind, subject, expected)]  fn: enclosing test fn name or None;
-      kind: eq | ne | other; subject/expected: first two args of eq/ne (else None)
+  assertions(text) -> [Assertion(line, fn, scope, kind, left, right)]  fn: enclosing test fn name or None;
+      scope: inside a test fn or a #[cfg(test)] mod (production code is never in scope);
+      kind: eq | ne | other (assert!(a == b) is eq); left/right: whitespace-normalized operands (eq/ne only)
 """
 import re
 from collections import namedtuple
@@ -12,11 +13,12 @@ from collections import namedtuple
 from .globs import any_glob
 
 TestFn = namedtuple("TestFn", "name line markers")
-Assertion = namedtuple("Assertion", "line fn kind subject expected")
+Assertion = namedtuple("Assertion", "line fn scope kind left right")
 
 RAW = re.compile(r'(?:br|r)(#*)"')
 FN = re.compile(r'((?:#\[[^\]]*\]\s*)*)(?:pub(?:\s*\([^)]*\))?\s+)?(?:async\s+)?(?:unsafe\s+)?fn\s+(\w+)')
 ASSERT = re.compile(r"\b(\w*assert\w*)!\s*[(\[{]")
+MODULE = re.compile(r"#\[\s*cfg\s*\(\s*test\s*\)\s*\]\s*(?:pub(?:\s*\([^)]*\))?\s+)?mod\s+\w+\s*\{")
 TEST_ATTR = re.compile(r"#\[\s*(?:\w+::)*(?:test|rstest|test_case)\b")
 IGNORE_ATTR = re.compile(r"#\[\s*(?:ignore\b|cfg_attr\s*\(.*\bignore\b|cfg\s*\(\s*(?:any\s*\(\s*\)|FALSE|false)\s*\)\s*\])")
 OPEN, CLOSE = "([{", ")]}"
@@ -84,6 +86,25 @@ def mask(text):
         else:
             i += 1
     return "".join(out)
+
+
+def norm(s):
+    return None if s is None else re.sub(r"\s+", "", s)
+
+
+def top_cmp(raw):
+    """(kind, left, right) for a top-level == or != in raw, else None."""
+    m = mask(raw)
+    depth = 0
+    for j in range(len(m) - 1):
+        c = m[j]
+        if c in OPEN:
+            depth += 1
+        elif c in CLOSE:
+            depth -= 1
+        elif depth == 0 and m[j:j + 2] in ("==", "!="):
+            return ("eq" if m[j:j + 2] == "==" else "ne"), raw[:j], raw[j + 2:]
+    return None
 
 
 def close_of(m, i):
@@ -156,18 +177,25 @@ class RustAdapter(Adapter):
 
     def assertions(self, text):
         m, fns = self._scan(text)
+        spans = [(t.name, b, e) for t, (b, e) in fns]
+        spans += [(None, mo.end() - 1, close_of(m, mo.end() - 1)) for mo in MODULE.finditer(m)]
         out = []
         for a in ASSERT.finditer(m):
             pos = a.start()
-            fn = next((t.name for t, (s, e) in fns if s <= pos < e), None)
-            name = re.sub(r"^debug_", "", a.group(1))
-            kind = "eq" if name.endswith("_eq") else "ne" if name.endswith("_ne") else "other"
-            subj = exp = None
-            if kind in ("eq", "ne") and m[a.end() - 1] == "(":
+            inside = [(n, b, e) for n, b, e in spans if b <= pos < e]
+            fn = next((n for n, _, _ in inside if n), None)
+            base = re.sub(r"^debug_", "", a.group(1))
+            kind = "eq" if base.endswith("_eq") else "ne" if base.endswith("_ne") else "other"
+            left = right = None
+            if m[a.end() - 1] == "(":
                 args = args_of(text, m, a.end() - 1)
-                if len(args) >= 2:
-                    subj, exp = args[0], args[1]
-            out.append(Assertion(m.count("\n", 0, pos) + 1, fn, kind, subj, exp))
+                if kind in ("eq", "ne") and len(args) >= 2:
+                    left, right = args[0], args[1]
+                elif base in ("assert", "prop_assert") and args:
+                    cmp = top_cmp(args[0])
+                    if cmp:
+                        kind, left, right = cmp
+            out.append(Assertion(m.count("\n", 0, pos) + 1, fn, bool(inside), kind, norm(left), norm(right)))
         return out
 
 
