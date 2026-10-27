@@ -1753,4 +1753,24 @@ H2=$(commit "$R" blank-reason)
 out=$(mr "$R" "$B" "$H2"); rc=$?
 eq "$rc" 1 "allow with whitespace-only reason: fail exit 1"
 
+# review F4: test-path classification per side. Helper asserts leaving a test path are a drop
+R=$(mkrepo f4move)
+put "$R" tests/helpers.rs <<'EOF2'
+pub fn check(v: i32) {
+    assert!(v > 0);
+    assert!(v < 10);
+}
+EOF2
+B=$(commit "$R" base)
+rm "$R/tests/helpers.rs"
+put "$R" src/helpers.rs <<'EOF2'
+pub fn check(v: i32) {
+    assert!(v > 0);
+}
+EOF2
+H=$(commit "$R" move-helpers-to-src)
+out=$(mr "$R" "$B" "$H"); rc=$?
+eq "$rc" 1 "helper asserts moved from test path to src: exit 1"
+has "$(jq -r '[.entries[].problem] | join(" ")' <<<"$out")" "from 2 to 0" "helper drop 2 to 0 named"
+
 done_tests
