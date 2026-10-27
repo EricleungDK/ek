@@ -1727,4 +1727,30 @@ out=$(mr "$R" "$B" "$H"); rc=$?
 eq "$rc" 0 "assert_eq! to assert!(y > 0): confirm, exit 0"
 eq "$(jq -r '.entries[0].severity' <<<"$out")" confirm "assert_eq! to assert!: severity confirm"
 
+# review F6: an empty or whitespace-only reason is no reason
+R=$(mkrepo f6reason)
+put "$R" src/lib.rs <<'EOF2'
+pub fn f() -> i32 { 1 }
+EOF2
+B=$(commit "$R" base)
+put "$R" src/lib.rs <<'EOF2'
+pub fn f() -> i32 { 1 }
+
+#[allow(dead_code, reason = "")]
+fn g() {}
+EOF2
+H=$(commit "$R" empty-reason)
+out=$(mr "$R" "$B" "$H"); rc=$?
+eq "$rc" 1 "allow with reason = \"\": fail exit 1"
+eq "$(jq -r '.entries[0].severity' <<<"$out")" fail "empty reason: severity fail"
+put "$R" src/lib.rs <<'EOF2'
+pub fn f() -> i32 { 1 }
+
+#[allow(dead_code, reason = "   ")]
+fn g() {}
+EOF2
+H2=$(commit "$R" blank-reason)
+out=$(mr "$R" "$B" "$H2"); rc=$?
+eq "$rc" 1 "allow with whitespace-only reason: fail exit 1"
+
 done_tests
