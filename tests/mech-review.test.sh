@@ -456,7 +456,7 @@ eq "$(jq -r '.entries[0].file' <<<"$out")" .github/workflows/ci.yml "protected f
 eq "$(jq -r '.entries[0].id' <<<"$out")" "R2-$(printf '%s' 'R2.github/workflows/ci.ymlprotected-path' | sha1sum | cut -c1-8)" "protected id keyed by file+protected-path"
 eq "$(jq -r '.entries[0].line' <<<"$out")" 0 "protected entry file-level"
 
-# slice 7: guard exceptions (PR body) downgrade agent-fixable fails to confirm
+# slice 7 (#27): guard exceptions removed. --pr-body is a usage error; a fail stays fail whatever a PR body says.
 R=$(mkrepo s7)
 put "$R" tests/a.rs <<'EOF2'
 #[test]
@@ -478,38 +478,32 @@ fn a() {
 EOF2
 H=$(commit "$R" drop-b)
 ID="R2-$(printf '%s' 'R2tests/a.rsb' | sha1sum | cut -c1-8)"
-AC="R2-$(printf '%s' 'R2tests/a.rsassert-count' | sha1sum | cut -c1-8)"
-OTHER="R2-$(printf '%s' 'R2tests/a.rszzz' | sha1sum | cut -c1-8)"
 body() { printf '%s\n' "$@" > "$T/body.md"; echo "$T/body.md"; }
 
-f=$(body "## Summary" "removes b" "## Guard exceptions" "- $ID: b superseded by a stronger test in a.rs")
-out=$(mr "$R" "$B" "$H" --pr-body "$f"); rc=$?
-eq "$rc" 0 "listed id with reason: exit 0"
-eq "$(jq -r '.entries[0].severity' <<<"$out")" confirm "listed id downgraded to confirm"
-eq "$(jq -r '.entries[0].class' <<<"$out")" agent-fixable "downgrade keeps class"
-has "$(jq -r .summary <<<"$out")" "confirm" "summary confirm after downgrade"
-
-f=$(body "## Guard exceptions" "**Guard exceptions**" "- $ID")
-out=$(mr "$R" "$B" "$H" --pr-body "$f"); rc=$?
-eq "$rc" 1 "listed id without reason stays fail"
-eq "$(jq -r '.entries[0].severity' <<<"$out")" fail "no-reason severity still fail"
-
-f=$(body "## Guard exceptions" "- $OTHER: unrelated id, reason given here")
-out=$(mr "$R" "$B" "$H" --pr-body "$f"); rc=$?
-eq "$rc" 1 "other id does not match"
-
-f=$(body "## Summary" "- $ID: mentioned outside the section, reason here")
-out=$(mr "$R" "$B" "$H" --pr-body "$f"); rc=$?
-eq "$rc" 1 "id outside Guard exceptions section does not match"
-
-f=$(body "# PR" "Guard exceptions" "no list here")
-out=$(mr "$R" "$B" "$H" --pr-body "$f"); rc=$?
-eq "$rc" 1 "heading without ids does nothing"
-
+f=$(body "## Guard exceptions" "- $ID: b superseded by a stronger test in a.rs")
+out=$(mr "$R" "$B" "$H" --pr-body "$f" 2>&1); rc=$?
+eq "$rc" 2 "--pr-body listing a fail id: usage error exit 2"
+has "$out" "guard exceptions were removed (#27)" "--pr-body error says guard exceptions removed"
+stdout=$(mr "$R" "$B" "$H" --pr-body "$f" 2>/dev/null)
+eq "$stdout" "" "--pr-body: no envelope on stdout (cannot read as pass)"
+out=$(mr "$R" "$B" "$H" --pr-body="$f" 2>&1); rc=$?
+eq "$rc" 2 "--pr-body=FILE form: usage error exit 2"
+out=$(mr "$R" "$B" "$H" --pr-body 2>&1); rc=$?
+eq "$rc" 2 "bare --pr-body: usage error exit 2"
+has "$out" "guard exceptions were removed (#27)" "bare --pr-body names the removal"
 out=$(mr "$R" "$B" "$H" --pr-body "$T/missing.md" 2>&1); rc=$?
-eq "$rc" 2 "missing pr body file exit 2"
+eq "$rc" 2 "--pr-body missing file: usage error exit 2"
 
-# protected entries are never downgraded by guard exceptions
+out=$(python3 -I "$MR" --help); rc=$?
+has "$out" "Guard exceptions removed (#27)" "--help says guard exceptions removed"
+
+# no body read: the listed id stays a fail, agent-fixable
+out=$(mr "$R" "$B" "$H"); rc=$?
+eq "$rc" 1 "listed fail id without --pr-body: exit 1"
+eq "$(jq -r '.entries[0].severity' <<<"$out")" fail "listed fail id: severity stays fail"
+eq "$(jq -r '.entries[0].class' <<<"$out")" agent-fixable "listed fail id: class stays agent-fixable"
+
+# protected entries: --pr-body rejected; without it still fail needs-human
 R=$(mkrepo s7prot)
 put "$R" .github/workflows/ci.yml <<'EOF2'
 on: push
@@ -521,8 +515,10 @@ EOF2
 H=$(commit "$R" ci-change)
 PID="R2-$(printf '%s' 'R2.github/workflows/ci.ymlprotected-path' | sha1sum | cut -c1-8)"
 f=$(body "## Guard exceptions" "- $PID: ci change needed for the fix, reviewer please confirm")
-out=$(mr "$R" "$B" "$H" --protected-paths '.github/**' --pr-body "$f"); rc=$?
-eq "$rc" 1 "protected entry not downgraded by exception: exit 1"
+out=$(mr "$R" "$B" "$H" --protected-paths '.github/**' --pr-body "$f" 2>&1); rc=$?
+eq "$rc" 2 "--pr-body listing protected id: usage error exit 2"
+out=$(mr "$R" "$B" "$H" --protected-paths '.github/**'); rc=$?
+eq "$rc" 1 "protected change without body: exit 1"
 eq "$(jq -r '.entries[0].severity' <<<"$out")" fail "protected stays fail"
 eq "$(jq -r '.entries[0].class' <<<"$out")" needs-human "protected stays needs-human"
 
@@ -1254,47 +1250,7 @@ out=$(mr "$R" "$B" "$H"); rc=$?
 eq "$rc" 1 "path with a space: suppression caught"
 eq "$(jq -r '.entries[0].file' <<<"$out")" "src/my mod.rs" "path with a space reported verbatim"
 
-# round 2 area 4: guard exception section rules, placeholder reasons, confirm-only summary
-R=$(mkrepo r4g)
-put "$R" tests/a.rs <<'EOF2'
-#[test]
-fn a() {
-    assert_eq!(1, 1);
-}
-
-#[test]
-fn b() {
-    assert_eq!(2, 2);
-}
-EOF2
-B=$(commit "$R" base)
-put "$R" tests/a.rs <<'EOF2'
-#[test]
-fn a() {
-    assert_eq!(1, 1);
-}
-EOF2
-H=$(commit "$R" drop-b)
-ID="R2-$(printf '%s' 'R2tests/a.rsb' | sha1sum | cut -c1-8)"
-body() { printf '%s\n' "$@" > "$T/body.md"; echo "$T/body.md"; }
-
-f=$(body "## Guard exceptions" "$ID: b superseded, reason here")
-out=$(mr "$R" "$B" "$H" --pr-body "$f"); rc=$?
-eq "$rc" 1 "id not in a list item does not downgrade"
-
-f=$(body "## Guard exceptions" "**Summary**" "- $ID: b superseded, reason here")
-out=$(mr "$R" "$B" "$H" --pr-body "$f"); rc=$?
-eq "$rc" 1 "bold line ends the Guard exceptions section"
-
-for r in "TBD" "n/a" "?" "todo" "None"; do
-  f=$(body "## Guard exceptions" "- $ID: $r")
-  out=$(mr "$R" "$B" "$H" --pr-body "$f"); rc=$?
-  eq "$rc" 1 "placeholder reason '$r' rejected"
-done
-
-f=$(body "## Guard exceptions" "- $ID: b superseded by a stronger test in a.rs")
-out=$(mr "$R" "$B" "$H" --pr-body "$f"); rc=$?
-eq "$rc" 0 "list item with real reason downgrades"
+# round 2 area 4: confirm-only summary
 
 R=$(mkrepo r4sum)
 put "$R" tests/a.rs <<'EOF2'
@@ -1476,7 +1432,7 @@ H2=$(commit "$R" cfg-feature)
 out=$(mr "$R" "$B" "$H2"); rc=$?
 eq "$rc" 0 "cfg(feature) on a test fn is not an ignore marker"
 
-# item 6: non-UTF-8 --pr-body: no traceback, decoded with replacement; list item still downgrades
+# item 6 (#27): non-UTF-8 --pr-body is a usage error (guard exceptions removed): no traceback
 R=$(mkrepo r6body)
 put "$R" tests/a.rs <<'EOF2'
 #[test]
@@ -1501,7 +1457,7 @@ ID="R2-$(printf '%s' 'R2tests/a.rsb' | sha1sum | cut -c1-8)"
 printf '## Guard exceptions\n- %s: b superseded by a stronger test \377 in a.rs\n' "$ID" > "$T/badbody.md"
 out=$(mr "$R" "$B" "$H" --pr-body "$T/badbody.md" 2>&1); rc=$?
 lacks "$out" "Traceback" "non-utf8 pr body: no traceback"
-eq "$rc" 0 "non-utf8 pr body: list item still downgrades"
+eq "$rc" 2 "non-utf8 pr body: usage error exit 2"
 
 # item 7: binary-marked source (-diff attr, or NUL byte) must still show suppressions
 R=$(mkrepo r6binattr)
