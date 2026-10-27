@@ -6,6 +6,7 @@ import re
 import subprocess
 from collections import namedtuple
 
+from .globs import any_glob
 from .stack import ADAPTERS
 
 PLUGIN = os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", ".claude-plugin", "plugin.json"))
@@ -99,11 +100,16 @@ def blob(repo, rev, path):
     return git(repo, "cat-file", "blob", f"{rev}:{path}")
 
 
-def r2(repo, mb, head, adapter, test_globs):
+def r2(repo, mb, head, adapter, test_globs, protected_globs):
     entries = []
     added = added_lines(repo, mb, head)
     for ch in changes(repo, mb, head):
         path = ch.new or ch.old
+        if any_glob(ch.old or "", protected_globs) or any_glob(ch.new or "", protected_globs):
+            entries.append(entry("R2", path, 0, "protected-path", "needs-human", "fail",
+                                 f"protected path changed: {path}",
+                                 "move this change to its own human-reviewed PR, or list the id under Guard exceptions with a reason",
+                                 "editing CI, gate scripts or agent docs to get the gate green"))
         if adapter.classify(path, test_globs) is None:
             continue
         before = blob(repo, mb, ch.old) if ch.old else None
@@ -125,6 +131,25 @@ def r2(repo, mb, head, adapter, test_globs):
                                      f"test `{f.name}` marked #[ignore]",
                                      "make it pass or fix the code it covers; do not mark it ignored",
                                      "#[ignore] / skip / xfail / only on a test"))
+        bmap, hmap = {}, {}
+        for a in adapter.assertions(before) if before is not None else []:
+            if a.fn and a.kind in ("eq", "ne"):
+                bmap.setdefault((a.fn, a.subject), set()).add((a.kind, a.expected))
+        for a in adapter.assertions(after) if after is not None else []:
+            if a.fn and a.kind in ("eq", "ne"):
+                hmap.setdefault((a.fn, a.subject), {}).setdefault((a.kind, a.expected), a.line)
+        for (fn, subj), hv in hmap.items():
+            bv = bmap.get((fn, subj))
+            if not bv:
+                continue
+            added_vals = [k for k in hv if k not in bv]
+            removed_vals = [k for k in bv if k not in hv]
+            if added_vals and removed_vals:
+                entries.append(entry("R2", path, min(hv[k] for k in added_vals), fn, "agent-fixable", "confirm",
+                                     f"expected value changed in `{fn}`: `{subj}` was {', '.join(sorted(v for _, v in removed_vals))}, "
+                                     f"now {', '.join(sorted(v for _, v in added_vals))}",
+                                     "confirm the new value is the spec'd behaviour, not the buggy output",
+                                     "editing an expected value to match the code's current output"))
         if before is not None:
             whole = adapter.classify(path, test_globs) == "test"
             nb = sum(1 for a in adapter.assertions(before) if whole or a.fn)
@@ -159,7 +184,7 @@ def envelope(base, head, entries):
     return {"ek": ek_version(), "base": base, "head": head, "checks": checks, "entries": entries, "summary": summary}
 
 
-def run(repo, base_ref, head_ref, stack, test_globs):
+def run(repo, base_ref, head_ref, stack, test_globs, protected_globs=()):
     base = resolve(repo, base_ref)
     head = resolve(repo, head_ref)
     try:
@@ -167,5 +192,5 @@ def run(repo, base_ref, head_ref, stack, test_globs):
     except Die:
         raise Die(f"no merge base for {base_ref} and {head_ref}")
     adapter = ADAPTERS[stack]()
-    entries = finalize(r2(repo, mb, head, adapter, test_globs))
+    entries = finalize(r2(repo, mb, head, adapter, test_globs, list(protected_globs)))
     return envelope(base, head, entries)
