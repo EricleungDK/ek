@@ -44,17 +44,24 @@ def resolve(repo, ref):
 
 
 def entry(check, file, line, key, cls, severity, problem, hint, forbidden):
-    """id = <check>-<sha1(check+file+key)[:8]>; key is the test fn or rule name, never a line number."""
-    eid = f"{check}-" + hashlib.sha1((check + file + key).encode("utf-8", "surrogateescape")).hexdigest()[:8]
-    return {"id": eid, "check": check, "class": cls, "severity": severity, "file": file, "line": line,
-            "problem": problem, "hint": hint, "forbidden": forbidden}
+    """key: test fn or rule name (never a line number); the id is assigned in finalize."""
+    return {"id": "", "check": check, "class": cls, "severity": severity, "file": file, "line": line,
+            "problem": problem, "hint": hint, "forbidden": forbidden, "_key": key}
 
 
 def finalize(entries):
-    seen, out = set(), []
+    """id = <check>-<sha1(check+file+key)[:8]>. The n-th entry (line order, n>=1) with the same check+file+key
+    gets key '#n' so repeats are kept; n=0 keeps the plain id. Line numbers never enter an id."""
+    groups = {}
     for e in entries:
-        if e["id"] not in seen:
-            seen.add(e["id"])
+        groups.setdefault((e["check"], e["file"], e["_key"]), []).append(e)
+    out = []
+    for (check, file, key), group in groups.items():
+        group.sort(key=lambda e: (e["line"] == 0, e["line"]))
+        for n, e in enumerate(group):
+            k = key if n == 0 else f"{key}#{n}"
+            e["id"] = f"{check}-" + hashlib.sha1((check + file + k).encode("utf-8", "surrogateescape")).hexdigest()[:8]
+            del e["_key"]
             out.append(e)
     # file-level entries (line 0) sort after line-anchored ones within a file
     return sorted(out, key=lambda e: (e["file"], e["line"] == 0, e["line"], e["id"]))
