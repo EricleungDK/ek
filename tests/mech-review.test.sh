@@ -1773,4 +1773,61 @@ out=$(mr "$R" "$B" "$H"); rc=$?
 eq "$rc" 1 "helper asserts moved from test path to src: exit 1"
 has "$(jq -r '[.entries[].problem] | join(" ")' <<<"$out")" "from 2 to 0" "helper drop 2 to 0 named"
 
+# review F5a: a cfg that disables a whole test mod disables each test in it: an ignore of each
+for ATTR in '#[cfg(any())]' '#[cfg(FALSE)]' '#[cfg(not(test))]'; do
+  R=$(mkrepo "f5a$(echo "$ATTR" | tr -dc 'a-z')")
+  put "$R" src/lib.rs <<'EOF2'
+pub fn f() -> i32 { 1 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn f_is_one() {
+        assert_eq!(f(), 1);
+    }
+}
+EOF2
+  B=$(commit "$R" base)
+  { printf 'pub fn f() -> i32 { 1 }\n\n#[cfg(test)]\n%s\nmod tests {\n    use super::*;\n\n    #[test]\n    fn f_is_one() {\n        assert_eq!(f(), 1);\n    }\n}\n' "$ATTR"; } > "$R/src/lib.rs"
+  H=$(commit "$R" disable-mod)
+  out=$(mr "$R" "$B" "$H"); rc=$?
+  eq "$rc" 1 "mod disabled by $ATTR: its tests are ignored, exit 1"
+  has "$(jq -r '[.entries[].problem] | join(" ")' <<<"$out")" "marked #[ignore]" "mod disabled by $ATTR: ignore entry"
+done
+R=$(mkrepo f5acontrol)
+put "$R" src/lib.rs <<'EOF2'
+pub fn f() -> i32 { 1 }
+
+#[cfg(any())]
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn f_is_one() {
+        assert_eq!(super::f(), 1);
+    }
+}
+EOF2
+B=$(commit "$R" base)
+put "$R" src/lib.rs <<'EOF2'
+pub fn f() -> i32 { 1 }
+
+#[cfg(any())]
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn f_is_one() {
+        assert_eq!(super::f(), 1);
+    }
+    #[test]
+    fn f_is_still_one() {
+        assert_eq!(super::f(), 1);
+    }
+}
+EOF2
+H=$(commit "$R" control-add-test-in-disabled-mod)
+out=$(mr "$R" "$B" "$H"); rc=$?
+eq "$rc" 1 "new test in an already-disabled mod: ignore entry (new ignored test is a fail)"
+
 done_tests
