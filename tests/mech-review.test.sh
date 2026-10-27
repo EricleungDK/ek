@@ -527,4 +527,104 @@ eq "$rc" 1 "protected entry not downgraded by exception: exit 1"
 eq "$(jq -r '.entries[0].severity' <<<"$out")" fail "protected stays fail"
 eq "$(jq -r '.entries[0].class' <<<"$out")" needs-human "protected stays needs-human"
 
+# slice 8: ids stable when lines move, change when the test changes
+R=$(mkrepo s8)
+put "$R" tests/a.rs <<'EOF2'
+#[test]
+fn a() {
+    assert_eq!(1, 1);
+}
+
+#[test]
+fn b() {
+    assert_eq!(2, 2);
+}
+EOF2
+B=$(commit "$R" base)
+put "$R" tests/a.rs <<'EOF2'
+#[test]
+fn a() {
+    assert_eq!(1, 1);
+}
+EOF2
+H1=$(commit "$R" drop-b)
+id1=$(mr "$R" "$B" "$H1" | jq -r '[.entries[] | select(.problem|contains("removed"))][0].id')
+put "$R" tests/a.rs <<'EOF2'
+// header comment
+// another
+
+#[test]
+fn a() {
+    assert_eq!(1, 1);
+}
+EOF2
+H2=$(commit "$R" drop-b-lines-moved)
+id2=$(mr "$R" "$B" "$H2" | jq -r '[.entries[] | select(.problem|contains("removed"))][0].id')
+eq "$id2" "$id1" "removed-fn id unchanged when lines move"
+has "$id1" "R2-" "removed-fn id has R2 prefix"
+
+# suppression: same id after lines move
+R=$(mkrepo s8allow)
+put "$R" src/lib.rs <<'EOF2'
+pub fn f() -> i32 { 1 }
+
+#[allow(dead_code)]
+fn g() {}
+EOF2
+B=$(commit "$R" base)
+put "$R" src/lib.rs <<'EOF2'
+pub fn f() -> i32 { 1 }
+
+#[allow(dead_code)]
+fn g() {}
+
+pub fn h() {}
+EOF2
+H1=$(commit "$R" allow-lines-a)
+put "$R" src/lib.rs <<'EOF2'
+pub fn f() -> i32 { 1 }
+
+pub fn extra() {}
+
+#[allow(dead_code)]
+fn g() {}
+
+pub fn h() {}
+EOF2
+H2=$(commit "$R" allow-lines-b)
+id1=$(mr "$R" "$B" "$H1" | jq -r '.entries[0].id')
+id2=$(mr "$R" "$B" "$H2" | jq -r '.entries[0].id')
+eq "$id2" "$id1" "suppression id unchanged when lines move"
+
+# a different test name is a different failure
+R=$(mkrepo s8name)
+put "$R" tests/a.rs <<'EOF2'
+#[test]
+fn a() {
+    assert_eq!(1, 1);
+}
+
+#[test]
+fn b() {
+    assert_eq!(2, 2);
+}
+EOF2
+B=$(commit "$R" base)
+put "$R" tests/a.rs <<'EOF2'
+#[test]
+fn a() {
+    assert_eq!(1, 1);
+}
+
+#[test]
+fn c() {
+    assert_eq!(2, 2);
+}
+EOF2
+H=$(commit "$R" rename-b-c)
+out=$(mr "$R" "$B" "$H")
+has "$(jq -r '[.entries[].id] | join(" ")' <<<"$out")" "R2-" "rename yields entries"
+eq "$(jq -r '[.entries[].id] | unique | length' <<<"$out")" "$(jq -r '.entries|length' <<<"$out")" "entry ids unique"
+has "$(jq -r '[.entries[].problem] | join(" ")' <<<"$out")" '`b`' "rename reports removed b"
+
 done_tests
