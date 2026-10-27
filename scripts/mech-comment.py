@@ -50,6 +50,10 @@ def main(argv):
     api = os.environ.get("GITHUB_API_URL", "https://api.github.com").rstrip("/")
 
     env = load(args.envelope)
+    if env is not None and args.head and env["head"] != args.head:
+        print(f"mech-comment: envelope is for {env['head']}, not head {args.head}: stale", file=sys.stderr)
+        env = None
+        args.reason = f"guard result is for an older head, not {args.head}"
     if env is None:
         if not args.head:
             print("mech-comment: no usable envelope and --head not given", file=sys.stderr)
