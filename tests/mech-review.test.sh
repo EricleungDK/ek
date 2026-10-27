@@ -346,4 +346,65 @@ H=$(commit "$R" drop-helper)
 out=$(mr "$R" "$B" "$H"); rc=$?
 eq "$rc" 1 "helper assert drop in test path exit 1"
 
+# slice 5: R2 added suppression without a reason
+R=$(mkrepo s5)
+put "$R" src/lib.rs <<'EOF2'
+pub fn f() -> i32 { 1 }
+EOF2
+B=$(commit "$R" base)
+put "$R" src/lib.rs <<'EOF2'
+pub fn f() -> i32 { 1 }
+
+#[allow(dead_code)]
+fn g() {}
+EOF2
+H=$(commit "$R" allow-bare)
+out=$(mr "$R" "$B" "$H"); rc=$?
+eq "$rc" 1 "bare #[allow] exit 1"
+eq "$(jq -r '.entries[0].check' <<<"$out")" R2 "suppression R2"
+eq "$(jq -r '.entries[0].class' <<<"$out")" agent-fixable "suppression class"
+eq "$(jq -r '.entries[0].severity' <<<"$out")" fail "suppression severity fail"
+eq "$(jq -r '.entries[0].line' <<<"$out")" 3 "suppression line = attr line in head"
+has "$(jq -r '.entries[0].problem' <<<"$out")" "dead_code" "problem names lint"
+eq "$(jq -r '.entries[0].id' <<<"$out")" "R2-$(printf '%s' 'R2src/lib.rsdead_code' | sha1sum | cut -c1-8)" "suppression id keyed by file+lint"
+
+# reason in the attribute: clean
+put "$R" src/lib.rs <<'EOF2'
+pub fn f() -> i32 { 1 }
+
+#[allow(dead_code, reason = "used by ffi")]
+fn g() {}
+EOF2
+H2=$(commit "$R" allow-reason)
+out=$(mr "$R" "$B" "$H2"); rc=$?
+eq "$rc" 0 "allow with reason = clean"
+
+# same-line reason comment: clean
+put "$R" src/lib.rs <<'EOF2'
+pub fn f() -> i32 { 1 }
+
+#[allow(dead_code)] // used by ffi
+fn g() {}
+EOF2
+H3=$(commit "$R" allow-comment)
+out=$(mr "$R" "$B" "$H3"); rc=$?
+eq "$rc" 0 "allow with same-line reason comment = clean"
+
+# suppression already on base, unrelated edit: clean
+R=$(mkrepo s5pre)
+put "$R" src/lib.rs <<'EOF2'
+#[allow(dead_code)]
+fn g() {}
+EOF2
+B=$(commit "$R" base)
+put "$R" src/lib.rs <<'EOF2'
+#[allow(dead_code)]
+fn g() {}
+
+pub fn h() -> i32 { 2 }
+EOF2
+H=$(commit "$R" add-h)
+out=$(mr "$R" "$B" "$H"); rc=$?
+eq "$rc" 0 "pre-existing allow untouched is clean"
+
 done_tests
