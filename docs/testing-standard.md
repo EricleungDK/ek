@@ -73,11 +73,12 @@ If a behaviour can be tested at unit level, test it there. Push e2e to the one p
 | Cheat | Caught by | Forbidden | Do instead |
 |---|---|---|---|
 | Delete or rename a failing test | R2 (`fail`, agent-fixable) | deleting or renaming a test to hide a failure | Fix the code; the test is restored. A removal the owner wants is the owner's call, outside the agent loop. The entry stays `fail` until then; the agent never self-waives it. |
-| Skip or ignore a test: `#[ignore]`, `@pytest.mark.skip`, `@pytest.mark.xfail`, `it.skip`, `test.only` | R2 (`fail`) | #[ignore] / skip / xfail / only on a test | Fix the test failure. Can't run here: note verification debt, don't skip in code. |
-| Drop or move assertions out of a test | R2 (`fail`) | fewer asserts in test `<name>`; fewer asserts in changed test file `<file>` (outside test fns) | Keep the assert. Add a stronger one if needed. Extracting asserts into a helper that the test calls is fine; moving them into another test is not. |
-| Weaken an assert in place: `assert_eq!(x, 3)` to `assert!(x.is_some())` | R2 (`confirm`) | weakening an assertion in place | Keep the assert at least as strict. Intended change: reviewer confirms the `confirm` entry. |
+| Skip or ignore a test: `#[ignore]`, `@pytest.mark.skip`, `@pytest.mark.xfail`, `it.skip`, `test.only`, a `cfg` that disables it or its enclosing mod (`cfg(any())`, `cfg(FALSE)`, `cfg(not(test))`) | R2 (`fail`) | #[ignore] / skip / xfail / only on a test | Fix the test failure. Can't run here: note verification debt, don't skip in code. |
+| Turn a failing test into a panic-expecting one: `#[should_panic]` added to an existing test | R2 (`confirm`) | adding #[should_panic] to an existing test | Assert the error or the value instead. Intended change: reviewer confirms the `confirm` entry. |
+| Drop or move assertions out of a test | R2 (`fail`) | fewer asserts in test `<name>`; fewer asserts in changed test file `<file>` (outside test fns) | Keep the assert. Add a stronger one if needed. Extracting asserts into a helper that the test itself calls is fine (the helper must gain the asserts); moving them into another test, or into a helper the test does not call, is not. |
+| Replace an assert in place with a weaker one, any kind: `assert_eq!(x, 3)` to `assert!(x.is_some())`, `assert!(v.len() > 2)` to `assert!(true)` | R2 (`confirm`) | weakening an assertion in place | Keep the assert at least as strict. Intended change: reviewer confirms the `confirm` entry. Reordering asserts is not a replacement. |
 | Change expected value to match output | R2 (`confirm`) | editing an expected value to match the code's current output | Check the spec or ticket. The spec sets the value; fix the code. Intended change: reviewer confirms the `confirm` entry. |
-| Lint/type suppression without reason: `#[allow]`, `# noqa`, `# type: ignore`, `@ts-ignore` | R2 (`fail`) | silencing a lint without a reason | Fix the lint. If it must stay, same-line reason (`#[allow(x, reason = "…")]`, `# noqa: E501 — url literal`). |
+| Lint/type suppression without reason: `#[allow]`, `# noqa`, `# type: ignore`, `@ts-ignore` | R2 (`fail`) | silencing a lint without a reason | Fix the lint. If it must stay, same-line reason (`#[allow(x, reason = "…")]` with a non-empty reason, `# noqa: E501 — url literal`). An empty reason is no reason. |
 | Edit a protected path: CI, gate scripts, agent docs | R2 (`fail`, `needs-human`) | editing CI, gate scripts or agent docs to get the gate green | Stop. A human decides. Never edit the gate to pass. No agent downgrade path. |
 | Test passes before the fix | R1 (planned) | no failing `test(red)` commit | Write the test first in a `test(red): …` commit. It must fail there for the ticket's reason. |
 | Weak or missing assert: test still passes with the code broken | R3 (planned) | MISSED mutant `<desc>` in `<file>` | Add the assert that kills the mutant. |
@@ -89,7 +90,15 @@ If a behaviour can be tested at unit level, test it there. Push e2e to the one p
 | Check | Enforces | Status |
 |---|---|---|
 | R1 red-first | First `test(red): …` commit touches only test paths. Its new tests fail there (or build fails: `compile-red`). They pass at head. Agent branches only, when production files changed. | planned (#12) |
-| R2 test-diff guard | Cheat rows above: removed tests, new skip/ignore/xfail/only, fewer asserts per surviving test fn (by name; asserts moved into a helper outside test fns are an extraction, the helper count per file must not drop), weakened or changed expected values (`confirm`), unreasoned suppressions, protected paths. No waiver in the PR body. | implemented (#13, #26, #27) |
+| R2 test-diff guard | Cheat rows above: removed tests (a rename with the same asserts is not a removal), new skip/ignore/xfail/only, `should_panic` added to an existing test (`confirm`), fewer asserts per surviving test fn, weakened or changed expected values (`confirm`), unreasoned suppressions, protected paths. No waiver in the PR body. | implemented (#13, #26, #27, review round 1) |
+
+R2 assert rules:
+
+- Test fns are keyed by name qualified with their enclosing mods (`m1::works`); top-level fns are bare.
+- A test that loses asserts is a `fail` unless a helper (non-test fn in the same file) it calls by name gained at least as many asserts. Each gained assert explains one lost assert, once. A helper that nothing calls explains nothing.
+- Asserts outside test fns (helpers) are counted per file; the count must not drop.
+- Each side is classified by its own path: moving a file between test and prod paths is judged per side.
+- Replacing an assert in place (any kind) is `confirm`; reordering is not a change.
 | R3 mutation on diff | Mutation runs on changed production code only. MISSED mutant = `fail`. Timeout and unviable ignored. Budgeted. Budget hit with no MISSED so far = `partial`: reports `R3 partial (tested/total)`, does not block. | planned (#12) |
 | R4 determinism | Each new or changed test runs 5× at head. Any failure = `fail`, class `agent-fixable`. | planned (#12) |
 
@@ -127,7 +136,7 @@ Entry fields (stable; add fields, never rename):
 
 | Field | Values |
 |---|---|
-| `id` | `<check>-<8 hex of sha1(check + file + test-or-rule)>`. Same across rounds, survives line moves. |
+| `id` | `<check>-<8 hex of sha1(check + file + key)>`, key = rule and test fn name (`ignore:<fn>`, `assert-count:<fn>`, ...). Same across rounds, survives line moves. A repeat of one key in one file (line order): the 2nd occurrence is keyed `<key>#1`, the 3rd `<key>#2`; the first keeps the plain key. |
 | `check` | `R1`, `R2`, `R3`, `R4`, `CI` (`CI` reserved for CI-level failures outside R1–R4, e.g. mech-review's own infra error) |
 | `class` | `agent-fixable`, `needs-human`, `env` |
 | `severity` | `fail` (blocks), `confirm` (reviewer decides) |
@@ -141,7 +150,7 @@ Envelope: head SHA, base SHA, ek version, per-check status (`pass|fail|partial|n
 Summary:
 
 - `all pass <sha>`: no entries and every check passed. Never while a check is skipped.
-- Otherwise `<pass|fail> <sha> (<F> fail, <C> confirm; ran: <checks>; skipped: <checks>)`, e.g. `pass <sha> (0 fail, 1 confirm; ran: R2; skipped: R1 R3 R4)`. `fail` when `F` > 0.
+- Otherwise `<pass|fail> <sha> (<F> fail, <C> confirm; ran: <checks>[; skipped: <checks>])`. The `; skipped:` part appears only when some check is skipped, e.g. `pass <sha> (0 fail, 1 confirm; ran: R2; skipped: R1 R3 R4)`. `fail` when `F` > 0.
 - Same format in `--format text` (first line) and in the envelope.
 
 ## Per-app doc

@@ -11,18 +11,22 @@ HELP = """\
 mechanical PR checks over base...head (merge-base diff). Prints the contract JSON.
 
 checks (status in envelope: pass | fail | partial | n/a | skipped):
-  R2  test-diff guard (implemented): removed test fn; added #[ignore]; fewer asserts
-      in a surviving test fn (per fn name) or in helpers outside test fns (per file);
-      assert replaced in place (confirm); changed expected value (confirm); added
-      #[allow]/#[expect] without reason= or same-line comment; change under protected
-      paths (needs-human)
+  R2  test-diff guard (implemented): removed test fn (a rename with the same asserts is not
+      a removal); added #[ignore] or a cfg that disables it or its mod; should_panic added to an
+      existing test (confirm); fewer asserts in a surviving test fn, or helper asserts per file;
+      assert replaced in place, any kind (confirm); changed expected value (confirm); added
+      #[allow]/#[expect] without a non-empty reason= or same-line comment; change under protected
+      paths (needs-human).
+      Test fns are keyed by mod-qualified name (m1::works). A test that loses asserts is exempt
+      only up to the asserts gained by a helper it calls by name (call-site, each gain used once).
   R1, R3, R4: not implemented yet, always skipped.
   `r2` and `all` run the same implemented checks.
 
 entry: id, check, class (agent-fixable | needs-human | env), severity (fail | confirm),
   file, line (0 = file-level), problem, hint, forbidden.
-  id = <check>-<first 8 hex of sha1(check + file + key)>; key = test fn name or rule
-  (e.g. ignore:<fn>, assert-count:<fn>, assert-count = helpers of a file). Never depends on line numbers.
+  id = <check>-<first 8 hex of sha1(check + file + key)>; key = rule and test fn name
+  (e.g. ignore:<fn>, assert-count:<fn>, assert-count = helpers of a file). Never depends on line
+  numbers. A repeat of one key in a file (line order) gets key `<key>#1`, `<key>#2`; the first keeps the plain key.
 
 summary (one line, text format first line and envelope `summary`):
   `all pass <head sha>`: no entries and every check passed (never while a check is skipped).
