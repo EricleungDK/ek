@@ -1,0 +1,120 @@
+name: mech-review
+
+# Reusable. Callers pin an ek tag:
+#   uses: EricleungDK/ek/.github/workflows/mech-review.yml@v0.1.1
+# The ek scripts run at the SAME ref the caller pinned: job.workflow_sha / job.workflow_repository
+# are the called workflow file's commit and repo, so the guard and the poster are checked out from there.
+
+on:
+  workflow_call:
+    inputs:
+      stack:
+        description: "language adapter; only rust exists"
+        type: string
+        default: rust
+      test-paths:
+        description: "test file globs, one per line (** any depth, * one segment)"
+        type: string
+        default: |
+          tests/**
+      protected-paths:
+        description: "globs, one per line; any change under them is a needs-human fail"
+        type: string
+        default: |
+          .github/**
+      agent-branch-prefix:
+        description: "UNUSED by the R2 guard; reserved for the R1 red-first check"
+        type: string
+        default: "agent/"
+      mutation-budget:
+        description: "UNUSED by the R2 guard; reserved for the R3 mutation check"
+        type: string
+        default: ""
+      extra-apt-packages:
+        description: "UNUSED by the R2 guard; reserved for toolchain jobs (R1/R3)"
+        type: string
+        default: ""
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  guard:
+    name: mech-review guard (R2)
+    runs-on: ubuntu-latest
+    steps:
+      - name: caller checkout (full history, PR head)
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          path: caller
+          persist-credentials: false
+      - name: ek engine checkout (the ref this workflow was called at)
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          path: ek
+          persist-credentials: false
+      - name: R2 guard
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          STACK: ${{ inputs.stack }}
+          TEST_PATHS: ${{ inputs.test-paths }}
+          PROTECTED_PATHS: ${{ inputs.protected-paths }}
+        run: |
+          set -uo pipefail
+          args=(--repo "$GITHUB_WORKSPACE/caller" --base "$BASE_SHA" --head "$HEAD_SHA" --stack "$STACK")
+          while IFS= read -r g; do
+            if [ -n "$g" ]; then args+=(--test-paths "$g"); fi
+          done <<< "$TEST_PATHS"
+          while IFS= read -r g; do
+            if [ -n "$g" ]; then args+=(--protected-paths "$g"); fi
+          done <<< "$PROTECTED_PATHS"
+          rc=0
+          python3 -I "$GITHUB_WORKSPACE/ek/scripts/mech-review.py" r2 "${args[@]}" > mech-review.json 2> mech-review.err || rc=$?
+          cat mech-review.err >&2
+          # exit 1 = fail entries: a result, saved and reported. exit 2+ = usage or git error: no result.
+          if [ "$rc" -gt 1 ]; then
+            rm -f mech-review.json
+            echo "::error::mech-review engine exit $rc (usage or git error): no result"
+            exit "$rc"
+          fi
+      - name: upload result
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mech-review-json
+          path: mech-review.json
+          if-no-files-found: ignore
+          overwrite: true
+
+  report:
+    name: mech-review report
+    needs: guard
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: ek comment poster checkout (the ref this workflow was called at)
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          path: ek
+          persist-credentials: false
+      - name: fetch guard result
+        uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          name: mech-review-json
+      - name: post or edit the sticky comment, set the check result
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          python3 -I ek/scripts/mech-comment.py --pr "$PR_NUMBER" --head "$HEAD_SHA" \
+            --envelope mech-review.json --reason "no JSON from the guard job (see its log)"
