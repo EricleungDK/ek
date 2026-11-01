@@ -86,7 +86,7 @@ check("desc: mutator, the original text of the span, the replacement",
       M.stryker_desc(m0, src0), "ArithmeticOperator `a + b` -> `a - b`")
 check("desc: a span over lines is joined and whitespace-normalized",
       M.stryker_desc({"mutatorName": "BlockStatement", "replacement": "{}",
-                      "location": {"start": {"line": 1, "column": 1}, "end": {"line": 2, "column": 3}}},
+                      "location": {"start": {"line": 1, "column": 1}, "end": {"line": 2, "column": 5}}},
                      "function f() {\n  x;\n}\n"),
       "BlockStatement `function f() { x;` -> `{}`")
 
@@ -222,7 +222,13 @@ has "$(jq -r .checks.R3.note <<<"$out")" "stryker not installed (env)" "ts no st
 lacks "$(jq -r .summary <<<"$out")" "all pass" "ts no stryker: never all pass"
 
 # no production file changed (docs only): skipped and the tool is never run
-mrepo docs
+R=$(mkrepo docs); put "$R" package.json <<'EOF'
+{"name":"calc","devDependencies":{"vitest":"5.0.5"}}
+EOF
+put "$R" src/calc.ts <<'EOF'
+export const a = 1;
+EOF
+B=$(commit "$R" base)
 put "$R" README.md <<'EOF'
 docs
 EOF

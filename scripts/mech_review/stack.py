@@ -843,7 +843,7 @@ def _ts_pattern(seg):
     return ".*".join(TS_RE_SPECIAL.sub(r"\\\1", piece) for piece in JS_PLACEHOLDER.split(seg))
 
 
-def _ts_runner(crate):
+def ts_runner(crate):
     """'vitest' or 'jest' from the crate's package.json (vitest wins when both are listed; vitest when neither)."""
     try:
         with open(os.path.join(crate, "package.json"), encoding="utf-8") as f:
@@ -991,7 +991,7 @@ class TsAdapter(Adapter):
     def test_cmd_in(self, crate):
         """vitest when package.json lists vitest (or lists neither), jest when it lists only jest. The runner runs from
         the crate's own node_modules/.bin."""
-        return "node_modules/.bin/jest" if _ts_runner(crate) == "jest" else "node_modules/.bin/vitest run"
+        return "node_modules/.bin/jest" if ts_runner(crate) == "jest" else "node_modules/.bin/vitest run"
 
     def worktree_setup(self, repo, wt, project_dir):
         """a worktree has no node_modules (ignored by git): link the caller checkout's node_modules into the crate dir,
