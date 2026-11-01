@@ -356,7 +356,7 @@ WHICH = {"r2": ("R2",), "red": ("R1", "R4"), "all": ("R1", "R2", "R4"), "mutants
 
 
 def run(repo, base_ref, head_ref, stack, test_globs, protected_globs=(), which="r2", agent_prefix="agent/",
-        head_branch=None, test_cmd=None, runner=None, mutants_cmd="cargo mutants", mutation_budget=None, shard=None,
+        head_branch=None, test_cmd=None, runner=None, mutants_cmd=None, mutation_budget=None, shard=None,
         mutant_timeout=120, mutant_runner=None, project_dir="."):
     base = resolve(repo, base_ref)
     head = resolve(repo, head_ref)
