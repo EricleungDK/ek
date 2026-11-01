@@ -264,7 +264,13 @@ out2=$(MUT_FIXTURE=missed MECH_TEST_STUB="$MUTSTUB" python3 -I "$MR" mutants --r
 eq "$(jq -r '[.entries[].id] | sort | join(" ")' <<<"$out1")" "$(jq -r '[.entries[].id] | sort | join(" ")' <<<"$out2")" "python ids: stable when lines move"
 eq "$(jq -r '.entries[0].line' <<<"$out2")" 3 "python ids: the entry line follows the code (add moved to line 3)"
 
-# timing: wall time only; a budget kill keeps what finished
-has "$(python3 -I "$MR" --help)" "--mutants-cmd" "help: --mutants-cmd"
+# plan: a python production change runs the mutants job over the shard matrix; a rust stack does not run it for .py files
+mrepo planpy
+out=$(python3 -I "$MR" plan --repo "$R" --base "$B" --head "$H" --stack python --test-paths 'tests/**' --shards 4)
+eq "$(jq -c '{run,count,shards}' <<<"$out")" '{"run":true,"count":4,"shards":[0,1,2,3]}' "python plan: production change runs 4 shards"
+mrepo planrust
+out=$(python3 -I "$MR" plan --repo "$R" --base "$B" --head "$H" --stack rust --test-paths 'tests/**' --shards 4)
+eq "$(jq -c '{run,count}' <<<"$out")" '{"run":false,"count":1}' "rust stack on .py files: not run (ek itself stays on rust)"
+
 
 done_tests
