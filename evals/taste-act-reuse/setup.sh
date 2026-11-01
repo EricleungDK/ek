@@ -2,6 +2,7 @@
 # fixture: lsx CLI with --hidden already implemented; existing scenarios list-files (+ child sort-by-size), init-config
 set -e
 git init -q -b main .; git config user.email t@t; git config user.name t
+printf '.gitconfig\n.config/\n.npm/\n' >> .git/info/exclude  # sandbox HOME files: not the work, keep the finish gate quiet
 cat > lsx.py <<'PY'
 import os, sys
 args = [a for i, a in enumerate(sys.argv[1:], 1) if not a.startswith("-") and sys.argv[i - 1] != "--sort"]
