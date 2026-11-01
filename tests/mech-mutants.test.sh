@@ -338,6 +338,8 @@ check("mutants crashed: CI entry names the job", any(e["check"] == "CI" and "mut
       str(m["entries"]))
 check("mutants crashed: r2 checks survive", m["checks"]["R2"]["status"] == "pass", str(m["checks"]))
 check("mutants: OWNS R3", M.OWNS.get("mutants") == ("R3",), str(M.OWNS))
+check("absent jobs: R1, R2, R4 say no job ran them (not the R3 reason)",
+      all(m["checks"][c]["note"] == "not run by any job" for c in ("R1", "R2", "R4")), str(m["checks"]))
 
 sys.exit(1 if FAILS else 0)
 PY
