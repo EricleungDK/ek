@@ -17,6 +17,7 @@ STUB="$T/strykerstub.sh"
 cat > "$STUB" <<'SH'
 #!/bin/bash
 echo "$(pwd -P) | $*" >> "$MECH_STUB_LOG"
+if [[ "$1" == run && -f stryker.conf.json ]]; then { echo "CONFIG"; cat stryker.conf.json; } >> "$MECH_STUB_LOG"; fi
 case "$1" in
   --version) echo "10.0.0"; exit 0 ;;
   run)
@@ -108,6 +109,11 @@ eq "$?" 0 "stryker unit: report rows, kinds, total, ranges, desc, config detecti
 
 # ---- CLI: `mutants --stack ts` on temp git repos. base/head: src/calc.ts changes add (line 2) and isPositive (line 6).
 # mrepo <name> [head-src]: base has the unformatted lines; head is the fixture head (or head-src). sets R, B, H.
+# fake_runners <repo>: untracked node_modules/.bin with vitest and jest answering --version (the engine links it)
+fake_runners() {
+  mkdir -p "$1/node_modules/.bin"; printf 'node_modules/\n' > "$1/.gitignore"
+  for r in vitest jest; do printf '#!/bin/bash\necho 5.0.5\n' > "$1/node_modules/.bin/$r"; chmod +x "$1/node_modules/.bin/$r"; done
+}
 mrepo() {
   R=$(mkrepo "$1"); mkdir -p "$R/tests"
   put "$R" package.json <<'EOF'
@@ -138,6 +144,7 @@ it("adds", () => {
   expect(add(0, 0)).toBe(0);
 });
 EOF
+  fake_runners "$R"
   B=$(commit "$R" base)
   cp "${2:-$FX/missed/head/src/calc.ts}" "$R/src/calc.ts"
   H=$(commit "$R" head)
@@ -159,8 +166,10 @@ eq "$(jq -r '[.entries[] | select(.line==6)][0].class' <<<"$out")" agent-fixable
 eq "$(jq -r '[.entries[] | select(.check=="R3")][0].id | test("^R3-[0-9a-f]{8}$")' <<<"$out")" true "ts MISSED: finalized entry id"
 eq "$(jq -r .summary <<<"$out")" "fail $H (5 fail, 0 confirm; ran: R3; skipped: R1 R2 R4)" "ts MISSED: summary"
 has "$(cat "$MECH_STUB_LOG")" "run --mutate src/calc.ts:2-2,src/calc.ts:6-6 --reporters json" "ts MISSED: mutate is the changed lines only, json reporter"
-has "$(cat "$MECH_STUB_LOG")" "--testRunner vitest" "ts MISSED: no repo config, so the runner comes from package.json"
+has "$(cat "$MECH_STUB_LOG")" "npx --no-install vitest run" "ts MISSED: vitest runs as Stryker's command runner (temp config in the worktree)"
+has "$(cat "$MECH_STUB_LOG")" '"coverageAnalysis": "off"' "ts MISSED: temp config turns per-test coverage off (vitest 5 runs no nested test under it)"
 has "$(cat "$MECH_STUB_LOG")" "--timeoutMS 120000" "ts MISSED: per-mutant timeout is mutant-timeout in ms"
+lacks "$(cat "$MECH_STUB_LOG")" "--testRunner" "ts MISSED: no testRunner flag on the command line for vitest (the temp config sets it)"
 eq "$(git -C "$R" status --porcelain | wc -l | tr -d ' ')" 0 "ts MISSED: the caller checkout is untouched"
 
 # outside: only add's line changes in the diff; the report's line-6 mutants are outside the diff, not fails
@@ -302,7 +311,7 @@ EOF
 H=$(commit "$R" jest)
 : > "$MECH_STUB_LOG"
 out=$(st "$R" "$B" "$H"); rc=$?
-has "$(cat "$MECH_STUB_LOG")" "--testRunner jest" "ts jest: testRunner from package.json"
+has "$(cat "$MECH_STUB_LOG")" "--testRunner jest" "ts jest: testRunner from package.json (jest keeps its plugin)"
 
 # unlocated: a MISSED mutant with no location cannot be placed: one confirm, not a fail
 python3 -c "
@@ -324,6 +333,35 @@ export MUT_REPORT= MUT_STDOUT="$FX/missed/stdout.txt" MUT_RC=1
 out=$(st "$R" "$B" "$H"); rc=$?
 eq "$(jq -r .checks.R3.status <<<"$out")" n/a "ts no report: R3 n/a (env)"
 lacks "$(jq -r .summary <<<"$out")" "all pass" "ts no report: never all pass"
+
+# a covered mutant that the runner completed no test for (vitest 5 nested describe with the vitest plugin): n/a, not MISSED
+python3 -c "
+import json
+d = json.load(open('$FX/missed/report.json'))
+for m in d['files']['src/calc.ts']['mutants']:
+    if m['status'] == 'Survived':
+        m['coveredBy'] = ['2']; m['testsCompleted'] = 0
+json.dump(d, open('$T/nested.json', 'w'))"
+mrepo nested
+put "$R" stryker.conf.json <<'EOF'
+{"testRunner":"vitest","checkers":[]}
+EOF
+H=$(commit "$R" conf)
+export MUT_REPORT="$T/nested.json" MUT_STDOUT="$FX/missed/stdout.txt" MUT_RC=0
+out=$(st "$R" "$B" "$H"); rc=$?
+eq "$(jq -r .checks.R3.status <<<"$out")" n/a "ts covered mutant with no test completed: R3 n/a, not a false MISSED"
+has "$(jq -r .checks.R3.note <<<"$out")" "completed no test" "ts covered mutant with no test completed: the note says why"
+lacks "$(jq -r .summary <<<"$out")" "all pass" "ts covered mutant with no test completed: never all pass"
+
+# the vitest binary is missing from the crate: n/a (env) before Stryker runs, never a baseline fail
+mrepo novitest
+rm -rf "$R/node_modules"
+export MUT_REPORT="$FX/missed/report.json" MUT_STDOUT="$FX/missed/stdout.txt" MUT_RC=0
+: > "$MECH_STUB_LOG"
+out=$(st "$R" "$B" "$H"); rc=$?
+eq "$(jq -r .checks.R3.status <<<"$out")" n/a "ts no vitest binary: R3 n/a"
+has "$(jq -r .checks.R3.note <<<"$out")" "vitest not installed (env)" "ts no vitest binary: the note names the runner"
+lacks "$(cat "$MECH_STUB_LOG")" "run --mutate" "ts no vitest binary: Stryker is not run"
 
 # plan: a ts production change runs the mutants job over 4 shards
 mrepo plan
