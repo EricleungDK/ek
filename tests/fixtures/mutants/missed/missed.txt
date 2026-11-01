@@ -1,0 +1,11 @@
+src/lib.rs:2:11: replace + with - in add
+src/lib.rs:6:5: replace is_big -> bool with true
+src/lib.rs:6:5: replace is_big -> bool with false
+src/lib.rs:6:7: replace > with == in is_big
+src/lib.rs:6:7: replace > with < in is_big
+src/lib.rs:6:7: replace > with >= in is_big
+src/lib.rs:10:5: replace unused_helper -> i32 with 0
+src/lib.rs:10:5: replace unused_helper -> i32 with 1
+src/lib.rs:10:5: replace unused_helper -> i32 with -1
+src/lib.rs:10:7: replace * with + in unused_helper
+src/lib.rs:10:7: replace * with / in unused_helper

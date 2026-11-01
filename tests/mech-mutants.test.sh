@@ -1,0 +1,135 @@
+#!/bin/bash
+# R3 mutation on the diff: outcome parsing against real cargo-mutants 27.1.0 output (tests/fixtures/mutants).
+# Pure verdict tests first; the CLI runs cargo-mutants through a stub (MECH_TEST_STUB) added below.
+source "$(dirname "$0")/lib.sh"
+FX="$ROOT/tests/fixtures/mutants"
+
+python3 -I - "$ROOT" <<'PY'
+import json
+import os
+import shutil
+import sys
+import tempfile
+
+ROOT = sys.argv[1]
+sys.path.insert(0, os.path.join(ROOT, "scripts"))
+FX = os.path.join(ROOT, "tests", "fixtures", "mutants")
+FAILS = 0
+
+
+def check(name, cond, detail=""):
+    global FAILS
+    if cond:
+        print(f"  ok   {name}")
+    else:
+        FAILS += 1
+        print(f"  FAIL {name}")
+        if detail:
+            print(f"       {detail}")
+
+
+from mech_review import mutants as M  # noqa: E402
+from mech_review.stack import RustAdapter  # noqa: E402
+
+A = RustAdapter()
+TG = ["tests/**"]
+TIMEOUT = "timeout"
+
+
+def v(case, rc, text=""):
+    return M.verdict(os.path.join(FX, case), rc, text, A, TG)
+
+
+# ---- MISSED -> fail entry ----
+chk, ents = v("missed", 2, "")
+check("missed: status fail", chk["status"] == "fail", str(chk))
+check("missed: one entry per MISSED mutant (11)", len(ents) == 11 and all(e["severity"] == "fail" for e in ents),
+      str(len(ents)))
+e0 = ents[0]
+check("missed: entry check R3, class agent-fixable", e0["check"] == "R3" and e0["class"] == "agent-fixable", str(e0))
+check("missed: file and line from the mutant span", e0["file"] == "src/lib.rs" and e0["line"] == 2, str(e0))
+check("missed: problem carries the mutant", "MISSED mutant" in e0["problem"] and "replace + with - in add" in e0["problem"], e0["problem"])
+check("missed: forbidden names the MISSED mutant", e0["forbidden"].startswith("MISSED mutant"), e0["forbidden"])
+check("missed: id is R3-<8 hex>", len(e0["id"]) == 11 and e0["id"].startswith("R3-"), e0["id"])
+check("missed: note counts tested of total", chk["note"].startswith("17/17 tested"), chk["note"])
+check("missed: tested and total fields", chk.get("tested") == 17 and chk.get("total") == 17, str(chk))
+
+# ---- TIMEOUT ignored, MISSED still counted ----
+chk, ents = v("timeout-missed", 3, "")
+check("timeout+missed: status fail (2 missed)", chk["status"] == "fail", str(chk))
+check("timeout+missed: 2 entries, timeout not one of them", len(ents) == 2
+      and not any("spin" in e["problem"] for e in ents), str([e["problem"] for e in ents]))
+
+# ---- all caught -> pass, no entries ----
+chk, ents = v("caught", 0, "")
+check("caught: status pass", chk["status"] == "pass", str(chk))
+check("caught: no entries", ents == [], str(ents))
+
+# ---- shards: each shard's own total ----
+chk0, ents0 = v("shard-0-of-2", 2, "")
+chk1, ents1 = v("shard-1-of-2", 2, "")
+check("shard 0: 3 missed, total 9", len(ents0) == 3 and chk0["total"] == 9, str((len(ents0), chk0)))
+check("shard 1: 8 missed, total 8", len(ents1) == 8 and chk1["total"] == 8, str((len(ents1), chk1)))
+
+# ---- budget hit (rc timeout): partial when no MISSED so far ----
+chk, ents = v("partial", TIMEOUT, "")
+check("partial: status partial", chk["status"] == "partial", str(chk))
+check("partial: note tested/total", chk["note"].startswith("7/15 tested"), chk["note"])
+check("partial: tested and total fields", chk.get("tested") == 7 and chk.get("total") == 15, str(chk))
+check("partial: no entries (does not block)", ents == [], str(ents))
+
+# ---- budget hit with a MISSED already found: fail ----
+chk, ents = v("missed", TIMEOUT, "")
+check("budget hit with MISSED: status fail", chk["status"] == "fail" and len(ents) == 11, str(chk))
+
+# ---- budget hit before any output: partial, total unknown ----
+chk, ents = M.verdict(os.path.join(FX, "no-such-dir"), TIMEOUT, "", A, TG)
+check("budget hit, no output: partial", chk["status"] == "partial", str(chk))
+check("budget hit, no output: tested 0, total unknown", chk.get("tested") == 0 and chk.get("total") is None, str(chk))
+
+# ---- no mutants in the diff: no output dir, exit 0 -> pass with the reason ----
+chk, ents = M.verdict(os.path.join(FX, "no-such-dir"), 0, "", A, TG)
+check("zero mutants: status pass", chk["status"] == "pass" and ents == [], str(chk))
+check("zero mutants: note says 0 mutants", "0 mutants" in chk["note"], chk["note"])
+
+# ---- baseline fails at head (exit 4): fail, agent-fixable, names the baseline ----
+chk, ents = M.verdict(os.path.join(FX, "no-such-dir"), 4, "", A, TG)
+check("baseline failed: status fail", chk["status"] == "fail" and len(ents) == 1, str(chk))
+check("baseline failed: entry agent-fixable, names baseline", ents and ents[0]["class"] == "agent-fixable"
+      and "baseline" in ents[0]["problem"], str(ents))
+
+# ---- tool not runnable: n/a (env), never pass ----
+chk, ents = M.verdict(os.path.join(FX, "no-such-dir"), None, "cargo: not found", A, TG)
+check("tool missing (rc None): n/a", chk["status"] == "n/a" and "(env)" in chk["note"], str(chk))
+chk, ents = M.verdict(os.path.join(FX, "no-such-dir"), 1, "error: could not find `Cargo.toml` in /x", A, TG)
+check("cargo error (rc 1): n/a (env), first line in note", chk["status"] == "n/a" and "Cargo.toml" in chk["note"]
+      and "(env)" in chk["note"], str(chk))
+
+# ---- ids survive line moves: same mutant, shifted lines, same id ----
+tmp = tempfile.mkdtemp()
+try:
+    for name in ("outcomes.json", "mutants.json"):
+        shutil.copy(os.path.join(FX, "missed", name), tmp)
+    m = json.load(open(os.path.join(tmp, "mutants.json")))
+    for x in m:
+        x["span"]["start"]["line"] += 5
+        x["span"]["end"]["line"] += 5
+    json.dump(m, open(os.path.join(tmp, "mutants.json"), "w"))
+    o = json.load(open(os.path.join(tmp, "outcomes.json")))
+    for oc in o["outcomes"]:
+        if isinstance(oc["scenario"], dict):
+            oc["scenario"]["Mutant"]["span"]["start"]["line"] += 5
+    json.dump(o, open(os.path.join(tmp, "outcomes.json"), "w"))
+    _, moved = M.verdict(tmp, 2, "", A, TG)
+    _, base = v("missed", 2, "")
+    check("ids: stable when line numbers move", sorted(e["id"] for e in moved) == sorted(e["id"] for e in base),
+          str((sorted(e["id"] for e in moved), sorted(e["id"] for e in base))))
+    check("ids: line moved in the entry", sorted(e["line"] for e in moved) != sorted(e["line"] for e in base))
+finally:
+    shutil.rmtree(tmp, ignore_errors=True)
+
+sys.exit(1 if FAILS else 0)
+PY
+eq "$?" 0 "R3 verdict: MISSED, TIMEOUT, partial, n/a, skipped-by-zero, baseline fail, stable ids"
+
+done_tests

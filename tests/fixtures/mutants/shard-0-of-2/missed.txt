@@ -1,0 +1,3 @@
+src/lib.rs:2:11: replace + with - in add
+src/lib.rs:6:5: replace is_big -> bool with true
+src/lib.rs:6:5: replace is_big -> bool with false

@@ -1,0 +1,482 @@
+[
+  {
+    "diff": "--- src/lib.rs\n+++ replace spin -> i32 with 0\n@@ -1,11 +1,7 @@\n pub fn spin(n: i32) -> i32 {\n-    let mut i = 0;\n-    while i < n {\n-        i += 1;\n-    }\n-    i\n+    0 /* ~ changed by cargo-mutants ~ */\n }\n \n pub fn sign(x: i32) -> i32 {\n     if x < 0 { -1 } else { 1 }\n }\n",
+    "file": "src/lib.rs",
+    "function": {
+      "function_name": "spin",
+      "return_type": "-> i32",
+      "span": {
+        "end": {
+          "column": 2,
+          "line": 7
+        },
+        "start": {
+          "column": 1,
+          "line": 1
+        }
+      }
+    },
+    "genre": "FnValue",
+    "name": "src/lib.rs:2:5: replace spin -> i32 with 0",
+    "package": "fixture2",
+    "replacement": "0",
+    "span": {
+      "end": {
+        "column": 6,
+        "line": 6
+      },
+      "start": {
+        "column": 5,
+        "line": 2
+      }
+    }
+  },
+  {
+    "diff": "--- src/lib.rs\n+++ replace spin -> i32 with 1\n@@ -1,11 +1,7 @@\n pub fn spin(n: i32) -> i32 {\n-    let mut i = 0;\n-    while i < n {\n-        i += 1;\n-    }\n-    i\n+    1 /* ~ changed by cargo-mutants ~ */\n }\n \n pub fn sign(x: i32) -> i32 {\n     if x < 0 { -1 } else { 1 }\n }\n",
+    "file": "src/lib.rs",
+    "function": {
+      "function_name": "spin",
+      "return_type": "-> i32",
+      "span": {
+        "end": {
+          "column": 2,
+          "line": 7
+        },
+        "start": {
+          "column": 1,
+          "line": 1
+        }
+      }
+    },
+    "genre": "FnValue",
+    "name": "src/lib.rs:2:5: replace spin -> i32 with 1",
+    "package": "fixture2",
+    "replacement": "1",
+    "span": {
+      "end": {
+        "column": 6,
+        "line": 6
+      },
+      "start": {
+        "column": 5,
+        "line": 2
+      }
+    }
+  },
+  {
+    "diff": "--- src/lib.rs\n+++ replace spin -> i32 with -1\n@@ -1,11 +1,7 @@\n pub fn spin(n: i32) -> i32 {\n-    let mut i = 0;\n-    while i < n {\n-        i += 1;\n-    }\n-    i\n+    -1 /* ~ changed by cargo-mutants ~ */\n }\n \n pub fn sign(x: i32) -> i32 {\n     if x < 0 { -1 } else { 1 }\n }\n",
+    "file": "src/lib.rs",
+    "function": {
+      "function_name": "spin",
+      "return_type": "-> i32",
+      "span": {
+        "end": {
+          "column": 2,
+          "line": 7
+        },
+        "start": {
+          "column": 1,
+          "line": 1
+        }
+      }
+    },
+    "genre": "FnValue",
+    "name": "src/lib.rs:2:5: replace spin -> i32 with -1",
+    "package": "fixture2",
+    "replacement": "-1",
+    "span": {
+      "end": {
+        "column": 6,
+        "line": 6
+      },
+      "start": {
+        "column": 5,
+        "line": 2
+      }
+    }
+  },
+  {
+    "diff": "--- src/lib.rs\n+++ replace < with == in spin\n@@ -1,11 +1,11 @@\n pub fn spin(n: i32) -> i32 {\n     let mut i = 0;\n-    while i < n {\n+    while i == /* ~ changed by cargo-mutants ~ */ n {\n         i += 1;\n     }\n     i\n }\n \n pub fn sign(x: i32) -> i32 {\n     if x < 0 { -1 } else { 1 }\n }\n",
+    "file": "src/lib.rs",
+    "function": {
+      "function_name": "spin",
+      "return_type": "-> i32",
+      "span": {
+        "end": {
+          "column": 2,
+          "line": 7
+        },
+        "start": {
+          "column": 1,
+          "line": 1
+        }
+      }
+    },
+    "genre": "BinaryOperator",
+    "name": "src/lib.rs:3:13: replace < with == in spin",
+    "package": "fixture2",
+    "replacement": "==",
+    "span": {
+      "end": {
+        "column": 14,
+        "line": 3
+      },
+      "start": {
+        "column": 13,
+        "line": 3
+      }
+    }
+  },
+  {
+    "diff": "--- src/lib.rs\n+++ replace < with > in spin\n@@ -1,11 +1,11 @@\n pub fn spin(n: i32) -> i32 {\n     let mut i = 0;\n-    while i < n {\n+    while i > /* ~ changed by cargo-mutants ~ */ n {\n         i += 1;\n     }\n     i\n }\n \n pub fn sign(x: i32) -> i32 {\n     if x < 0 { -1 } else { 1 }\n }\n",
+    "file": "src/lib.rs",
+    "function": {
+      "function_name": "spin",
+      "return_type": "-> i32",
+      "span": {
+        "end": {
+          "column": 2,
+          "line": 7
+        },
+        "start": {
+          "column": 1,
+          "line": 1
+        }
+      }
+    },
+    "genre": "BinaryOperator",
+    "name": "src/lib.rs:3:13: replace < with > in spin",
+    "package": "fixture2",
+    "replacement": ">",
+    "span": {
+      "end": {
+        "column": 14,
+        "line": 3
+      },
+      "start": {
+        "column": 13,
+        "line": 3
+      }
+    }
+  },
+  {
+    "diff": "--- src/lib.rs\n+++ replace < with <= in spin\n@@ -1,11 +1,11 @@\n pub fn spin(n: i32) -> i32 {\n     let mut i = 0;\n-    while i < n {\n+    while i <= /* ~ changed by cargo-mutants ~ */ n {\n         i += 1;\n     }\n     i\n }\n \n pub fn sign(x: i32) -> i32 {\n     if x < 0 { -1 } else { 1 }\n }\n",
+    "file": "src/lib.rs",
+    "function": {
+      "function_name": "spin",
+      "return_type": "-> i32",
+      "span": {
+        "end": {
+          "column": 2,
+          "line": 7
+        },
+        "start": {
+          "column": 1,
+          "line": 1
+        }
+      }
+    },
+    "genre": "BinaryOperator",
+    "name": "src/lib.rs:3:13: replace < with <= in spin",
+    "package": "fixture2",
+    "replacement": "<=",
+    "span": {
+      "end": {
+        "column": 14,
+        "line": 3
+      },
+      "start": {
+        "column": 13,
+        "line": 3
+      }
+    }
+  },
+  {
+    "diff": "--- src/lib.rs\n+++ replace += with -= in spin\n@@ -1,11 +1,11 @@\n pub fn spin(n: i32) -> i32 {\n     let mut i = 0;\n     while i < n {\n-        i += 1;\n+        i -= /* ~ changed by cargo-mutants ~ */ 1;\n     }\n     i\n }\n \n pub fn sign(x: i32) -> i32 {\n     if x < 0 { -1 } else { 1 }\n }\n",
+    "file": "src/lib.rs",
+    "function": {
+      "function_name": "spin",
+      "return_type": "-> i32",
+      "span": {
+        "end": {
+          "column": 2,
+          "line": 7
+        },
+        "start": {
+          "column": 1,
+          "line": 1
+        }
+      }
+    },
+    "genre": "BinaryOperator",
+    "name": "src/lib.rs:4:11: replace += with -= in spin",
+    "package": "fixture2",
+    "replacement": "-=",
+    "span": {
+      "end": {
+        "column": 13,
+        "line": 4
+      },
+      "start": {
+        "column": 11,
+        "line": 4
+      }
+    }
+  },
+  {
+    "diff": "--- src/lib.rs\n+++ replace += with *= in spin\n@@ -1,11 +1,11 @@\n pub fn spin(n: i32) -> i32 {\n     let mut i = 0;\n     while i < n {\n-        i += 1;\n+        i *= /* ~ changed by cargo-mutants ~ */ 1;\n     }\n     i\n }\n \n pub fn sign(x: i32) -> i32 {\n     if x < 0 { -1 } else { 1 }\n }\n",
+    "file": "src/lib.rs",
+    "function": {
+      "function_name": "spin",
+      "return_type": "-> i32",
+      "span": {
+        "end": {
+          "column": 2,
+          "line": 7
+        },
+        "start": {
+          "column": 1,
+          "line": 1
+        }
+      }
+    },
+    "genre": "BinaryOperator",
+    "name": "src/lib.rs:4:11: replace += with *= in spin",
+    "package": "fixture2",
+    "replacement": "*=",
+    "span": {
+      "end": {
+        "column": 13,
+        "line": 4
+      },
+      "start": {
+        "column": 11,
+        "line": 4
+      }
+    }
+  },
+  {
+    "diff": "--- src/lib.rs\n+++ replace sign -> i32 with 0\n@@ -2,10 +2,10 @@\n     let mut i = 0;\n     while i < n {\n         i += 1;\n     }\n     i\n }\n \n pub fn sign(x: i32) -> i32 {\n-    if x < 0 { -1 } else { 1 }\n+    0 /* ~ changed by cargo-mutants ~ */\n }\n",
+    "file": "src/lib.rs",
+    "function": {
+      "function_name": "sign",
+      "return_type": "-> i32",
+      "span": {
+        "end": {
+          "column": 2,
+          "line": 11
+        },
+        "start": {
+          "column": 1,
+          "line": 9
+        }
+      }
+    },
+    "genre": "FnValue",
+    "name": "src/lib.rs:10:5: replace sign -> i32 with 0",
+    "package": "fixture2",
+    "replacement": "0",
+    "span": {
+      "end": {
+        "column": 31,
+        "line": 10
+      },
+      "start": {
+        "column": 5,
+        "line": 10
+      }
+    }
+  },
+  {
+    "diff": "--- src/lib.rs\n+++ replace sign -> i32 with 1\n@@ -2,10 +2,10 @@\n     let mut i = 0;\n     while i < n {\n         i += 1;\n     }\n     i\n }\n \n pub fn sign(x: i32) -> i32 {\n-    if x < 0 { -1 } else { 1 }\n+    1 /* ~ changed by cargo-mutants ~ */\n }\n",
+    "file": "src/lib.rs",
+    "function": {
+      "function_name": "sign",
+      "return_type": "-> i32",
+      "span": {
+        "end": {
+          "column": 2,
+          "line": 11
+        },
+        "start": {
+          "column": 1,
+          "line": 9
+        }
+      }
+    },
+    "genre": "FnValue",
+    "name": "src/lib.rs:10:5: replace sign -> i32 with 1",
+    "package": "fixture2",
+    "replacement": "1",
+    "span": {
+      "end": {
+        "column": 31,
+        "line": 10
+      },
+      "start": {
+        "column": 5,
+        "line": 10
+      }
+    }
+  },
+  {
+    "diff": "--- src/lib.rs\n+++ replace sign -> i32 with -1\n@@ -2,10 +2,10 @@\n     let mut i = 0;\n     while i < n {\n         i += 1;\n     }\n     i\n }\n \n pub fn sign(x: i32) -> i32 {\n-    if x < 0 { -1 } else { 1 }\n+    -1 /* ~ changed by cargo-mutants ~ */\n }\n",
+    "file": "src/lib.rs",
+    "function": {
+      "function_name": "sign",
+      "return_type": "-> i32",
+      "span": {
+        "end": {
+          "column": 2,
+          "line": 11
+        },
+        "start": {
+          "column": 1,
+          "line": 9
+        }
+      }
+    },
+    "genre": "FnValue",
+    "name": "src/lib.rs:10:5: replace sign -> i32 with -1",
+    "package": "fixture2",
+    "replacement": "-1",
+    "span": {
+      "end": {
+        "column": 31,
+        "line": 10
+      },
+      "start": {
+        "column": 5,
+        "line": 10
+      }
+    }
+  },
+  {
+    "diff": "--- src/lib.rs\n+++ replace < with == in sign\n@@ -2,10 +2,10 @@\n     let mut i = 0;\n     while i < n {\n         i += 1;\n     }\n     i\n }\n \n pub fn sign(x: i32) -> i32 {\n-    if x < 0 { -1 } else { 1 }\n+    if x == /* ~ changed by cargo-mutants ~ */ 0 { -1 } else { 1 }\n }\n",
+    "file": "src/lib.rs",
+    "function": {
+      "function_name": "sign",
+      "return_type": "-> i32",
+      "span": {
+        "end": {
+          "column": 2,
+          "line": 11
+        },
+        "start": {
+          "column": 1,
+          "line": 9
+        }
+      }
+    },
+    "genre": "BinaryOperator",
+    "name": "src/lib.rs:10:10: replace < with == in sign",
+    "package": "fixture2",
+    "replacement": "==",
+    "span": {
+      "end": {
+        "column": 11,
+        "line": 10
+      },
+      "start": {
+        "column": 10,
+        "line": 10
+      }
+    }
+  },
+  {
+    "diff": "--- src/lib.rs\n+++ replace < with > in sign\n@@ -2,10 +2,10 @@\n     let mut i = 0;\n     while i < n {\n         i += 1;\n     }\n     i\n }\n \n pub fn sign(x: i32) -> i32 {\n-    if x < 0 { -1 } else { 1 }\n+    if x > /* ~ changed by cargo-mutants ~ */ 0 { -1 } else { 1 }\n }\n",
+    "file": "src/lib.rs",
+    "function": {
+      "function_name": "sign",
+      "return_type": "-> i32",
+      "span": {
+        "end": {
+          "column": 2,
+          "line": 11
+        },
+        "start": {
+          "column": 1,
+          "line": 9
+        }
+      }
+    },
+    "genre": "BinaryOperator",
+    "name": "src/lib.rs:10:10: replace < with > in sign",
+    "package": "fixture2",
+    "replacement": ">",
+    "span": {
+      "end": {
+        "column": 11,
+        "line": 10
+      },
+      "start": {
+        "column": 10,
+        "line": 10
+      }
+    }
+  },
+  {
+    "diff": "--- src/lib.rs\n+++ replace < with <= in sign\n@@ -2,10 +2,10 @@\n     let mut i = 0;\n     while i < n {\n         i += 1;\n     }\n     i\n }\n \n pub fn sign(x: i32) -> i32 {\n-    if x < 0 { -1 } else { 1 }\n+    if x <= /* ~ changed by cargo-mutants ~ */ 0 { -1 } else { 1 }\n }\n",
+    "file": "src/lib.rs",
+    "function": {
+      "function_name": "sign",
+      "return_type": "-> i32",
+      "span": {
+        "end": {
+          "column": 2,
+          "line": 11
+        },
+        "start": {
+          "column": 1,
+          "line": 9
+        }
+      }
+    },
+    "genre": "BinaryOperator",
+    "name": "src/lib.rs:10:10: replace < with <= in sign",
+    "package": "fixture2",
+    "replacement": "<=",
+    "span": {
+      "end": {
+        "column": 11,
+        "line": 10
+      },
+      "start": {
+        "column": 10,
+        "line": 10
+      }
+    }
+  },
+  {
+    "diff": "--- src/lib.rs\n+++ delete - in sign\n@@ -2,10 +2,10 @@\n     let mut i = 0;\n     while i < n {\n         i += 1;\n     }\n     i\n }\n \n pub fn sign(x: i32) -> i32 {\n-    if x < 0 { -1 } else { 1 }\n+    if x < 0 {  /* ~ changed by cargo-mutants ~ */1 } else { 1 }\n }\n",
+    "file": "src/lib.rs",
+    "function": {
+      "function_name": "sign",
+      "return_type": "-> i32",
+      "span": {
+        "end": {
+          "column": 2,
+          "line": 11
+        },
+        "start": {
+          "column": 1,
+          "line": 9
+        }
+      }
+    },
+    "genre": "UnaryOperator",
+    "name": "src/lib.rs:10:16: delete - in sign",
+    "package": "fixture2",
+    "replacement": "",
+    "span": {
+      "end": {
+        "column": 17,
+        "line": 10
+      },
+      "start": {
+        "column": 16,
+        "line": 10
+      }
+    }
+  }
+]
