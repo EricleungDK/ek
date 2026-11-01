@@ -9,7 +9,7 @@ on:
   workflow_call:
     inputs:
       stack:
-        description: "language adapter; only rust exists"
+        description: "language adapter: rust (cargo test, cargo-mutants) or python (pytest, mutmut 3.8.1 in a venv)"
         type: string
         default: rust
       test-paths:
@@ -126,6 +126,20 @@ jobs:
         uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
         with:
           toolchain: stable
+      - name: Python toolchain
+        if: inputs.stack == 'python'
+        run: |
+          set -eu
+          # runner python in a venv (the runner's system python is externally managed); pytest pinned; the caller's
+          # requirements files install the test deps. The project itself is not installed: tests import the worktree.
+          python3 -m venv "$RUNNER_TEMP/py-venv"
+          "$RUNNER_TEMP/py-venv/bin/python" -m pip install --quiet "pytest==9.2.0"
+          cd "$GITHUB_WORKSPACE/caller"
+          for f in requirements*.txt; do
+            [ -e "$f" ] || continue
+            "$RUNNER_TEMP/py-venv/bin/python" -m pip install --quiet -r "$f"
+          done
+          echo "$RUNNER_TEMP/py-venv/bin" >> "$GITHUB_PATH"
       - name: extra apt packages
         if: inputs.extra-apt-packages != ''
         env:
@@ -255,6 +269,20 @@ jobs:
         uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
         with:
           toolchain: stable
+      - name: Python toolchain
+        if: inputs.stack == 'python'
+        run: |
+          set -eu
+          # runner python in a venv (the runner's system python is externally managed); pytest pinned; the caller's
+          # requirements files install the test deps. The project itself is not installed: tests import the worktree.
+          python3 -m venv "$RUNNER_TEMP/py-venv"
+          "$RUNNER_TEMP/py-venv/bin/python" -m pip install --quiet "pytest==9.2.0" "mutmut==3.8.1"
+          cd "$GITHUB_WORKSPACE/caller"
+          for f in requirements*.txt; do
+            [ -e "$f" ] || continue
+            "$RUNNER_TEMP/py-venv/bin/python" -m pip install --quiet -r "$f"
+          done
+          echo "$RUNNER_TEMP/py-venv/bin" >> "$GITHUB_PATH"
       - name: extra apt packages
         if: inputs.extra-apt-packages != ''
         env:
@@ -272,6 +300,7 @@ jobs:
         run: bash -c "$SETUP_COMMAND"
       - name: install cargo-mutants (pinned)
         # a failed install is not a stop: the engine reports n/a (env) when the tool is missing
+        if: inputs.stack == 'rust'
         id: install
         continue-on-error: true
         uses: taiki-e/install-action@68a389c788b2cd04016ce8c80ee23b80d2ab3d68 # v2
