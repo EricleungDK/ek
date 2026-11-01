@@ -22,6 +22,7 @@ import shutil
 import signal
 import subprocess
 import tempfile
+import time
 
 from . import red
 from .engine import entry, finalize, git
@@ -59,12 +60,14 @@ def _check(status, note, tested=None, total=None):
 
 
 def _mutant_outcomes(doc):
-    """[(summary, mutant dict)] for each mutant scenario in outcomes.json (the baseline is not a mutant)."""
+    """[(summary, mutant dict, phase_results)] for each mutant scenario in outcomes.json (the baseline is not a mutant)."""
     out = []
     for oc in (doc or {}).get("outcomes", []):
+        if not isinstance(oc, dict):
+            continue
         sc = oc.get("scenario")
         if isinstance(sc, dict) and "Mutant" in sc:
-            out.append((oc.get("summary"), sc["Mutant"]))
+            out.append((oc.get("summary"), sc["Mutant"], oc.get("phase_results")))
     return out
 
 
@@ -73,10 +76,90 @@ def _desc(name):
     return RE_POS.sub("", name or "", count=1)
 
 
-def verdict(mo, rc, text, adapter, test_globs):
+def _secs(x):
+    """seconds as a float, or None when the value is not a usable duration."""
+    if isinstance(x, bool) or not isinstance(x, (int, float)) or x != x or x < 0:
+        return None
+    return float(x)
+
+
+def _phase(phases, name, absent=0.0):
+    """Seconds spent in one phase. A phase that is not there is `absent` (cargo-mutants stops after a failed build,
+    so an unviable mutant has no Test); a phase that is there with an unusable duration is None (field left out)."""
+    if not isinstance(phases, list):
+        return None
+    found = [p for p in phases if isinstance(p, dict) and p.get("phase") == name]
+    if not found:
+        return absent
+    vals = [_secs(p.get("duration")) for p in found]
+    if any(v is None for v in vals):
+        return None
+    return sum(vals)
+
+
+def _timing(doc, rows, wall_s):
+    """Per-shard timing from the run's own phase durations: wall (the runner's clock), baseline build and test, summed
+    mutant build and test, average per tested mutant, the five slowest mutants. Any field that cannot be read is left out."""
+    t = {}
+    if wall_s is not None:
+        t["wall_s"] = round(float(wall_s), 2)
+    base = next((oc for oc in (doc or {}).get("outcomes", [])
+                 if isinstance(oc, dict) and oc.get("scenario") == "Baseline"), None)
+    if base:
+        for key, phase in (("baseline_build_s", "Build"), ("baseline_test_s", "Test")):
+            v = _phase(base.get("phase_results"), phase, absent=None)
+            if v is not None:
+                t[key] = round(v, 2)
+    mb = mt = 0.0
+    b_ok = t_ok = True
+    per = []
+    for _, m, phases in rows:
+        b, tt = _phase(phases, "Build"), _phase(phases, "Test")
+        if b is None:
+            b_ok = False
+        else:
+            mb += b
+        if tt is None:
+            t_ok = False
+        else:
+            mt += tt
+        if b is not None and tt is not None:
+            per.append({"name": str(m.get("name", "")), "s": round(b + tt, 2)})
+    if rows and b_ok:
+        t["mutant_build_s"] = round(mb, 2)
+    if rows and t_ok:
+        t["mutant_test_s"] = round(mt, 2)
+    if rows and b_ok and t_ok:
+        t["avg_s_per_mutant"] = round((mb + mt) / len(rows), 2)
+    if per:
+        t["slowest"] = sorted(per, key=lambda x: -x["s"])[:5]
+    return t
+
+
+PARTIAL_KEY = "partial"
+
+
+def partial_entry(check):
+    """The one confirm entry for a partial R3 (agent-fixable): its id is stable across heads and counts, the text names
+    the untested mutants (or says the total is unknown)."""
+    tested, total = check.get("tested"), check.get("total")
+    if total is None:
+        problem = (f"R3 partial: total unknown ({tested if tested is not None else '?'} tested): "
+                   "untested mutants unknown at budget")
+    else:
+        problem = f"R3 partial: {total - (tested or 0)}/{total} mutants untested at budget"
+    e = entry("R3", "", 0, PARTIAL_KEY, "agent-fixable", "confirm", problem,
+              "read checks.R3.timing (wall, phase seconds, slowest mutants): shrink the diff first, then narrow the tests "
+              "cargo-mutants runs, then raise mutation-budget",
+              "treating a partial R3 as tested")
+    return finalize([e])[0]
+
+
+def verdict(mo, rc, text, adapter, test_globs, wall_s=None):
     """R3 verdict of one run. mo: the mutants.out directory (cargo-mutants -o DIR writes DIR/mutants.out).
     rc: the exit code, "timeout" (budget killed the run), or None (tool not runnable). text: its output.
-    Returns (check, entries): check is {status, note[, tested, total]}, entries are finalized contract entries."""
+    wall_s: the runner's clock for this run, if measured.
+    Returns (check, entries): check is {status, note[, tested, total, timing]}, entries are finalized contract entries."""
     if rc is None:
         return _check("n/a", f"cargo-mutants not runnable (env): {_first_line(text)}"), []
     mutants = _load(os.path.join(mo, "mutants.json"))
@@ -84,9 +167,9 @@ def verdict(mo, rc, text, adapter, test_globs):
     doc = _load(os.path.join(mo, "outcomes.json"))
     rows = _mutant_outcomes(doc)
     tested = len(rows)
-    counts = {k: sum(1 for s, _ in rows if s == k) for k in ("MissedMutant", "CaughtMutant", "Timeout", "Unviable")}
+    counts = {k: sum(1 for s, _, _ in rows if s == k) for k in ("MissedMutant", "CaughtMutant", "Timeout", "Unviable")}
     entries = []
-    for summary, m in rows:
+    for summary, m, _ in rows:
         if summary != "MissedMutant" or adapter.classify(m.get("file", ""), test_globs) != "prod":
             continue
         name, file = m.get("name", ""), m.get("file", "")
@@ -97,26 +180,32 @@ def verdict(mo, rc, text, adapter, test_globs):
                              f"MISSED mutant `{desc}` in `{file}`"))
     entries = finalize(entries)
     missed = counts["MissedMutant"]
+    timing = _timing(doc, rows, wall_s)
+
+    def done(check, ents):
+        if timing:
+            check["timing"] = timing
+        return check, ents
 
     if rc == "timeout":
         shown = f"{tested}/{total if total is not None else '?'}"
         if missed:
-            return _check("fail", f"{shown} tested: budget hit, {missed} missed", tested, total), entries
-        return _check("partial", f"{shown} tested: budget hit, no MISSED so far", tested, total), []
+            return done(_check("fail", f"{shown} tested: budget hit, {missed} missed", tested, total), entries)
+        return done(_check("partial", f"{shown} tested: budget hit, no MISSED so far", tested, total), [])
     if rc == 4:
-        return _check("fail", "baseline tests fail at head: mutants not run"), [
+        return done(_check("fail", "baseline tests fail at head: mutants not run"), [
             entry("R3", "", 0, "baseline", "agent-fixable", "fail", "baseline tests fail at head: mutants not run",
                   "fix the failing tests first: mutation needs an unmutated tree that passes",
-                  "a mutation check that did not run")]
+                  "a mutation check that did not run")])
     if rc in (0, 2, 3):
         if doc is None:
             if rc == 0 and not total:
-                return _check("pass", "0 mutants in the diff", 0, 0), []
+                return done(_check("pass", "0 mutants in the diff", 0, 0), [])
             return _check("n/a", f"cargo-mutants wrote no outcomes (env), exit {rc}"), []
         status = "fail" if entries else "pass"
         note = (f"{tested}/{total if total is not None else tested} tested: {missed} missed, "
                 f"{counts['CaughtMutant']} caught, {counts['Timeout']} timeout, {counts['Unviable']} unviable")
-        return _check(status, note, tested, total), entries
+        return done(_check(status, note, tested, total), entries)
     return _check("n/a", f"cargo-mutants exit {rc} (env): {_first_line(text)}"), []
 
 
@@ -195,7 +284,12 @@ def run(repo, mb, head, adapter, test_globs, cmd=DEFAULT_CMD, budget_min=None, s
         if shard:
             argv += ["--shard", shard]
         with red.worktree(repo, head) as wt:
+            t0 = time.monotonic()
             rc, text = runner(argv, wt, budget)
-        return verdict(os.path.join(out_parent, "mutants.out"), rc, text, adapter, test_globs)
+            wall = time.monotonic() - t0
+        check, ents = verdict(os.path.join(out_parent, "mutants.out"), rc, text, adapter, test_globs, wall_s=wall)
+        if check["status"] == "partial":
+            ents = ents + [partial_entry(check)]
+        return check, ents
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
