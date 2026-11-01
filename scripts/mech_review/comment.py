@@ -24,20 +24,35 @@ def _fence(text):
     return "`" * max(3, longest + 1)
 
 
+def _label(e):
+    """Human severity: a fail entry of class needs-human reads needs-human. The JSON keeps severity fail."""
+    if e["severity"] == "fail" and e.get("class") == "needs-human":
+        return "needs-human"
+    return e["severity"]
+
+
+def headline(env):
+    """Summary line, `fail` read as `needs-human` when every fail entry is needs-human. Otherwise unchanged."""
+    fails = [e for e in env["entries"] if e["severity"] == "fail"]
+    if fails and all(e.get("class") == "needs-human" for e in fails) and env["summary"].startswith("fail "):
+        return "needs-human " + env["summary"][len("fail "):]
+    return env["summary"]
+
+
 def _table(entries):
     rows = [
         "| id | severity | file:line | problem | forbidden |",
         "|---|---|---|---|---|",
     ]
     for e in entries:
-        rows.append(f"| {_cell(e['id'])} | {_cell(e['severity'])} | {_cell(e['file'])}:{e['line']} | "
+        rows.append(f"| {_cell(e['id'])} | {_cell(_label(e))} | {_cell(e['file'])}:{e['line']} | "
                     f"{_cell(e['problem'])} | {_cell(e['forbidden'])} |")
     return "\n".join(rows)
 
 
 def _body(env, shown, json_text):
     entries = env["entries"]
-    lines = [MARKER, "## mech-review", "", f"**{env['summary']}**", "", f"head `{env['head']}`", ""]
+    lines = [MARKER, "## mech-review", "", f"**{headline(env)}**", "", f"head `{env['head']}`", ""]
     if not entries:
         lines.append("No entries.")
     else:

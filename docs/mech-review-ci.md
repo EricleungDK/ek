@@ -51,6 +51,7 @@ Globs: `**` any depth, `*` one segment.
 - `report` merges the results: each job owns its checks (R2 from `guard`; R1 and R4 from `red-first`). It edits the sticky comment, or creates it: a summary line, a table of entries (id, severity, file:line, problem, forbidden) and the full JSON.
 - A job with no usable result (crash, no JSON, or a result for an older head) fails its own checks and adds one `CI` entry naming the job. The other job's entries still show.
 - Check fails on any `fail` entry (`confirm` entries do not fail).
+- A `fail` entry of class `needs-human` reads `needs-human` in the comment (severity cell, and the headline when every fail entry is needs-human). The JSON keeps `severity: fail` and the summary keeps `fail`; the check stays red.
 - R1 on a non-agent branch, or a PR with no production file changed, is `skipped` and named as such. A missing toolchain is `n/a` (not run, not pass).
 - Summary: `all pass <sha>` only when every check ran and passed. A full CI run reads like `pass <sha> (0 fail, 1 confirm; ran: R1 R2 R4; skipped: R3)`. R3 is not built yet, so `all pass` does not appear yet.
 - Require the check `mech-review report` in branch protection.
