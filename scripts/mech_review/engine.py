@@ -297,6 +297,21 @@ def _partial_label(check, name):
     return f"{name} ({check['tested']}/{total})"
 
 
+def plan(repo, base_ref, head_ref, stack, test_globs, shards):
+    """Mutants job plan (git only, no toolchain): run only when a production file changed. The matrix is
+    shards 0..N-1 when it runs, one placeholder shard otherwise (the job is skipped by its `if`)."""
+    from . import red  # lazy: red imports this module
+    base = resolve(repo, base_ref)
+    head = resolve(repo, head_ref)
+    try:
+        mb = git(repo, "merge-base", base, head).strip()
+    except Die:
+        raise Die(f"no merge base for {base_ref} and {head_ref}")
+    run_r3 = bool(red.prod_changes(repo, mb, head, ADAPTERS[stack](), test_globs))
+    count = shards if run_r3 else 1
+    return {"run": run_r3, "count": count, "shards": list(range(count))}
+
+
 def summarize(head, checks, entries):
     """`all pass <head>` only when every check passed and there are no entries. Otherwise
     `<pass|fail> <head> (<F> fail, <C> confirm; ran: <checks>[; skipped: <checks>][; n/a: <checks>])`.
