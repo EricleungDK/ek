@@ -8,6 +8,7 @@ checks stay skipped.
 import json
 
 from .engine import CHECKS, entry, envelope, finalize
+from .mutants import partial_entry
 
 OWNS = {"r2": ("R2",), "red": ("R1", "R4"), "mutants": ("R3",)}
 
@@ -51,14 +52,45 @@ def load_envelope(path):
     return env
 
 
+SUMS = ("baseline_build_s", "baseline_test_s", "mutant_build_s", "mutant_test_s")
+
+
+def combine_timing(items, tested):
+    """Timing of the merged R3. items: [(shard label, timing dict or None)] for every shard; tested: the summed count.
+    Sums, the average and the wall (the slowest shard: they run in parallel) are kept only when every shard reported
+    them, so a missing shard never shrinks a total silently. Per-shard wall is kept for each shard that reported.
+    Top five slowest across the shards that reported."""
+    reported = [(lab, t) for lab, t in items if t]
+    if not reported:
+        return {}
+    out = {}
+    if len(reported) == len(items):
+        for key in SUMS:
+            vals = [t.get(key) for _, t in reported]
+            if all(isinstance(v, (int, float)) and not isinstance(v, bool) for v in vals):
+                out[key] = round(sum(vals), 2)
+        walls = [t.get("wall_s") for _, t in reported]
+        if all(isinstance(w, (int, float)) and not isinstance(w, bool) for w in walls):
+            out["wall_s"] = max(walls)
+        if "mutant_build_s" in out and "mutant_test_s" in out and tested:
+            out["avg_s_per_mutant"] = round((out["mutant_build_s"] + out["mutant_test_s"]) / tested, 2)
+    out["shards"] = [{"shard": lab, "wall_s": t["wall_s"]} for lab, t in reported if "wall_s" in t]
+    per = [x for _, t in reported for x in t.get("slowest", [])]
+    if per:
+        out["slowest"] = sorted(per, key=lambda x: -x["s"])[:5]
+    return out
+
+
 def combine_shards(base, head, n, shards, reasons):
     """The mutants job: R3 from n shard envelopes (0-based shard k of n). shards: {k: envelope or None},
     reasons: {k: why there is no envelope}. A missing shard fails R3 with a CI entry naming it; the other shards'
-    entries stay. R3 status: fail > n/a > partial > skipped > pass. tested/total are summed over the shards."""
+    entries stay. R3 status: fail > n/a > partial > skipped > pass; tested/total are summed over the shards.
+    Partial: exactly one partial confirm for the merged run, however many shards hit the budget."""
     checks = {c: {"status": "skipped", "note": "not run by mutants"} for c in CHECKS}
-    kept, ci, notes, statuses = [], [], [], []
+    kept, ci, notes, statuses, timings = [], [], [], [], []
     tested = total = 0
     counted = unknown = False
+    guard_id = partial_entry({})["id"]
     for k in range(n):
         label = f"{k}/{n}"
         env = shards.get(k)
@@ -66,6 +98,7 @@ def combine_shards(base, head, n, shards, reasons):
             why = reasons.get(k, "no usable result")
             statuses.append("fail")
             notes.append(f"shard {label}: no result ({why})")
+            timings.append((label, None))
             ci.append(entry("CI", "", 0, f"no-result:mutants:{k}", "env", "fail",
                             f"mutants shard {label} produced no result: {why}",
                             "see the job log; the mutants of this shard did not run", "a merged result without that shard"))
@@ -73,7 +106,9 @@ def combine_shards(base, head, n, shards, reasons):
         c = env["checks"]["R3"]
         statuses.append(c["status"])
         notes.append(f"shard {label}: {c['note']}")
-        kept += [e for e in env["entries"] if e["check"] == "R3"]
+        timings.append((label, c.get("timing")))
+        # a shard's own partial confirm is replaced by the one for the merged run
+        kept += [e for e in env["entries"] if e["check"] == "R3" and e["id"] != guard_id]
         if c.get("tested") is not None:
             counted = True
             tested += c["tested"]
@@ -95,7 +130,13 @@ def combine_shards(base, head, n, shards, reasons):
     if counted:
         check["tested"] = tested
         check["total"] = None if unknown else total
+    timing = combine_timing(timings, tested if counted else None)
+    if timing:
+        check["timing"] = timing
     checks["R3"] = check
+    if status == "partial":
+        kept.append(partial_entry(check))
     ci = finalize(ci)
     entries = sorted(kept + ci, key=lambda e: (e["file"], e["line"] == 0, e["line"], e["id"]))
     return envelope(base, head, entries, checks)
+

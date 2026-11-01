@@ -48,7 +48,7 @@ eq "missed summary" "$(jq -r .summary <<<"$out")" "fail $H (11 fail, 0 confirm; 
 out=$(MUT_FIXTURE=partial MUT_RC=0 MUT_HANG=1 mut --mutation-budget 0.02); rc=$?
 eq "partial exit" "$rc" 0
 eq "partial R3" "$(jq -r .checks.R3.status <<<"$out")" partial
-eq "partial summary" "$(jq -r .summary <<<"$out")" "pass $H (0 fail, 0 confirm; ran: R3; partial: R3 (7/15); skipped: R1 R2 R4)"
+eq "partial summary" "$(jq -r .summary <<<"$out")" "pass $H (0 fail, 1 confirm; ran: R3; partial: R3 (7/15); skipped: R1 R2 R4)"
 hasnt "partial never all pass" "$(jq -r .summary <<<"$out")" "all pass"
 
 # 3. no cargo-mutants: n/a (env), named, never pass

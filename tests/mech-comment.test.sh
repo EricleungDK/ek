@@ -136,6 +136,34 @@ b = C.render(conf)
 check("needs-human confirm only: headline unchanged", f"**pass {SHA} (" in b, b)
 check("needs-human confirm only: severity cell stays confirm", "| R2-aaaaaaaa | confirm |" in b, b)
 
+# ---- R3 timing: one human line under the headline when R3 ran; slowest list when partial; names sanitized (#36) ----
+def r3_env(status, tested, total, timing):
+    e = env([])
+    e["checks"]["R3"] = {"status": status, "note": "x", "tested": tested, "total": total, "timing": timing}
+    return e
+
+
+t_pass = {"wall_s": 53.0, "mutant_build_s": 6.0, "mutant_test_s": 3.0, "avg_s_per_mutant": 1.8,
+          "baseline_build_s": 2.0, "baseline_test_s": 1.0}
+e_pass = r3_env("pass", 5, 5, t_pass)
+b = C.render(e_pass)
+check("timing: one line under the headline", "R3 timing: 5/5 mutants, 53s wall, avg 1.8s per mutant (build 6s, test 3s)" in b, b)
+check("timing: line sits before the head line", b.index("R3 timing:") < b.index("head `"), b)
+check("timing: json block carries the timing", json_block(b) == e_pass, str(json_block(b)))
+check("timing: no timing line when R3 is skipped", "R3 timing:" not in C.render(env([])), C.render(env([])))
+check("timing: no slowest line when not partial",
+      "R3 slowest:" not in C.render(r3_env("pass", 5, 5, dict(t_pass, slowest=[{"name": "a", "s": 1.0}]))))
+
+slow = [{"name": "src/lib.rs:2:11: replace `+` with - | in add", "s": 4.2}, {"name": "src/x.rs:1:1: b", "s": 2.0}]
+b = C.render(r3_env("partial", 7, 15, dict(t_pass, slowest=slow)))
+check("partial: timing line counts tested/total", "R3 timing: 7/15 mutants" in b, b)
+check("partial: slowest line present", "R3 slowest:" in b, b)
+slow_line = next(l for l in b.splitlines() if l.startswith("R3 slowest:"))
+check("partial: slowest names sanitized (no raw backtick, pipe escaped)", "`+`" not in slow_line and "\\|" in slow_line, slow_line)
+check("partial: slowest seconds shown", "4.2s" in slow_line and "2s" in slow_line, slow_line)
+check("total unknown shows ? in the timing line", "R3 timing: 5/? mutants" in C.render(r3_env("pass", 5, None, t_pass)))
+check("R3 with no timing and no count: no timing line", "R3 timing:" not in C.render(r3_env("pass", None, None, {})))
+
 # ---- crash render ----
 b = C.render_crash(SHA, "guard produced no JSON")
 check("crash: marker is the first line", b.splitlines()[0] == C.MARKER)

@@ -39,6 +39,50 @@ def headline(env):
     return env["summary"]
 
 
+def _num(x):
+    return isinstance(x, (int, float)) and not isinstance(x, bool)
+
+
+def _fmt(x):
+    """seconds for a human line: up to two decimals, no trailing zeros (53 -> 53, 1.8 -> 1.8, 0.25 -> 0.25)."""
+    return f"{x:.2f}".rstrip("0").rstrip(".")
+
+
+def _timing_lines(env):
+    """One human line under the headline when R3 ran (its count and timing), and the slowest mutants when it is partial.
+    The JSON block carries every field; a field that is not there is left out here too."""
+    c = (env.get("checks") or {}).get("R3") or {}
+    if c.get("status") not in ("pass", "fail", "partial"):
+        return []
+    t = c.get("timing") or {}
+    tested, total = c.get("tested"), c.get("total")
+    if tested is None and not t:
+        return []
+    parts = []
+    if _num(tested):
+        parts.append(f"{tested}/{total if _num(total) else '?'} mutants")
+    if _num(t.get("wall_s")):
+        parts.append(f"{_fmt(t['wall_s'])}s wall")
+    detail = []
+    if _num(t.get("mutant_build_s")):
+        detail.append(f"build {_fmt(t['mutant_build_s'])}s")
+    if _num(t.get("mutant_test_s")):
+        detail.append(f"test {_fmt(t['mutant_test_s'])}s")
+    if _num(t.get("avg_s_per_mutant")):
+        seg = f"avg {_fmt(t['avg_s_per_mutant'])}s per mutant"
+        if detail:
+            seg += f" ({', '.join(detail)})"
+        parts.append(seg)
+    elif detail:
+        parts.append(f"({', '.join(detail)})")
+    lines = ["R3 timing: " + ", ".join(parts)] if parts else []
+    slow = [x for x in (t.get("slowest") or []) if isinstance(x, dict) and _num(x.get("s"))]
+    if c.get("status") == "partial" and slow:
+        names = [f"{_cell(x.get('name', '')).replace('`', chr(39))} {_fmt(x['s'])}s" for x in slow[:5]]
+        lines.append("R3 slowest: " + ", ".join(names))
+    return lines
+
+
 def _table(entries):
     rows = [
         "| id | severity | file:line | problem | forbidden |",
@@ -52,7 +96,11 @@ def _table(entries):
 
 def _body(env, shown, json_text):
     entries = env["entries"]
-    lines = [MARKER, "## mech-review", "", f"**{headline(env)}**", "", f"head `{env['head']}`", ""]
+    lines = [MARKER, "## mech-review", "", f"**{headline(env)}**", ""]
+    timing = _timing_lines(env)
+    if timing:
+        lines += timing + [""]
+    lines += [f"head `{env['head']}`", ""]
     if not entries:
         lines.append("No entries.")
     else:

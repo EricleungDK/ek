@@ -206,7 +206,7 @@ out=$(MUT_FIXTURE=partial MUT_RC=0 MUT_HANG=1 mut --mutation-budget 0.02); rc=$?
 eq "$rc" 0 "partial: exit 0 (does not block)"
 eq "$(jq -r .checks.R3.status <<<"$out")" partial "partial: R3 partial"
 has "$(jq -r .checks.R3.note <<<"$out")" "7/15 tested" "partial: note tested/total"
-eq "$(jq -r .summary <<<"$out")" "pass $H (0 fail, 0 confirm; ran: R3; partial: R3 (7/15); skipped: R1 R2 R4)" "partial: summary names partial"
+eq "$(jq -r .summary <<<"$out")" "pass $H (0 fail, 1 confirm; ran: R3; partial: R3 (7/15); skipped: R1 R2 R4)" "partial: summary names partial"
 eq "$(jq -r '[.checks[] | select(.status=="pass")] | length' <<<"$out")" 0 "partial: never all pass"
 [[ $SECONDS -lt 10 ]] && ok "partial: budget kill is prompt" || fail "partial: budget kill took ${SECONDS}s"
 
@@ -280,7 +280,7 @@ MUT_FIXTURE=caught MUT_RC=0 mut --shard 1/2 > "$MG/p1.json"
 out=$(mg 2 --envelope 0="$MG/p0.json" --envelope 1="$MG/p1.json"); rc=$?
 eq "$rc" 0 "merge partial: exit 0 (does not block)"
 eq "$(jq -r .checks.R3.status <<<"$out")" partial "merge partial: R3 partial"
-eq "$(jq -r .summary <<<"$out")" "pass $H (0 fail, 0 confirm; ran: R3; partial: R3 (12/20); skipped: R1 R2 R4)" "merge partial: summary sums tested/total"
+eq "$(jq -r .summary <<<"$out")" "pass $H (0 fail, 1 confirm; ran: R3; partial: R3 (12/20); skipped: R1 R2 R4)" "merge partial: summary sums tested/total"
 
 out=$(mg 2 --envelope 5="$MG/s0.json"); rc=$?
 eq "$rc" 2 "merge: shard index out of range is a usage error"
@@ -435,5 +435,191 @@ has "$(jq -r .checks.R3.note <<<"$out")" "not run by all" "all: R3 note says not
 has "$(jq -r .checks.R3.note <<<"$out")" "mutants" "all: R3 note names the mutants subcommand"
 has "$(python3 -I "$MR" --help)" "all" "help: all named"
 has "$(python3 -I "$MR" --help)" "\`all\` = R1, R2 and R4" "help: all is R1, R2 and R4"
+
+# ---- timing (#36): per shard from outcomes.json phase durations; wall from the runner; partial confirm ----
+python3 -I - "$ROOT" <<'PY'
+import json
+import os
+import shutil
+import sys
+import tempfile
+
+ROOT = sys.argv[1]
+sys.path.insert(0, os.path.join(ROOT, "scripts"))
+FX = os.path.join(ROOT, "tests", "fixtures", "mutants")
+FAILS = 0
+
+
+def check(name, cond, detail=""):
+    global FAILS
+    if cond:
+        print(f"  ok   {name}")
+    else:
+        FAILS += 1
+        print(f"  FAIL {name}\n       {detail}")
+
+
+from mech_review import mutants as M  # noqa: E402
+from mech_review import merge  # noqa: E402
+from mech_review.stack import RustAdapter  # noqa: E402
+
+A = RustAdapter()
+TG = ["tests/**"]
+
+
+def load(case):
+    return json.load(open(os.path.join(FX, case, "outcomes.json")))
+
+
+def dur(phases, name):
+    return sum(p["duration"] for p in phases if p["phase"] == name)
+
+
+def mutant_rows(doc):
+    return [oc for oc in doc["outcomes"] if isinstance(oc["scenario"], dict)]
+
+
+def baseline(doc):
+    return next(oc for oc in doc["outcomes"] if oc["scenario"] == "Baseline")
+
+
+def near(a, b, tol=0.01):
+    return a is not None and b is not None and abs(a - b) <= tol
+
+
+doc = load("missed")
+rows = mutant_rows(doc)
+exp_mb = sum(dur(oc["phase_results"], "Build") for oc in rows)
+exp_mt = sum(dur(oc["phase_results"], "Test") for oc in rows)
+exp_top = sorted(((oc["scenario"]["Mutant"]["name"], dur(oc["phase_results"], "Build") + dur(oc["phase_results"], "Test"))
+                  for oc in rows), key=lambda x: -x[1])[:5]
+
+# ---- fixture timing: baseline, mutant sums, average, five slowest ----
+chk, ents = M.verdict(os.path.join(FX, "missed"), 2, "", A, TG, wall_s=12.345)
+t = chk.get("timing", {})
+check("timing: present on the check", bool(t), str(chk))
+check("timing: wall from the runner, 2 dp", t.get("wall_s") == 12.35 or t.get("wall_s") == 12.34, str(t))
+check("timing: baseline build from the Baseline scenario",
+      near(t.get("baseline_build_s"), dur(baseline(doc)["phase_results"], "Build")), str(t))
+check("timing: baseline test from the Baseline scenario",
+      near(t.get("baseline_test_s"), dur(baseline(doc)["phase_results"], "Test")), str(t))
+check("timing: summed mutant build seconds", near(t.get("mutant_build_s"), exp_mb, 0.05), f"{t.get('mutant_build_s')} vs {exp_mb}")
+check("timing: summed mutant test seconds", near(t.get("mutant_test_s"), exp_mt, 0.05), f"{t.get('mutant_test_s')} vs {exp_mt}")
+check("timing: average per tested mutant = (build + test) / tested",
+      near(t.get("avg_s_per_mutant"), (exp_mb + exp_mt) / len(rows), 0.01), str(t.get("avg_s_per_mutant")))
+check("timing: five slowest, sorted, first is the true slowest",
+      len(t.get("slowest", [])) == 5 and t["slowest"][0]["name"] == exp_top[0][0]
+      and [s["s"] for s in t["slowest"]] == sorted([s["s"] for s in t["slowest"]], reverse=True),
+      str(t.get("slowest")))
+check("timing: slowest rows carry name and seconds", all(set(s) == {"name", "s"} for s in t["slowest"]), str(t["slowest"]))
+
+# ---- unparseable or missing durations leave the field out, never crash ----
+tmp = tempfile.mkdtemp()
+try:
+    for name in ("outcomes.json", "mutants.json", "missed.txt", "caught.txt", "timeout.txt", "unviable.txt"):
+        src = os.path.join(FX, "missed", name)
+        if os.path.exists(src):
+            shutil.copy(src, tmp)
+    bad = json.load(open(os.path.join(tmp, "outcomes.json")))
+    mrows = mutant_rows(bad)
+    for ph in mrows[0]["phase_results"]:
+        if ph["phase"] == "Build":
+            ph["duration"] = "oops"
+    for ph in baseline(bad)["phase_results"]:
+        if ph["phase"] == "Test":
+            ph["duration"] = None
+    json.dump(bad, open(os.path.join(tmp, "outcomes.json"), "w"))
+    chk2, _ = M.verdict(tmp, 2, "", A, TG, wall_s=3.0)
+    t2 = chk2.get("timing", {})
+    check("bad durations: no crash, verdict still fail", chk2["status"] == "fail", str(chk2))
+    check("bad durations: unparseable mutant build field left out", "mutant_build_s" not in t2, str(t2))
+    check("bad durations: avg left out with it", "avg_s_per_mutant" not in t2, str(t2))
+    check("bad durations: bad baseline test left out", "baseline_test_s" not in t2, str(t2))
+    check("bad durations: wall still reported", t2.get("wall_s") == 3.0, str(t2))
+    check("bad durations: good baseline build still reported", "baseline_build_s" in t2, str(t2))
+finally:
+    shutil.rmtree(tmp, ignore_errors=True)
+
+# no outcomes at all (budget before the first scenario): wall only, no crash
+chk3, _ = M.verdict(os.path.join(FX, "no-such-dir"), "timeout", "", A, TG, wall_s=5.0)
+check("no outcomes: timing is wall only", chk3.get("timing") == {"wall_s": 5.0}, str(chk3.get("timing")))
+
+# ---- partial confirm: one entry, stable id, text names the untested count, timing hint ----
+pe = M.partial_entry({"status": "partial", "tested": 7, "total": 15})
+check("partial confirm: severity confirm, class agent-fixable", pe["severity"] == "confirm" and pe["class"] == "agent-fixable", str(pe))
+check("partial confirm: check R3", pe["check"] == "R3", str(pe))
+check("partial confirm: problem names untested/total", pe["problem"] == "R3 partial: 8/15 mutants untested at budget", pe["problem"])
+check("partial confirm: hint names timing and the fix order",
+      "timing" in pe["hint"] and "diff" in pe["hint"] and "budget" in pe["hint"], pe["hint"])
+check("partial confirm: forbidden", pe["forbidden"] == "treating a partial R3 as tested", pe["forbidden"])
+check("partial confirm: id stable across counts and heads",
+      pe["id"] == M.partial_entry({"status": "partial", "tested": 1, "total": 2})["id"] and pe["id"].startswith("R3-"),
+      pe["id"])
+pu = M.partial_entry({"status": "partial", "tested": 3, "total": None})
+check("partial confirm: total unknown is said", "total unknown" in pu["problem"], pu["problem"])
+
+# ---- combine: sums, recomputed average, top five across shards, per-shard wall, one partial confirm ----
+s0 = {"checks": {"R3": M.verdict(os.path.join(FX, "shard-0-of-2"), 2, "", A, TG, wall_s=10.0)[0]},
+      "entries": M.verdict(os.path.join(FX, "shard-0-of-2"), 2, "", A, TG, wall_s=10.0)[1]}
+s1 = {"checks": {"R3": M.verdict(os.path.join(FX, "shard-1-of-2"), 2, "", A, TG, wall_s=7.5)[0]},
+      "entries": M.verdict(os.path.join(FX, "shard-1-of-2"), 2, "", A, TG, wall_s=7.5)[1]}
+H, B = "a" * 40, "b" * 40
+for e in (s0, s1):
+    e["head"], e["base"] = H, B
+m = merge.combine_shards(B, H, 2, {0: s0, 1: s1}, {})
+mt = m["checks"]["R3"]["timing"]
+s0_b = M.verdict(os.path.join(FX, "shard-0-of-2"), 2, "", A, TG)[0]["timing"]
+s1_b = M.verdict(os.path.join(FX, "shard-1-of-2"), 2, "", A, TG)[0]["timing"]
+check("combine: summed mutant build", near(mt.get("mutant_build_s"), s0_b["mutant_build_s"] + s1_b["mutant_build_s"], 0.05), str(mt))
+check("combine: summed mutant test", near(mt.get("mutant_test_s"), s0_b["mutant_test_s"] + s1_b["mutant_test_s"], 0.05), str(mt))
+check("combine: average recomputed over all 17 tested", near(mt.get("avg_s_per_mutant"),
+      (mt["mutant_build_s"] + mt["mutant_test_s"]) / 17, 0.01), str(mt))
+check("combine: wall is the slowest shard (they run in parallel)", mt.get("wall_s") == 10.0, str(mt))
+check("combine: per-shard wall kept", [(x["shard"], x["wall_s"]) for x in mt.get("shards", [])] == [("0/2", 10.0), ("1/2", 7.5)],
+      str(mt.get("shards")))
+union = sorted(s0_b.get("slowest", []) + s1_b.get("slowest", []), key=lambda x: -x["s"])[:5]
+check("combine: top five across shards", [x["s"] for x in mt.get("slowest", [])] == [x["s"] for x in union], str(mt.get("slowest")))
+check("combine: no partial confirm when merged is not partial", not any(e["id"] == M.partial_entry({})["id"] for e in m["entries"]))
+
+# two shards both partial: exactly one partial confirm, merged totals
+p0, pe0 = M.verdict(os.path.join(FX, "partial"), "timeout", "", A, TG, wall_s=4.0)
+p1, pe1 = M.verdict(os.path.join(FX, "partial"), "timeout", "", A, TG, wall_s=4.5)
+p0["status"] = p1["status"] = "partial"
+envs = {0: {"head": H, "base": B, "checks": {"R3": p0}, "entries": [M.partial_entry(p0)]},
+        1: {"head": H, "base": B, "checks": {"R3": p1}, "entries": [M.partial_entry(p1)]}}
+mp = merge.combine_shards(B, H, 2, envs, {})
+guards = [e for e in mp["entries"] if e["id"] == M.partial_entry({})["id"]]
+check("two partial shards: exactly one partial confirm", len(guards) == 1, str([e["problem"] for e in mp["entries"]]))
+check("two partial shards: merged status partial", mp["checks"]["R3"]["status"] == "partial", str(mp["checks"]["R3"]))
+check("two partial shards: problem counts merged untested", guards and guards[0]["problem"] == "R3 partial: 16/30 mutants untested at budget",
+      str(guards and guards[0]["problem"]))
+check("two partial shards: merged summary is pass with one confirm", mp["summary"].startswith("pass ")
+      and "(0 fail, 1 confirm;" in mp["summary"], mp["summary"])
+
+sys.exit(1 if FAILS else 0)
+PY
+eq "$?" 0 "timing: fixture sums, average, slowest; bad durations left out; combine sums, per-shard wall, one partial confirm"
+
+# ---- timing and the partial confirm through the CLI (single shard and merged) ----
+PID=$(python3 -I -c "import sys; sys.path.insert(0, sys.argv[1] + '/scripts'); from mech_review import mutants as M; print(M.partial_entry({})['id'])" "$ROOT")
+mrepo tpartial
+out=$(MUT_FIXTURE=partial MUT_RC=0 MUT_HANG=1 mut --mutation-budget 0.02); rc=$?
+eq "$rc" 0 "single partial: still exit 0"
+eq "$(jq -r '[.entries[] | select(.id=="'"$PID"'")] | length' <<<"$out")" 1 "single partial: exactly one partial confirm"
+eq "$(jq -r '[.entries[] | select(.id=="'"$PID"'")][0].severity' <<<"$out")" confirm "single partial: confirm, not fail"
+eq "$(jq -r '[.entries[] | select(.id=="'"$PID"'")][0].problem' <<<"$out")" "R3 partial: 8/15 mutants untested at budget" "single partial: problem counts untested"
+eq "$(jq -r .summary <<<"$out")" "pass $H (0 fail, 1 confirm; ran: R3; partial: R3 (7/15); skipped: R1 R2 R4)" "single partial: summary counts the confirm"
+[[ "$(jq -r .checks.R3.timing.wall_s <<<"$out")" != null ]] && ok "single partial: wall time in checks.R3.timing" || fail "single partial: wall time in checks.R3.timing"
+eq "$(jq -r '.checks.R3.timing.slowest | length' <<<"$out")" 5 "single partial: five slowest mutants"
+
+# merged: two shards both partial -> one confirm, summed totals, per-shard wall
+MG2="$T/merge2"; mkdir -p "$MG2"
+MUT_FIXTURE=partial MUT_RC=0 MUT_HANG=1 mut --shard 0/2 --mutation-budget 0.02 > "$MG2/p0.json"
+MUT_FIXTURE=partial MUT_RC=0 MUT_HANG=1 mut --shard 1/2 --mutation-budget 0.02 > "$MG2/p1.json"
+out=$(mg 2 --envelope 0="$MG2/p0.json" --envelope 1="$MG2/p1.json"); rc=$?
+eq "$rc" 0 "merged two partial: exit 0"
+eq "$(jq -r '[.entries[] | select(.id=="'"$PID"'")] | length' <<<"$out")" 1 "merged two partial: exactly one partial confirm"
+eq "$(jq -r '.checks.R3.timing.shards | length' <<<"$out")" 2 "merged two partial: per-shard wall for both shards"
+eq "$(jq -r '.checks.R3.timing.shards[0].shard' <<<"$out")" "0/2" "merged two partial: shard label 0/2"
 
 done_tests
