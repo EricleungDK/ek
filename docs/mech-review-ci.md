@@ -3,9 +3,9 @@
 Reusable workflow: `EricleungDK/ek/.github/workflows/mech-review.yml`. On each PR it runs up to five jobs and merges them into one sticky comment (marker `<!-- mech-review -->`) and one check result:
 
 - `guard`: R2 test-diff guard (`scripts/mech-review.py r2`), git diffs only, no toolchain.
-- `red-first`: R1 red-first and R4 determinism (`scripts/mech-review.py red`). Compiles and runs the PR's new or changed tests, so it needs the stack toolchain.
+- `red-first`: R1 red-first and R4 determinism (`scripts/mech-review.py red`). Compiles and runs the PR's new or changed tests, so it needs the stack toolchain (rust: stable; python: a venv with pytest).
 - `plan`: decides whether R3 runs (a production file changed) and its shard matrix (4 shards). Git only.
-- `mutants`: R3 mutation on the diff (`scripts/mech-review.py mutants`), one job per shard. Runs cargo-mutants 27.1.0 (`--in-diff`) on the PR's code, so it needs the stack toolchain. Skipped entirely when `plan` says no production file changed.
+- `mutants`: R3 mutation on the diff (`scripts/mech-review.py mutants`), one job per shard. Runs cargo-mutants 27.1.0 (`--in-diff`) on the PR's code (rust), or mutmut 3.8.1 on the changed files (python). Skipped entirely when `plan` says no production file changed.
 - `report`: merges the two results, edits the comment, sets the check.
 
 Rules: [testing standard](testing-standard.md).
@@ -32,17 +32,19 @@ jobs:
         .github/**
 ```
 
+Python: the same, with `stack: python` and `test-paths: tests/**` (`tests/test_*.py` or any layout under `tests/`).
+
 The ek scripts run at the ref you pin (`job.workflow_sha` of the called file), not at your checkout. Bump the tag to upgrade.
 
 ## Inputs
 
 | Input | Default | Use |
 |---|---|---|
-| `stack` | `rust` | language adapter (only `rust` exists). `rust` sets up the toolchain for `red-first` |
+| `stack` | `rust` | language adapter: `rust` (cargo test, cargo-mutants) or `python` (pytest, mutmut). Sets up the toolchain for `red-first` and `mutants` |
 | `test-paths` | `tests/**` | test file globs, one per line; `.rs` files here count every assert; a `.rs` file outside them is production code for R1 |
 | `protected-paths` | `.github/**` | globs, one per line; any change under them is a `needs-human` fail |
 | `agent-branch-prefix` | `agent/` | R1 runs only when the PR head branch starts with it (`--agent-prefix`); other branches skip R1 |
-| `mutation-budget` | `10` | R3 budget in minutes, per mutants shard. A budget hit is `partial` (no MISSED so far) or `fail` (a MISSED found), never a crash |
+| `mutation-budget` | `10` | R3 budget in minutes, per mutants shard. A budget hit is `partial` (no MISSED so far) or `fail` (a MISSED found), never a crash. Applies to both stacks |
 | `extra-apt-packages` | `` | apt packages (space-separated) installed before `red-first` runs its tests |
 | `project-dir` | `.` | crate dir under the repo root. R1, R4 and R3 run there; `test-paths` and `protected-paths` stay repo-root globs; a path with `..` or a leading `/` is a usage error |
 | `setup-command` | `` | shell command (run with bash) in `red-first` and `mutants`, after `extra-apt-packages`, before the tests. A non-zero exit stops that job, which then reports a CI entry |
@@ -60,6 +62,15 @@ Subdirectory crate (`project-dir`): `test-paths: alfredo-tui/tests/**`, `project
 
 Trust: `setup-command` and `project-dir` come from the caller's workflow file, which is trusted: the command runs with the job's `contents: read` token and no secrets. For `pull_request` the caller file is the PR's own, so a PR that edits it changes what the job runs. Keep that file behind review: `.github/**` in `protected-paths` reports such an edit as `needs-human`, but the job runs before a human reads it. Both inputs are passed through `env` and never interpolated into a `run:` line. The command runs at the workspace root, before the PR's tests.
 
+Python toolchain (`stack: python`), set up in `red-first` and `mutants`:
+
+- A venv from the runner's python (`$RUNNER_TEMP/py-venv`), so PEP 668 does not apply. `pytest` 9.2.0, and in `mutants` `mutmut` 3.8.1. Both pinned.
+- The `requirements*.txt` files in the project dir (`project-dir`, default the repo root) are installed with `pip -r`. A requirements file that does not install stops the job: a missing dependency is never a silent pass. `project-dir` must stay under the repo root.
+- Installing the project is left to `setup-command`, which runs after this step with the venv on PATH, e.g. `setup-command: python3 -m pip install -e caller` (the checkout is `caller/` under the workspace root; with `project-dir: pkg`, `caller/pkg`).
+- An editable install imports the checkout's copy. A flat layout is safe: the runner starts in the worktree, so its package comes first on `sys.path`. A `src/` layout is not: at the red commit R1 would import head's code. Use pytest's `pythonpath` setting for a `src/` layout instead, and skip `setup-command` for it.
+- Test runner: `python3 -m pytest` (one nodeid per test, so unittest `TestCase` methods run too). Use `--test-cmd` for another command: a command with `unittest` in it gets dotted names.
+- A python project dir needs one of `pyproject.toml`, `setup.py` or `setup.cfg`. Without one R3 is `n/a` and names `project-dir`, and a test that cannot run names it in its hint. `pytest` missing is `n/a (env)`, and its note names `setup-command`.
+
 ## Result
 
 - Jobs: `guard` (artifact `mech-review-json`), `red-first` (artifact `mech-review-red-json`), `plan`, `mutants` (artifacts `mech-review-mutants-<shard>`), `report` (`needs` all four, runs even if one fails).
@@ -67,11 +78,19 @@ Trust: `setup-command` and `project-dir` come from the caller's workflow file, w
 - A job with no usable result (crash, no JSON, or a result for an older head) fails its own checks and adds one `CI` entry naming the job. The other job's entries still show.
 - Check fails on any `fail` entry (`confirm` entries do not fail).
 - A `fail` entry of class `needs-human` reads `needs-human` in the comment (severity cell, and the headline when every fail entry is needs-human). The JSON keeps `severity: fail` and the summary keeps `fail`; the check stays red.
-- R1 on a non-agent branch, or a PR with no production file changed, is `skipped` and named as such. A missing toolchain is `n/a` (not run, not pass). Each `n/a` note names the cause and the input to set (`setup-command` for a toolchain, the install step for cargo-mutants, `project-dir` for no `Cargo.toml`), and the comment adds one line under the headline: `Did not run: R3 (no Cargo.toml in .: set project-dir)`. A missing `Cargo.toml` where R1 or R4 runs is a `fail` (cannot run), with `set project-dir` in its hint.
+- R1 on a non-agent branch, or a PR with no production file changed, is `skipped` and named as such. A missing toolchain is `n/a` (not run, not pass). Each `n/a` note names the cause and the input to set (`setup-command` for a toolchain, the install step for cargo-mutants, `project-dir` for no manifest: `Cargo.toml` for rust, `pyproject.toml`, `setup.py` or `setup.cfg` for python), and the comment adds one line under the headline: `Did not run: R3 (no Cargo.toml in .: set project-dir)`. A missing manifest where R1 or R4 runs is a `fail` (cannot run), with `set project-dir` in its hint.
 - Summary: `all pass <sha>` only when every check ran and passed. A run with R3 skipped (no production file changed) reads like `pass <sha> (0 fail, 1 confirm; ran: R1 R2 R4; skipped: R3)`. A budget hit reads `partial: R3 (tested/total)`, and an absent tool reads `n/a: R3`; neither is `all pass`.
 - Require the check `mech-review report` in branch protection.
 - Readers trust only the bot's marker comment (`github-actions[bot]`, override `MECH_COMMENT_AUTHOR`): a `<!-- mech-review -->` comment from any other user is ignored.
 - A run whose PR head has moved on leaves the comment alone; the newest push owns it.
+
+## Python R3 (mutmut)
+
+- The runner appends a `[tool.mutmut]` table (`source_paths`, `only_mutate` = the changed production files of the shard) to the worktree's `pyproject.toml`. The caller's checkout is never written. A `setup.cfg` `[mutmut]` section is ignored once the table exists.
+- mutmut has no line filter: it mutates every line of the changed files. The runner keeps only the MISSED mutants on changed lines (the line is found in the head source by the mutated function's name, `mutmut show`), the same promise as `--in-diff`. Mutants outside the diff are not reported; the note counts them (`N missed outside the diff`). A method is located inside its class (mutmut names it `Class` + U+01C1 + `method`), so a method name that two classes share is found in the right one. A missed mutant whose name maps to no line in the file is `unlocated`: one `confirm` entry, not a fail and not a silent pass, counted in the note (`N unlocated`) for a reader to check by hand.
+- `no tests` (no test reaches the line) is a MISSED mutant: the fix is a test that calls it. Survived mutants are MISSED. `timeout`, `suspicious` and similar are neither caught nor missed, as TIMEOUT and UNVIABLE are for cargo-mutants.
+- Timing is wall time only (`checks.R3.timing.wall_s`): mutmut prints no per-phase durations, so the cargo-mutants phase fields are left out, not guessed. `--mutant-timeout` does not apply: mutmut's own timeout (its `timeout_multiplier` times the test time) decides.
+- A budget hit reads the results mutmut kept: `partial (tested/total)` with nothing missed, `fail` with a MISSED.
 
 ## R3 timing and partial
 
@@ -103,6 +122,7 @@ What to do with the numbers, in this order:
 - R1 needs the branch name: the workflow passes `github.head_ref`. A run without it skips R1 and says so.
 - `mutants` runs cargo-mutants, which builds and runs the PR's tests once per mutant, with a job-level `contents: read` token and no other secrets. Each shard also runs the unmutated baseline tests, so the cost is per shard.
 - cargo-mutants is pinned to 27.1.0 through `taiki-e/install-action` (pinned to a full SHA). If the install fails the step continues and R3 reports `n/a (env)`: a missing tool is never a pass and never a code failure.
+- python: `mutmut` 3.8.1 is pinned in the venv. A repo that already has `[tool.mutmut]` in its `pyproject.toml` gets R3 `n/a (env)`: the runner needs `only_mutate` to limit the run to the changed files, and does not override the repo's table.
 - The shard count (4) is fixed in the `plan` job, not an input. The per-mutant timeout is 120 s (`--mutant-timeout`); the budget is per shard, so the wall time of R3 is about the budget, not the budget times the shards.
 - R3 runs cargo-mutants in a worktree at the head, in the crate dir (`project-dir`), on `base...head` changes only (`--in-diff`; the diff is made relative to the crate dir, and result paths are mapped back to the repo root). A checkout that does not match head is not mutated.
 - The red commit is checked out as a git worktree; the caller's checkout is not moved.

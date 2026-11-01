@@ -1,0 +1,7 @@
+# calc.core.x_is_positive__mutmut_2: not checked
+--- src/calc/core.py
++++ src/calc/core.py
+@@ -1,2 +1,2 @@
+ def is_positive(n):
+-    return n > 0
++    return n > 1
