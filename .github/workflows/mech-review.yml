@@ -9,7 +9,7 @@ on:
   workflow_call:
     inputs:
       stack:
-        description: "language adapter: rust (cargo test, cargo-mutants) or python (pytest, mutmut 3.8.1 in a venv)"
+        description: "language adapter: rust (cargo test, cargo-mutants), python (pytest, mutmut 3.8.1 in a venv) or ts (vitest or jest from package.json, Stryker 10.0.0; node 22)"
         type: string
         default: rust
       test-paths:
@@ -145,6 +145,32 @@ jobs:
             "$RUNNER_TEMP/py-venv/bin/python" -m pip install --quiet -r "$f"
           done
           echo "$RUNNER_TEMP/py-venv/bin" >> "$GITHUB_PATH"
+      - name: TypeScript toolchain
+        if: inputs.stack == 'ts'
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: "22"
+      - name: TypeScript dependencies
+        # lockfile-aware: npm ci for package-lock.json, the repo's own pnpm or yarn (pinned) for theirs. The install runs
+        # the dependencies' install scripts, like the test code does: the job's token is read-only. No lockfile is a stop.
+        if: inputs.stack == 'ts'
+        env:
+          PROJECT_DIR: ${{ inputs.project-dir }}
+        run: |
+          set -eu
+          # project-dir stays under the repo root; a value that escapes it is a hard stop, not a silent path
+          case "$PROJECT_DIR" in /*|..|../*|*/..|*/../*) echo "::error::project-dir $PROJECT_DIR: want a dir under the repo root"; exit 2 ;; esac
+          cd "$GITHUB_WORKSPACE/caller/$PROJECT_DIR"
+          if [ -f package-lock.json ]; then
+            npm ci --no-audit --no-fund
+          elif [ -f pnpm-lock.yaml ]; then
+            npx --yes pnpm@10.34.6 install --frozen-lockfile
+          elif [ -f yarn.lock ]; then
+            npx --yes yarn@1.22.22 install --frozen-lockfile
+          else
+            echo "::error::no lockfile (package-lock.json, pnpm-lock.yaml or yarn.lock) in $PROJECT_DIR: the install must be reproducible"
+            exit 2
+          fi
       - name: extra apt packages
         if: inputs.extra-apt-packages != ''
         env:
@@ -293,6 +319,32 @@ jobs:
             "$RUNNER_TEMP/py-venv/bin/python" -m pip install --quiet -r "$f"
           done
           echo "$RUNNER_TEMP/py-venv/bin" >> "$GITHUB_PATH"
+      - name: TypeScript toolchain
+        if: inputs.stack == 'ts'
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: "22"
+      - name: TypeScript dependencies
+        # lockfile-aware: npm ci for package-lock.json, the repo's own pnpm or yarn (pinned) for theirs. The install runs
+        # the dependencies' install scripts, like the test code does: the job's token is read-only. No lockfile is a stop.
+        if: inputs.stack == 'ts'
+        env:
+          PROJECT_DIR: ${{ inputs.project-dir }}
+        run: |
+          set -eu
+          # project-dir stays under the repo root; a value that escapes it is a hard stop, not a silent path
+          case "$PROJECT_DIR" in /*|..|../*|*/..|*/../*) echo "::error::project-dir $PROJECT_DIR: want a dir under the repo root"; exit 2 ;; esac
+          cd "$GITHUB_WORKSPACE/caller/$PROJECT_DIR"
+          if [ -f package-lock.json ]; then
+            npm ci --no-audit --no-fund
+          elif [ -f pnpm-lock.yaml ]; then
+            npx --yes pnpm@10.34.6 install --frozen-lockfile
+          elif [ -f yarn.lock ]; then
+            npx --yes yarn@1.22.22 install --frozen-lockfile
+          else
+            echo "::error::no lockfile (package-lock.json, pnpm-lock.yaml or yarn.lock) in $PROJECT_DIR: the install must be reproducible"
+            exit 2
+          fi
       - name: extra apt packages
         if: inputs.extra-apt-packages != ''
         env:
@@ -308,6 +360,14 @@ jobs:
           SETUP_COMMAND: ${{ inputs.setup-command }}
         shell: bash
         run: bash -c "$SETUP_COMMAND"
+      - name: Stryker (pinned)
+        # isolated from the repo's node_modules: its own prefix in the runner temp dir. A failed install is not a stop:
+        # the engine reports n/a (env) when the binary is missing. The test runner plugin is loaded from the project.
+        if: inputs.stack == 'ts'
+        continue-on-error: true
+        run: |
+          set -u
+          npm install --prefix "$RUNNER_TEMP/stryker" --no-audit --no-fund --legacy-peer-deps "@stryker-mutator/core@10.0.0" "@stryker-mutator/jest-runner@10.0.0"
       - name: install cargo-mutants (pinned)
         # a failed install is not a stop: the engine reports n/a (env) when the tool is missing
         if: inputs.stack == 'rust'
@@ -326,10 +386,12 @@ jobs:
           SHARD: ${{ matrix.shard }}
           SHARD_COUNT: ${{ needs.plan.outputs.count }}
           PROJECT_DIR: ${{ inputs.project-dir }}
+          STRYKER_BIN: ${{ runner.temp }}/stryker/node_modules/.bin/stryker
         run: |
           set -uo pipefail
           args=(--repo "$GITHUB_WORKSPACE/caller" --base "$BASE_SHA" --head "$HEAD_SHA" --stack "$STACK"
                 --shard "$SHARD/$SHARD_COUNT" --mutation-budget "$MUTATION_BUDGET" --project-dir "$PROJECT_DIR")
+          if [ "$STACK" = "ts" ]; then args+=(--mutants-cmd "$STRYKER_BIN"); fi
           while IFS= read -r g; do
             if [ -n "$g" ]; then args+=(--test-paths "$g"); fi
           done <<< "$TEST_PATHS"

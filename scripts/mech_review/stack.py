@@ -1,4 +1,4 @@
-"""Stack adapters: one interface per language. Rust and Python (stdlib ast, tokenize); ts slots in as another subclass.
+"""Stack adapters: one interface per language. Rust, Python (stdlib ast, tokenize) and TypeScript/JavaScript (lexical masking, stdlib only).
 
 Adapter interface:
   classify(path, test_globs) -> "test" | "prod" | None (None: not a source file of this stack)
@@ -10,6 +10,9 @@ Adapter interface:
       text: the whole assert call, whitespace-normalized (for messages)
   test_bodies(text) -> {name: (line, body)}   body: whitespace-normalized source of a #[test] fn item (R1/R4 compare)
   default_test_cmd: the toolchain command a runner starts from (rust: cargo test)
+  test_cmd_in(crate) -> the test command for a checkout (ts: vitest or jest from package.json); default: default_test_cmd
+  worktree_setup(repo, wt, project_dir): per-worktree toolchain setup (ts links the caller's node_modules); default no-op
+  ignored_text(name) -> R2 problem for a test marked ignored (ts: skipped)
   test_argv(cmd, path, name) -> argv that runs one named test (path: the file the test is in)
   outcome(rc, output) -> verdict of one run:
       pass | fail | build | none | error | timeout | env (rc None: executable missing, toolchain absent)
@@ -18,7 +21,10 @@ Adapter interface:
   parse_error(text) -> None | (line, message): the file does not parse; the checks cannot read it
 """
 import ast
+import functools
 import io
+import json
+import os
 import re
 import shlex
 import tokenize
@@ -191,11 +197,22 @@ class Adapter:
     def outcome(self, rc, out):
         raise NotImplementedError
 
+    def test_cmd_in(self, crate):
+        """the test command for a checkout whose crate dir is `crate` (absolute): --test-cmd overrides it."""
+        return self.default_test_cmd
+
+    def worktree_setup(self, repo, wt, project_dir):
+        """called once a worktree of the repo exists: whatever the toolchain needs beside the checkout (no-op by default)."""
+
     def parse_error(self, text):
         return None
 
     def suppression_text(self, sup):
         return f"`{sup.lint_text}` added without a reason", "fix the lint, or give the suppression a reason"
+
+    def ignored_text(self, name):
+        """R2 problem for a test marked ignored (skipped at run time)."""
+        return f"test `{name}` marked #[ignore]"
 
 
 def _innermost(spans, pos):
@@ -558,4 +575,465 @@ class PythonAdapter(Adapter):
         return "error"
 
 
-ADAPTERS = {"python": PythonAdapter, "rust": RustAdapter}
+# ---- TypeScript / JavaScript: lexical masking (no parser; stdlib only) ----
+JS_EXT = (".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs")
+JS_PAIR = {"(": ")", "[": "]", "{": "}"}
+JS_REGEX_WORDS = {"return", "typeof", "case", "do", "else", "in", "of", "new", "delete", "void", "throw", "yield",
+                  "await", "instanceof"}
+JS_CALL = re.compile(r"(?<![\w$.])(describe|it|test|xit|xdescribe|xtest|fit|fdescribe|ftest)((?:\.\w+)*)\s*\(")
+JS_FN = re.compile(r"(?<![\w$.])function\s*\*?\s*([A-Za-z_$][\w$]*)\s*\(")
+JS_ARROW = re.compile(r"(?<![\w$.])(?:export\s+)?(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*(?::[^=\n]+)?=\s*(async\s+)?")
+JS_EXPECT = re.compile(r"(?<![\w$.])expect\s*\(")
+JS_MEMBER = re.compile(r"\s*\.\s*(\w+)")
+JS_CALLED = re.compile(r"(?<![\w$.])([A-Za-z_$][\w$]*)\s*\(")
+JS_EQ = {"toBe", "toEqual", "toStrictEqual"}
+JS_ESLINT = re.compile(r"^\s*(eslint-disable(?:-next-line|-line)?)(?![\w-])(.*)", re.S)
+JS_TS_DIRECTIVE = re.compile(r"^\s*(@ts-(?:ignore|expect-error|nocheck))(?![\w-])(.*)", re.S)
+JS_PLACEHOLDER = re.compile(r"%[sdifjoOp#%]|\$\w+")
+JsCall = namedtuple("JsCall", "kind name start end skip only args")
+
+
+def js_scan(text):
+    """(masked, comments, errors). masked: same length and newlines, comments and literal contents blanked (strings,
+    template literals, regex literals). comments: [(start, end, body)]. errors: [(pos, message)] for an unterminated
+    block comment or template literal. A string that runs to a newline is not an error (JSX text has apostrophes);
+    a regex literal is recognised only where an operand cannot be a division."""
+    out = list(text)
+    n = len(text)
+    comments, errors = [], []
+
+    def blank(a, b):
+        for k in range(a, b):
+            if out[k] != "\n":
+                out[k] = " "
+
+    prev, word = "", ""  # last significant code char; last identifier when prev is one
+    i = 0
+    while i < n:
+        c = text[i]
+        if c.isspace():
+            i += 1
+            continue
+        if c == "/" and text.startswith("//", i):
+            j = text.find("\n", i)
+            j = n if j < 0 else j
+            comments.append((i, j, text[i + 2:j]))
+            blank(i, j)
+            i = j
+            continue
+        if c == "/" and text.startswith("/*", i):
+            j = text.find("*/", i + 2)
+            if j < 0:
+                errors.append((i, "unterminated block comment"))
+                comments.append((i, n, text[i + 2:]))
+                blank(i, n)
+                i = n
+            else:
+                comments.append((i, j + 2, text[i + 2:j]))
+                blank(i, j + 2)
+                i = j + 2
+            continue
+        if c in "\"'":
+            j = i + 1
+            while j < n and text[j] not in (c, "\n"):
+                j += 2 if text[j] == "\\" else 1
+            j = min(j + 1, n) if j < n and text[j] == c else min(j, n)
+            blank(i, j)
+            i = j
+            prev, word = "x", ""
+            continue
+        if c == "`":
+            j, depth = i + 1, 0
+            while j < n:
+                ch = text[j]
+                if ch == "\\":
+                    j += 2
+                    continue
+                if depth == 0 and ch == "`":
+                    break
+                if depth == 0 and text.startswith("${", j):
+                    depth, j = 1, j + 2
+                    continue
+                if depth and ch == "}":
+                    depth = 0
+                j += 1
+            if j >= n:
+                errors.append((i, "unterminated template literal"))
+                j = n
+            else:
+                j += 1
+            blank(i, j)
+            i = j
+            prev, word = "x", ""
+            continue
+        if c == "/" and (prev == "" or prev in "(,=:[!&|?{};+-*%<>~^" or (word and word in JS_REGEX_WORDS)):
+            j, in_class = i + 1, False
+            while j < n and text[j] != "\n":
+                ch = text[j]
+                if ch == "\\":
+                    j += 2
+                    continue
+                if ch == "[":
+                    in_class = True
+                elif ch == "]":
+                    in_class = False
+                elif ch == "/" and not in_class:
+                    break
+                j += 1
+            if j < n and text[j] == "/":
+                j += 1
+                while j < n and (text[j].isalnum() or text[j] == "_"):
+                    j += 1
+                blank(i, j)
+                i = j
+                prev, word = "x", ""
+                continue
+        if _ident(c) or c == "$":
+            j = i
+            while j < n and (_ident(text[j]) or text[j] == "$"):
+                j += 1
+            word, prev = text[i:j], text[j - 1]
+            i = j
+            continue
+        prev, word = c, ""
+        i += 1
+    return "".join(out), comments, errors
+
+
+def _js_name(raw):
+    """a test name from its first argument: a string literal's value, else the argument's text."""
+    r = raw.strip()
+    if len(r) >= 2 and r[0] == r[-1] and r[0] in "'\"`":
+        return re.sub(r"\\(.)", r"\1", r[1:-1])
+    return " ".join(r.split())
+
+
+def _close_then(m, i):
+    """index after the close of the bracket group at m[i] (masked)."""
+    return close_of(m, i) + 1
+
+
+def _body_after(m, j):
+    """(start, end) of a function body starting at the first non-space index j: a `{ ... }` block, or an arrow
+    expression that runs to `;` or a newline at depth 0."""
+    while j < len(m) and m[j].isspace():
+        j += 1
+    if j < len(m) and m[j] == "{":
+        return j, close_of(m, j) + 1
+    depth, k = 0, j
+    while k < len(m):
+        ch = m[k]
+        if ch in OPEN:
+            depth += 1
+        elif ch in CLOSE:
+            if depth == 0:
+                break
+            depth -= 1
+        elif depth == 0 and (ch == ";" or ch == "\n"):
+            break
+        k += 1
+    return j, k
+
+
+def _functions(m):
+    """[(name, start, end)] of named function declarations, `const f = ...` functions and arrows in masked text m."""
+    out = []
+    for f in JS_FN.finditer(m):
+        p = m.find("(", f.end() - 1)
+        if p < 0:
+            continue
+        b = m.find("{", _close_then(m, p))
+        if b >= 0:
+            out.append((f.group(1), f.start(), close_of(m, b) + 1))
+    for f in JS_ARROW.finditer(m):
+        j = f.end()
+        if j < len(m) and m[j] == "(":
+            k = _close_then(m, j)
+            while k < len(m) and m[k].isspace():
+                k += 1
+            if not m.startswith("=>", k):
+                continue
+            s, e = _body_after(m, k + 2)
+        elif m.startswith("function", j):
+            p = m.find("(", j)
+            if p < 0:
+                continue
+            b = m.find("{", _close_then(m, p))
+            if b < 0:
+                continue
+            s, e = b, close_of(m, b) + 1
+        else:
+            k = re.match(r"[A-Za-z_$][\w$]*\s*=>", m[j:])
+            if not k:
+                continue
+            s, e = _body_after(m, j + k.end())
+        out.append((f.group(1), f.start(), e))
+    return out
+
+
+def _calls(text, m):
+    """[JsCall] for describe/it/test and their modifiers, in source order. A call with no function argument is a
+    todo (skip). `.each(table)(name, fn)` is one call whose span is the second call."""
+    out = []
+    for c in JS_CALL.finditer(m):
+        ident, mods = c.group(1), [x for x in c.group(2).split(".") if x]
+        prefix = m[max(0, c.start() - 12):c.start()]
+        if re.search(r"\bfunction\s*\*?\s*$", prefix):
+            continue
+        open_ = c.end() - 1
+        if "each" in mods:
+            mm = re.compile(r"\s*\(").match(m, _close_then(m, open_))
+            if not mm:
+                continue
+            open_ = mm.end() - 1
+        args = args_of(text, m, open_)
+        is_describe = "describe" in ident
+        skip = ident in ("xit", "xdescribe", "xtest") or "skip" in mods or "todo" in mods or (not is_describe and len(args) < 2)
+        only = ident in ("fit", "fdescribe", "ftest") or "only" in mods
+        name = _js_name(args[0]) if args else ""
+        out.append(JsCall("describe" if is_describe else "test", name, c.start(), close_of(m, open_) + 1, skip, only, args))
+    return out
+
+
+def _tests_with_scope(calls):
+    """[(qualified name, JsCall, markers)]: a test's name joined with its enclosing describes by ' > '."""
+    describes = [c for c in calls if c.kind == "describe"]
+    out = []
+    for t in (c for c in calls if c.kind == "test"):
+        encl = sorted((d for d in describes if d.start < t.start and t.end <= d.end), key=lambda d: d.start)
+        name = " > ".join([d.name for d in encl] + [t.name])
+        markers = []
+        if t.skip or any(d.skip for d in encl):
+            markers.append("ignore")
+        if t.only or any(d.only for d in encl):
+            markers.append("only")
+        out.append((name, t, markers))
+    return out
+
+
+@functools.lru_cache(maxsize=64)
+def _ts_parse(text):
+    """Everything the TS adapter reads from one file, parsed once: masked text, calls, tests, functions, comments."""
+    m, comments, errors = js_scan(text)
+    calls = _calls(text, m)
+    tests = _tests_with_scope(calls)
+    fns = _functions(m)
+    return m, comments, errors, calls, tests, fns
+
+
+def _line(text, pos):
+    return text.count("\n", 0, pos) + 1
+
+
+TS_BUILD = re.compile(r"Transform failed|Failed to load url|Failed to resolve import|Cannot find module|Cannot find package"
+                      r"|Test suite failed to run|SyntaxError|\bTS\d{4}\b|Failed Suites")
+TS_TESTS = re.compile(r"^\s*Tests\b:?(.*)$", re.M)
+TS_RESULT = re.compile(r"(\d+) (passed|failed)\b")
+TS_RE_SPECIAL = re.compile(r"([\\^$.|?*+()\[\]{}/])")
+
+
+def _ts_counts(out):
+    """(passed, failed) from the last `Tests` summary line of a vitest or jest run, or None when there is none."""
+    lines = TS_TESTS.findall(out or "")
+    if not lines:
+        return None
+    got = {kind: int(n) for n, kind in TS_RESULT.findall(lines[-1])}
+    return got.get("passed", 0), got.get("failed", 0)
+
+
+def _ts_pattern(seg):
+    """a name segment as a regex: literal text escaped; `%s`-style and `$var` placeholders match any text."""
+    return ".*".join(TS_RE_SPECIAL.sub(r"\\\1", piece) for piece in JS_PLACEHOLDER.split(seg))
+
+
+def ts_runner(crate):
+    """'vitest' or 'jest' from the crate's package.json (vitest wins when both are listed; vitest when neither)."""
+    try:
+        with open(os.path.join(crate, "package.json"), encoding="utf-8") as f:
+            pkg = json.load(f)
+    except (OSError, ValueError):
+        return "vitest"
+    deps = {}
+    for key in ("dependencies", "devDependencies"):
+        if isinstance(pkg, dict) and isinstance(pkg.get(key), dict):
+            deps.update(pkg[key])
+    return "jest" if "jest" in deps and "vitest" not in deps else "vitest"
+
+
+class TsAdapter(Adapter):
+    """TypeScript and JavaScript (.ts .tsx .js .jsx .mjs .cjs). Test fns: `it`/`test` (and `.each`, `.skip`, `.only`,
+    `.todo`, `xit`, `fit`, `xtest`, `ftest`) inside `describe` (qualified `Describe > test name`, vitest's separator).
+    Assertions: `expect(x).matcher(y)` chains. Lexical only: no type checking, no parser. A file that cannot be read
+    is `parse_error`; a file that reads but does not compile shows up as a build failure in the runner."""
+    name = "ts"
+    default_test_cmd = "node_modules/.bin/vitest run"
+    manifests = ("package.json",)
+
+    def classify(self, path, test_globs):
+        if not path.endswith(JS_EXT):
+            return None
+        return "test" if any_glob(path, test_globs) else "prod"
+
+    def parse_error(self, text):
+        m, _, errors, _, _, _ = _ts_parse(text)
+        if errors:
+            pos, msg = errors[0]
+            return (_line(text, pos), msg)
+        stack = []
+        for i, ch in enumerate(m):
+            if ch in JS_PAIR:
+                stack.append((ch, i))
+            elif ch in JS_PAIR.values():
+                if not stack or JS_PAIR[stack[-1][0]] != ch:
+                    return (_line(text, i), f"unexpected `{ch}`")
+                stack.pop()
+        if stack:
+            ch, i = stack[-1]
+            return (_line(text, i), f"`{ch}` is never closed")
+        return None
+
+    def test_fns(self, text):
+        _, _, _, _, tests, _ = _ts_parse(text)
+        return [TestFn(name, _line(text, t.start), markers) for name, t, markers in tests]
+
+    def _owners(self, text):
+        """[(qname, start, end)] of tests and named functions: the innermost one owns an assertion."""
+        _, _, _, _, tests, fns = _ts_parse(text)
+        return [(n, t.start, t.end) for n, t, _ in tests] + list(fns)
+
+    def assertions(self, text):
+        m, _, _, _, tests, fns = _ts_parse(text)
+        owners = self._owners(text)
+        spans = [(n, t.start, t.end) for n, t, _ in tests]
+        out = []
+        for e in JS_EXPECT.finditer(m):
+            pos = e.start()
+            open_ = e.end() - 1
+            close = close_of(m, open_)
+            args = args_of(text, m, open_)
+            left = norm(args[0]) if args else None
+            pos_after, negated, matcher, margs = close + 1, False, None, []
+            while True:
+                mm = JS_MEMBER.match(m, pos_after)
+                if not mm:
+                    break
+                pos_after = mm.end()
+                if mm.group(1) == "not":
+                    negated = True
+                elif mm.group(1) in ("resolves", "rejects"):
+                    continue
+                else:
+                    matcher = mm.group(1)
+                    break
+            end = pos_after
+            if matcher:
+                mp = re.compile(r"\s*\(").match(m, pos_after)
+                if mp:
+                    margs = args_of(text, m, mp.end() - 1)
+                    end = close_of(m, mp.end() - 1) + 1
+            if matcher in JS_EQ and margs:
+                kind = "ne" if negated else "eq"
+                right = norm(margs[0])
+            else:
+                kind, left, right = "other", None, None
+            test = next((n for n, s, t_end in reversed(spans) if s <= pos < t_end), None)
+            scope = test is not None
+            owner_hits = [o for o in owners if o[1] <= pos < o[2]]
+            owner = max(owner_hits, key=lambda o: o[1])[0] if owner_hits else None
+            call = " ".join(text[pos:end].split())
+            out.append(Assertion(_line(text, pos), test, scope, kind, left, right, call, owner))
+        return out
+
+    def test_bodies(self, text):
+        _, _, _, _, tests, _ = _ts_parse(text)
+        return {name: (_line(text, t.start), norm(text[t.start:t.end])) for name, t, _ in tests if not t.skip or t.args[1:]}
+
+    def calls(self, text):
+        m, _, _, _, tests, fns = _ts_parse(text)
+        out = {}
+        for name, t, _ in tests:
+            out[name] = set(JS_CALLED.findall(m[t.start:t.end]))
+        for name, s, e in fns:
+            out.setdefault(name, set()).update(JS_CALLED.findall(m[s:e]))
+        return out
+
+    def suppressions(self, text):
+        """eslint-disable (next-line, line, block) and @ts-ignore / @ts-expect-error / @ts-nocheck, in comments only.
+        reason: eslint `-- reason` after the rules; ts: text after the directive."""
+        m, comments, _, _, _, _ = _ts_parse(text)
+        total = text.count("\n") + 1
+        out = []
+        for start, end, body in comments:
+            first, last = _line(text, start), _line(text, end)
+            e = JS_ESLINT.match(body)
+            if e:
+                kind, rest = e.group(1), e.group(2)
+                rules, _, reason = rest.partition("--")
+                lints = " ".join([kind] + rules.split())
+                region_end = {"eslint-disable-next-line": last + 1, "eslint-disable-line": last}.get(kind, total)
+                out.append(Suppression(first, region_end, kind, lints, lints, bool(reason.strip())))
+                continue
+            t = JS_TS_DIRECTIVE.match(body)
+            if t:
+                kind, rest = t.group(1), t.group(2)
+                reason = rest.strip().lstrip(":").strip().lstrip("-–— ").strip()
+                region_end = total if kind == "@ts-nocheck" else last + 1
+                out.append(Suppression(first, region_end, kind, kind, kind, bool(reason)))
+        return out
+
+    def suppression_text(self, sup):
+        if sup.kind.startswith("eslint"):
+            return (f"`{sup.lint_text}` added without a reason",
+                    f"fix the lint, or give the suppression a reason after the rules: `// {sup.lint_text} -- why`")
+        return (f"`{sup.kind}` added without a reason",
+                f"fix the type error, or give the directive a reason after it: `// {sup.kind}: why`")
+
+    def ignored_text(self, name):
+        return f"test `{name}` marked skipped (skip, todo or x-prefixed)"
+
+    def test_cmd_in(self, crate):
+        """vitest when package.json lists vitest (or lists neither), jest when it lists only jest. The runner runs from
+        the crate's own node_modules/.bin."""
+        return "node_modules/.bin/jest" if ts_runner(crate) == "jest" else "node_modules/.bin/vitest run"
+
+    def worktree_setup(self, repo, wt, project_dir):
+        """a worktree has no node_modules (ignored by git): link the caller checkout's node_modules into the crate dir,
+        so the runner resolves from the repo's own install. Never linked over an existing dir; the link is removed with
+        the worktree, the caller's directory is not touched."""
+        src = os.path.join(repo, project_dir, "node_modules")
+        dst = os.path.join(wt, project_dir, "node_modules")
+        if os.path.isdir(src) and os.path.isdir(os.path.dirname(dst)) and not os.path.lexists(dst):
+            os.symlink(os.path.abspath(src), dst)
+
+    def test_argv(self, cmd, path, name):
+        """one named test: the file, then `-t <anchored name>` (both runners match -t as a regex on the full name).
+        vitest joins describe and test names with ` > `, jest with a space; `it.each` placeholders match any value."""
+        argv = shlex.split(cmd)
+        jest = any("jest" in a for a in argv)
+        if not jest and "run" not in argv:
+            at = next((i for i, a in enumerate(argv) if "vitest" in a), len(argv) - 1)
+            argv = argv[:at + 1] + ["run"] + argv[at + 1:]
+        segments = name.split(" > ")
+        full = (" " if jest else " > ").join(_ts_pattern(seg) for seg in segments)
+        return argv + [path, "-t", f"^{full}$"]
+
+    def outcome(self, rc, out):
+        """verdict of one run of vitest or jest. Results come from the Tests summary line; a file that did not load
+        (transform, missing import, syntax) is build; a filter that ran nothing is none, even at exit 0."""
+        if rc is None:
+            return "env"
+        if rc == "timeout":
+            return "timeout"
+        counts = _ts_counts(out)
+        if counts is not None and counts[1]:
+            return "fail"
+        if counts is not None and counts[0]:
+            return "pass" if rc == 0 else "fail"
+        if TS_BUILD.search(out):
+            return "build"
+        if counts is None:
+            return "error"
+        return "none" if rc == 0 else "error"
+
+
+ADAPTERS = {"python": PythonAdapter, "rust": RustAdapter, "ts": TsAdapter}

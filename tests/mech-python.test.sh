@@ -739,7 +739,7 @@ eq "$rc" 1 "python protected path change exit 1"
 eq "$(jq -r '.entries[0].class' <<<"$out")" needs-human "python protected class needs-human"
 
 # ---- CLI: python is a stack; an unknown one is still a usage error ----
-has "$(python3 -I "$MR" --help)" "{python,rust}" "help names the python stack"
+has "$(python3 -I "$MR" --help)" "{python,rust,ts}" "help names the python stack"
 out=$(python3 -I "$MR" r2 --repo "$R" --base "$B" --head "$H" --stack cobol 2>&1); rc=$?
 eq "$rc" 2 "unknown stack still exit 2"
 has "$out" "python" "unknown stack error lists python"

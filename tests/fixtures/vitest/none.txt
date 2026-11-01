@@ -1,0 +1,9 @@
+
+ RUN  v5.0.5 /work/cap-v
+
+
+ Test Files  1 skipped (1)
+      Tests  2 skipped (2)
+   Start at  15:33:17
+   Duration  99ms (import 49%, transform 34%, worker 16%, environment 1%)
+

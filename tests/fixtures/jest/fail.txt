@@ -1,0 +1,23 @@
+FAIL tests/calc.test.js
+  ● Calc › adds
+
+    expect(received).toBe(expected) // Object.is equality
+
+    Expected: 4
+    Received: 3
+
+      1 | const { add } = require("../src/calc");
+      2 | describe("Calc", () => {
+    > 3 |   test("adds", () => { expect(add(1, 2)).toBe(4); });
+        |                                          ^
+      4 |   test("adds zero", () => { expect(add(0, 2)).toBe(2); });
+      5 | });
+      6 |
+
+      at Object.<anonymous> (tests/calc.test.js:3:42)
+
+Test Suites: 1 failed, 1 total
+Tests:       1 failed, 1 skipped, 2 total
+Snapshots:   0 total
+Time:        0.237 s, estimated 1 s
+Ran all test suites matching tests/calc.test.js with tests matching "^Calc adds$".

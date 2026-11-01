@@ -1,0 +1,24 @@
+
+ RUN  v5.0.5 /work/cap-v
+
+ ❯ tests/imp.test.ts (0 test)
+
+⎯⎯⎯⎯⎯⎯ Failed Suites 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/imp.test.ts [ tests/imp.test.ts ]
+Error: Cannot find module '../src/missing' imported from /work/cap-v/tests/imp.test.ts
+ ❯ tests/imp.test.ts:2:1
+      1| import { it, expect } from "vitest";
+      2| import { nope } from "../src/missing";
+       | ^
+      3| it("adds", () => { expect(nope).toBe(1); });
+      4|
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  no tests
+   Start at  15:33:18
+   Duration  120ms (worker 95%, environment 5%)
+

@@ -1,0 +1,9 @@
+15:37:32 (94355) INFO ConfigReader No config file specified. Running with command line arguments.
+15:37:32 (94355) INFO ConfigReader Use `stryker init` command to generate your config file.
+15:37:32 (94355) INFO ProjectReader Found 1 of 3 file(s) to be mutated.
+15:37:32 (94355) INFO Instrumenter Instrumented 1 source file(s) with 0 mutant(s)
+15:37:32 (94355) INFO ConcurrencyTokenProvider Creating 15 test runner process(es).
+15:37:33 (94355) INFO DryRunExecutor Starting initial test run (vitest test runner with "perTest" coverage analysis). This may take a while.
+15:37:33 (94355) INFO DryRunExecutor Initial test run succeeded. Ran 1 tests in 0 seconds (net 1.58892400000002 ms, overhead 142.41107599999998 ms).
+15:37:33 (94355) INFO JsonReporter Your report can be found at: file:///work/cap-s/reports/mutation/mutation.json
+15:37:33 (94355) INFO MutationTestExecutor Done in 1 second.

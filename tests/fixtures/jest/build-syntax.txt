@@ -1,0 +1,93 @@
+FAIL tests/syn.test.js
+  ● Test suite failed to run
+
+    SyntaxError: /work/cap-j/tests/syn.test.js: Unexpected token, expected "," (1:30)
+
+    > 1 | test("adds", () => { expect(1 ;
+        |                               ^
+      2 | });
+      3 |
+
+      at constructor (file:/work/ts-tools/node_modules/@babel/parser/lib/index.js:324:19)
+      at Parser.raise (file:/work/ts-tools/node_modules/@babel/parser/lib/index.js:6433:19)
+      at Parser.unexpected (file:/work/ts-tools/node_modules/@babel/parser/lib/index.js:6453:16)
+      at Parser.expect (file:/work/ts-tools/node_modules/@babel/parser/lib/index.js:6796:12)
+      at Parser.parseCallExpressionArguments (file:/work/ts-tools/node_modules/@babel/parser/lib/index.js:8081:14)
+      at Parser.parseCoverCallAndAsyncArrowHead (file:/work/ts-tools/node_modules/@babel/parser/lib/index.js:8030:29)
+      at Parser.parseSubscript (file:/work/ts-tools/node_modules/@babel/parser/lib/index.js:7960:19)
+      at Parser.parseSubscripts (file:/work/ts-tools/node_modules/@babel/parser/lib/index.js:7934:19)
+      at Parser.parseExprSubscripts (file:/work/ts-tools/node_modules/@babel/parser/lib/index.js:7925:17)
+      at Parser.parseUpdate (file:/work/ts-tools/node_modules/@babel/parser/lib/index.js:7892:21)
+      at Parser.parseMaybeUnary (file:/work/ts-tools/node_modules/@babel/parser/lib/index.js:7872:23)
+      at Parser.parseMaybeUnaryOrPrivate (file:/work/ts-tools/node_modules/@babel/parser/lib/index.js:7737:61)
+      at Parser.parseExprOps (file:/work/ts-tools/node_modules/@babel/parser/lib/index.js:7741:23)
+      at Parser.parseMaybeConditional (file:/work/ts-tools/node_modules/@babel/parser/lib/index.js:7719:23)
+      at Parser.parseMaybeAssign (file:/work/ts-tools/node_modules/@babel/parser/lib/index.js:7668:21)
+      at Parser.parseExpressionBase (file:/work/ts-tools/node_modules/@babel/parser/lib/index.js:7621:23)
+      at file:/work/ts-tools/node_modules/@babel/parser/lib/index.js:7617:39
+      at Parser.allowInAnd (file:/work/ts-tools/node_modules/@babel/parser/lib/index.js:9154:16)
+      at Parser.parseExpression (file:/work/ts-tools/node_modules/@babel/parser/lib/index.js:7617:17)
+      at Parser.parseStatementContent (file:/work/ts-tools/node_modules/@babel/parser/lib/index.js:9568:23)
+      at Parser.parseStatementLike (file:/work/ts-tools/node_modules/@babel/parser/lib/index.js:9434:17)
+      at Parser.parseStatementListItem (file:/work/ts-tools/node_modules/@babel/parser/lib/index.js:9414:17)
+      at Parser.parseBlockOrModuleBlockBody (file:/work/ts-tools/node_modules/@babel/parser/lib/index.js:9987:61)
+      at Parser.parseBlockBody (file:/work/ts-tools/node_modules/@babel/parser/lib/index.js:9980:10)
+      at Parser.parseBlock (file:/work/ts-tools/node_modules/@babel/parser/lib/index.js:9968:10)
+      at Parser.parseFunctionBody (file:/work/ts-tools/node_modules/@babel/parser/lib/index.js:8897:24)
+      at Parser.parseArrowExpression (file:/work/ts-tools/node_modules/@babel/parser/lib/index.js:8870:10)
+      at Parser.parseParenAndDistinguishExpression (file:/work/ts-tools/node_modules/@babel/parser/lib/index.js:8509:12)
+      at Parser.parseExprAtom (file:/work/ts-tools/node_modules/@babel/parser/lib/index.js:8172:23)
+      at Parser.parseExprSubscripts (file:/work/ts-tools/node_modules/@babel/parser/lib/index.js:7921:23)
+      at Parser.parseUpdate (file:/work/ts-tools/node_modules/@babel/parser/lib/index.js:7892:21)
+      at Parser.parseMaybeUnary (file:/work/ts-tools/node_modules/@babel/parser/lib/index.js:7872:23)
+      at Parser.parseMaybeUnaryOrPrivate (file:/work/ts-tools/node_modules/@babel/parser/lib/index.js:7737:61)
+      at Parser.parseExprOps (file:/work/ts-tools/node_modules/@babel/parser/lib/index.js:7741:23)
+      at Parser.parseMaybeConditional (file:/work/ts-tools/node_modules/@babel/parser/lib/index.js:7719:23)
+      at Parser.parseMaybeAssign (file:/work/ts-tools/node_modules/@babel/parser/lib/index.js:7668:21)
+      at file:/work/ts-tools/node_modules/@babel/parser/lib/index.js:7637:39
+      at Parser.allowInAnd (file:/work/ts-tools/node_modules/@babel/parser/lib/index.js:9159:12)
+      at Parser.parseMaybeAssignAllowIn (file:/work/ts-tools/node_modules/@babel/parser/lib/index.js:7637:17)
+      at Parser.parseMaybeAssignAllowInOrVoidPattern (file:/work/ts-tools/node_modules/@babel/parser/lib/index.js:9236:17)
+      at Parser.parseExprListItem (file:/work/ts-tools/node_modules/@babel/parser/lib/index.js:8972:18)
+      at Parser.parseCallExpressionArguments (file:/work/ts-tools/node_modules/@babel/parser/lib/index.js:8090:22)
+      at Parser.parseCoverCallAndAsyncArrowHead (file:/work/ts-tools/node_modules/@babel/parser/lib/index.js:8030:29)
+      at Parser.parseSubscript (file:/work/ts-tools/node_modules/@babel/parser/lib/index.js:7960:19)
+      at Parser.parseSubscripts (file:/work/ts-tools/node_modules/@babel/parser/lib/index.js:7934:19)
+      at Parser.parseExprSubscripts (file:/work/ts-tools/node_modules/@babel/parser/lib/index.js:7925:17)
+      at Parser.parseUpdate (file:/work/ts-tools/node_modules/@babel/parser/lib/index.js:7892:21)
+      at Parser.parseMaybeUnary (file:/work/ts-tools/node_modules/@babel/parser/lib/index.js:7872:23)
+      at Parser.parseMaybeUnaryOrPrivate (file:/work/ts-tools/node_modules/@babel/parser/lib/index.js:7737:61)
+      at Parser.parseExprOps (file:/work/ts-tools/node_modules/@babel/parser/lib/index.js:7741:23)
+      at Parser.parseMaybeConditional (file:/work/ts-tools/node_modules/@babel/parser/lib/index.js:7719:23)
+      at Parser.parseMaybeAssign (file:/work/ts-tools/node_modules/@babel/parser/lib/index.js:7668:21)
+      at Parser.parseExpressionBase (file:/work/ts-tools/node_modules/@babel/parser/lib/index.js:7621:23)
+      at file:/work/ts-tools/node_modules/@babel/parser/lib/index.js:7617:39
+      at Parser.allowInAnd (file:/work/ts-tools/node_modules/@babel/parser/lib/index.js:9154:16)
+      at Parser.parseExpression (file:/work/ts-tools/node_modules/@babel/parser/lib/index.js:7617:17)
+      at Parser.parseStatementContent (file:/work/ts-tools/node_modules/@babel/parser/lib/index.js:9568:23)
+      at Parser.parseStatementLike (file:/work/ts-tools/node_modules/@babel/parser/lib/index.js:9434:17)
+      at Parser.parseModuleItem (file:/work/ts-tools/node_modules/@babel/parser/lib/index.js:9411:17)
+      at Parser.parseBlockOrModuleBlockBody (file:/work/ts-tools/node_modules/@babel/parser/lib/index.js:9987:36)
+      at Parser.parseBlockBody (file:/work/ts-tools/node_modules/@babel/parser/lib/index.js:9980:10)
+      at Parser.parseProgram (file:/work/ts-tools/node_modules/@babel/parser/lib/index.js:9273:10)
+      at Parser.parseTopLevel (file:/work/ts-tools/node_modules/@babel/parser/lib/index.js:9263:25)
+      at Parser.parse (file:/work/ts-tools/node_modules/@babel/parser/lib/index.js:14315:25)
+      at parse (file:/work/ts-tools/node_modules/@babel/parser/lib/index.js:14350:38)
+      at parser (file:/work/ts-tools/node_modules/@babel/core/lib/index-shared.js:2591:14)
+          at parser.next (<anonymous>)
+      at normalizeFile (file:/work/ts-tools/node_modules/@babel/core/lib/index-shared.js:2694:18)
+          at normalizeFile.next (<anonymous>)
+      at run (file:/work/ts-tools/node_modules/@babel/core/lib/index-shared.js:2791:23)
+          at run.next (<anonymous>)
+      at transform (file:/work/ts-tools/node_modules/@babel/core/lib/index-shared.js:2859:17)
+          at transform.next (<anonymous>)
+      at evaluateSync (../ts-tools/node_modules/gensync/index.js:251:28)
+      at sync (../ts-tools/node_modules/gensync/index.js:89:14)
+      at stopHiding - secret - don't use this - v1 (file:/work/ts-tools/node_modules/@babel/core/lib/errors/rewrite-stack-trace.js:37:12)
+      at transformSync (file:/work/ts-tools/node_modules/@babel/core/lib/index-shared.js:2878:52)
+
+Test Suites: 1 failed, 1 total
+Tests:       0 total
+Snapshots:   0 total
+Time:        0.216 s
+Ran all test suites matching tests/syn.test.js with tests matching "^adds$".

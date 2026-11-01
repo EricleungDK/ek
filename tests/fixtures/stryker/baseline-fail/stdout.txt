@@ -1,0 +1,24 @@
+15:37:34 (94523) INFO ConfigReader No config file specified. Running with command line arguments.
+15:37:34 (94523) INFO ConfigReader Use `stryker init` command to generate your config file.
+15:37:34 (94523) INFO ProjectReader Found 1 of 3 file(s) to be mutated.
+15:37:34 (94523) INFO Instrumenter Instrumented 1 source file(s) with 1 mutant(s)
+15:37:34 (94523) INFO ConcurrencyTokenProvider Creating 15 test runner process(es).
+15:37:35 (94523) INFO DryRunExecutor Starting initial test run (vitest test runner with "perTest" coverage analysis). This may take a while.
+15:37:35 (94523) ERROR DryRunExecutor One or more tests failed in the initial test run:
+	adds
+		expected +0 to be 1 // Object.is equality
+15:37:35 (94523) ERROR Stryker There were failed tests in the initial test run.
+file:///work/ts-tools/node_modules/@stryker-mutator/core/dist/src/process/3-dry-run-executor.js:65
+                    throw new ConfigError('There were failed tests in the initial test run.');
+                          ^
+
+ConfigError: There were failed tests in the initial test run.
+    at DryRunExecutor.validateResultCompleted (file:///work/ts-tools/node_modules/@stryker-mutator/core/dist/src/process/3-dry-run-executor.js:65:27)
+    at DryRunExecutor.executeDryRun (file:///work/ts-tools/node_modules/@stryker-mutator/core/dist/src/process/3-dry-run-executor.js:100:14)
+    at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+    at async WorkItem.execute (file:///work/ts-tools/node_modules/@stryker-mutator/core/dist/src/concurrent/pool.js:32:28)
+    at async file:///work/ts-tools/node_modules/@stryker-mutator/core/dist/src/concurrent/pool.js:69:13 {
+  innerError: undefined
+}
+
+Node.js v24.22.1

@@ -1,0 +1,34 @@
+
+ RUN  v5.0.5 /work/cap-v
+
+ ❯ tests/calc.test.ts (2 tests | 1 failed | 1 skipped) 6ms
+   ❯ Calc (2)
+     × adds 5ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/calc.test.ts > Calc > adds
+AssertionError: expected 3 to be 4 // Object.is equality
+
+- Expected
++ Received
+
+- 4
++ 3
+
+ ❯ tests/calc.test.ts:6:23
+      4| describe("Calc", () => {
+      5|   it("adds", () => {
+      6|     expect(add(1, 2)).toBe(4);
+       |                       ^
+      7|   });
+      8|   it("adds zero", () => {
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 1 skipped (2)
+   Start at  15:33:18
+   Duration  151ms (transform 48%, import 28%, tests 16%, worker 8%)
+
