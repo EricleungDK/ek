@@ -30,6 +30,7 @@ export MECH_FX="$FX"
 R="$PWD/repo"; mkdir -p "$R/src" "$R/tests"; git -C "$R" init -q -b main
 printf 'pub fn add(a: i32, b: i32) -> i32 { a + b }\n' > "$R/src/lib.rs"
 printf '#[test]\nfn adds() {\n    assert_eq!(add(1, 2), 3);\n}\n' > "$R/tests/a.rs"
+printf '[package]\nname = "x"\nversion = "0.1.0"\n' > "$R/Cargo.toml"
 git -C "$R" add -A; git -C "$R" commit -qm base; B=$(git -C "$R" rev-parse HEAD)
 printf 'pub fn add(a: i32, b: i32) -> i32 { a + b } // fixed\n' > "$R/src/lib.rs"
 git -C "$R" add -A; git -C "$R" commit -qm head; H=$(git -C "$R" rev-parse HEAD)

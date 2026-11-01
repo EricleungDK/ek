@@ -6,6 +6,7 @@ Vocabulary of verdicts: see stack.Adapter.outcome.
 """
 import contextlib
 import os
+import shlex
 import shutil
 import subprocess
 import tempfile
@@ -88,7 +89,28 @@ def run_named(runner, adapter, cmd, cwd, name):
     return adapter.outcome(rc, out), (lines[0][:200] if lines else "")
 
 
-def r1(repo, mb, head, adapter, test_globs, head_branch, agent_prefix, cmd, runner):
+def run_in(runner, adapter, cmd, wt, project_dir, name):
+    """run_named in the crate dir. A dir missing in this commit is an error verdict (the test cannot run), not a missing toolchain."""
+    cwd = os.path.join(wt, project_dir)
+    if not os.path.isdir(cwd):
+        return "error", f"project dir {project_dir} not in this commit"
+    return run_named(runner, adapter, cmd, cwd, name)
+
+
+def no_manifest_hint(adapter, wt, project_dir):
+    """rust: an existing crate dir with no Cargo.toml in it. Returns the hint suffix naming project-dir, or ''."""
+    cwd = os.path.join(wt, project_dir)
+    if getattr(adapter, "name", "") == "rust" and os.path.isdir(cwd) and not os.path.isfile(os.path.join(cwd, "Cargo.toml")):
+        return f"; no Cargo.toml in {project_dir}: set project-dir"
+    return ""
+
+
+def absent(cmd, what):
+    """n/a note for a toolchain that is not installed: names the tool and the input that installs it."""
+    return f"toolchain absent: `{shlex.split(cmd)[0]}` not found (env): install it, or set setup-command ({what})"
+
+
+def r1(repo, mb, head, adapter, test_globs, head_branch, agent_prefix, cmd, runner, project_dir="."):
     """R1 red-first. Returns (check, entries)."""
     if head_branch is None:
         return check("skipped", "no --head-branch: cannot tell an agent branch"), []
@@ -118,9 +140,9 @@ def r1(repo, mb, head, adapter, test_globs, head_branch, agent_prefix, cmd, runn
     entries, red_count, compile_red = [], 0, 0
     with worktree(repo, red) as wt:
         for path, name, line in tests:
-            verdict, first = run_named(runner, adapter, cmd, wt, name)
+            verdict, first = run_in(runner, adapter, cmd, wt, project_dir, name)
             if verdict == "env":
-                return check("n/a", "toolchain absent: cannot run tests at the red commit (env)"), []
+                return check("n/a", absent(cmd, "tests at the red commit")), []
             if verdict == "fail":
                 red_count += 1
             elif verdict == "build":
@@ -135,16 +157,17 @@ def r1(repo, mb, head, adapter, test_globs, head_branch, agent_prefix, cmd, runn
                                      "write the test so it fails for the ticket's reason before the fix",
                                      "no failing test(red) commit"))
             else:
+                extra = no_manifest_hint(adapter, wt, project_dir) if verdict == "error" else ""
                 entries.append(entry("R1", path, line, f"red-unproven:{name}", "agent-fixable", "fail",
                                      f"`{name}` cannot be proven red at the red commit ({verdict}: {first})",
-                                     hint, "no failing test(red) commit"))
+                                     hint + extra, "no failing test(red) commit"))
     note = f"{red_count} red test(s) fail at the red commit"
     if compile_red:
         note += f"; {compile_red} compile-red"
     return check("fail" if any(e["severity"] == "fail" for e in entries) else "pass", note), entries
 
 
-def r4(repo, mb, head, adapter, test_globs, cmd, runner):
+def r4(repo, mb, head, adapter, test_globs, cmd, runner, project_dir="."):
     """R4 determinism: each new or changed test runs TEST_RUNS times at head; any failing run is a fail. Returns (check, entries)."""
     tests = touched(repo, mb, head, adapter, test_globs)
     if not tests:
@@ -154,18 +177,19 @@ def r4(repo, mb, head, adapter, test_globs, cmd, runner):
         for path, name, line in tests:
             verdicts = []
             for _ in range(TEST_RUNS):
-                verdict, first = run_named(runner, adapter, cmd, wt, name)
+                verdict, first = run_in(runner, adapter, cmd, wt, project_dir, name)
                 if verdict == "env":
-                    return check("n/a", "toolchain absent: cannot run new or changed tests (env)"), []
+                    return check("n/a", absent(cmd, "new or changed tests")), []
                 if verdict == "build":
                     entries.append(entry("R4", path, line, f"build:{name}", "agent-fixable", "fail",
                                          f"does not build at head: `{name}` cannot run",
                                          "fix the build: new or changed tests must run", "a test that does not build"))
                     return check("fail", "does not build at head"), entries
                 if verdict == "error":
+                    extra = no_manifest_hint(adapter, wt, project_dir)
                     entries.append(entry("R4", path, line, f"cannot-run:{name}", "agent-fixable", "fail",
                                          f"test `{name}` cannot run at head: {first}",
-                                         "fix the test setup (manifest, flags); the toolchain did not reach a test result",
+                                         "fix the test setup (manifest, flags); the toolchain did not reach a test result" + extra,
                                          "a check that did not run"))
                     return check("fail", "a new or changed test cannot run at head"), entries
                 verdicts.append(verdict)

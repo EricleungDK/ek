@@ -16,6 +16,7 @@ Verdict (per shard):
 """
 import json
 import os
+import posixpath
 import re
 import shlex
 import shutil
@@ -155,13 +156,18 @@ def partial_entry(check):
     return finalize([e])[0]
 
 
-def verdict(mo, rc, text, adapter, test_globs, wall_s=None):
+def _repo_path(project_dir, path):
+    """cargo-mutants names files relative to the crate dir; the result names them relative to the repo root."""
+    return path if project_dir == "." else posixpath.join(project_dir, path)
+
+
+def verdict(mo, rc, text, adapter, test_globs, wall_s=None, project_dir="."):
     """R3 verdict of one run. mo: the mutants.out directory (cargo-mutants -o DIR writes DIR/mutants.out).
     rc: the exit code, "timeout" (budget killed the run), or None (tool not runnable). text: its output.
-    wall_s: the runner's clock for this run, if measured.
+    wall_s: the runner's clock for this run, if measured. project_dir: the crate dir under the repo root.
     Returns (check, entries): check is {status, note[, tested, total, timing]}, entries are finalized contract entries."""
     if rc is None:
-        return _check("n/a", f"cargo-mutants not runnable (env): {_first_line(text)}"), []
+        return _check("n/a", f"cargo-mutants not runnable (env): {_first_line(text)}; check the cargo-mutants install step"), []
     mutants = _load(os.path.join(mo, "mutants.json"))
     total = len(mutants) if isinstance(mutants, list) else None
     doc = _load(os.path.join(mo, "outcomes.json"))
@@ -170,9 +176,13 @@ def verdict(mo, rc, text, adapter, test_globs, wall_s=None):
     counts = {k: sum(1 for s, _, _ in rows if s == k) for k in ("MissedMutant", "CaughtMutant", "Timeout", "Unviable")}
     entries = []
     for summary, m, _ in rows:
-        if summary != "MissedMutant" or adapter.classify(m.get("file", ""), test_globs) != "prod":
+        raw = m.get("file", "")
+        file = _repo_path(project_dir, raw)
+        if summary != "MissedMutant" or adapter.classify(file, test_globs) != "prod":
             continue
-        name, file = m.get("name", ""), m.get("file", "")
+        name = m.get("name", "")
+        if name.startswith(raw + ":"):
+            name = file + name[len(raw):]
         desc = _desc(name)
         entries.append(entry("R3", file, m.get("span", {}).get("start", {}).get("line", 0), f"missed:{file}|{desc}",
                              "agent-fixable", "fail", f"MISSED mutant {name}",
@@ -194,19 +204,19 @@ def verdict(mo, rc, text, adapter, test_globs, wall_s=None):
         return done(_check("partial", f"{shown} tested: budget hit, no MISSED so far", tested, total), [])
     if rc == 4:
         return done(_check("fail", "baseline tests fail at head: mutants not run"), [
-            entry("R3", "", 0, "baseline", "agent-fixable", "fail", "baseline tests fail at head: mutants not run",
-                  "fix the failing tests first: mutation needs an unmutated tree that passes",
-                  "a mutation check that did not run")])
+            finalize([entry("R3", "", 0, "baseline", "agent-fixable", "fail", "baseline tests fail at head: mutants not run",
+                            "fix the failing tests first: mutation needs an unmutated tree that passes",
+                            "a mutation check that did not run")])[0]])
     if rc in (0, 2, 3):
         if doc is None:
             if rc == 0 and not total:
                 return done(_check("pass", "0 mutants in the diff", 0, 0), [])
-            return _check("n/a", f"cargo-mutants wrote no outcomes (env), exit {rc}"), []
+            return _check("n/a", f"cargo-mutants wrote no outcomes (env), exit {rc}; see the job log"), []
         status = "fail" if entries else "pass"
         note = (f"{tested}/{total if total is not None else tested} tested: {missed} missed, "
                 f"{counts['CaughtMutant']} caught, {counts['Timeout']} timeout, {counts['Unviable']} unviable")
         return done(_check(status, note, tested, total), entries)
-    return _check("n/a", f"cargo-mutants exit {rc} (env): {_first_line(text)}"), []
+    return _check("n/a", f"cargo-mutants exit {rc} (env): {_first_line(text) or 'no output'}; see the job log"), []
 
 
 def _signal_run(proc, sig):
@@ -262,32 +272,44 @@ def default_runner():
 
 
 def run(repo, mb, head, adapter, test_globs, cmd=DEFAULT_CMD, budget_min=None, shard=None,
-        mutant_timeout=MUTANT_TIMEOUT, runner=None):
+        mutant_timeout=MUTANT_TIMEOUT, runner=None, project_dir="."):
     """R3 for mb..head. Returns (check, entries). Skipped without a production change; n/a without the tool.
-    cargo-mutants runs in a worktree at head (the caller's checkout does not move), on the diff only."""
+    cargo-mutants runs in a worktree at head (the caller's checkout does not move) in the crate dir, on the diff only:
+    the diff is made relative to the crate dir, so its paths match cargo-mutants' (crate-relative) file names."""
     runner = runner or default_runner()
     if not red.prod_changes(repo, mb, head, adapter, test_globs):
         return _check("skipped", "no production file changed"), []
     rc, text = runner(shlex.split(cmd) + ["--version"], repo, PROBE_TIMEOUT)
     if rc != 0 or not text.startswith("cargo-mutants"):
-        return _check("n/a", f"cargo-mutants not installed (env): {_first_line(text)}"), []
+        return _check("n/a", f"cargo-mutants not installed (env): `{cmd}` not runnable; check the cargo-mutants install step"), []
     budget = None if budget_min is None else budget_min * 60
     tmp = tempfile.mkdtemp(prefix="mech-mutants-")
     try:
         diff_path = os.path.join(tmp, "in.diff")
+        relative = [] if project_dir == "." else [f"--relative={project_dir}"]
         with open(diff_path, "w", encoding="utf-8", errors="surrogateescape") as f:
             f.write(git(repo, "diff", "--no-ext-diff", "--no-textconv", "-U0", "--src-prefix=a/", "--dst-prefix=b/",
-                        mb, head))
+                        *relative, mb, head))
         out_parent = os.path.join(tmp, "out")
         argv = shlex.split(cmd) + ["--in-diff", diff_path, "--timeout", str(mutant_timeout), "--colors", "never",
                                    "--output", out_parent]
         if shard:
             argv += ["--shard", shard]
         with red.worktree(repo, head) as wt:
+            crate = os.path.join(wt, project_dir)
+            if not os.path.isdir(crate):
+                return _check("fail", f"project dir {project_dir} not found at head: mutants not run"), [
+                    finalize([entry("R3", "", 0, "project-dir", "agent-fixable", "fail",
+                                    f"project dir {project_dir} not found at head: mutants not run",
+                                    "set project-dir to the crate dir under the repo root, present at head",
+                                    "a mutation check that did not run")])[0]]
+            if not os.path.isfile(os.path.join(crate, "Cargo.toml")):
+                return _check("n/a", f"no Cargo.toml in {project_dir}: set project-dir"), []
             t0 = time.monotonic()
-            rc, text = runner(argv, wt, budget)
+            rc, text = runner(argv, crate, budget)
             wall = time.monotonic() - t0
-        check, ents = verdict(os.path.join(out_parent, "mutants.out"), rc, text, adapter, test_globs, wall_s=wall)
+        check, ents = verdict(os.path.join(out_parent, "mutants.out"), rc, text, adapter, test_globs, wall_s=wall,
+                              project_dir=project_dir)
         if check["status"] == "partial":
             ents = ents + [partial_entry(check)]
         return check, ents

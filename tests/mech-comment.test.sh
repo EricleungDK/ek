@@ -395,6 +395,27 @@ check("named: mixing named and unnamed envelopes is a usage error (exit 2)", p.r
 p = run_cli(["--pr", "5", "--head", SHA, "--envelope", f"guard={R2_ENV}", "--envelope", f"red={RED_ENV}"])
 check("named: unknown job name is a usage error (exit 2)", p.returncode == 2, f"rc={p.returncode} {p.stderr}")
 
+# ---- n/a: one human line under the headline naming each check that did not run, with its note; status and JSON unchanged ----
+def na_env(*notes):
+    e = env([])
+    for c, note in notes:
+        e["checks"][c] = {"status": "n/a", "note": note}
+    e["summary"] = f"pass {SHA} (0 fail, 0 confirm; ran: R2; skipped: R1 R4; n/a: R3)"
+    return e
+
+
+e_na = na_env(("R3", "no Cargo.toml in .: set project-dir"))
+b = C.render(e_na)
+check("n/a: Did not run line names the check and its note", "Did not run: R3 (no Cargo.toml in .: set project-dir)" in b, b)
+check("n/a: the line sits under the headline",
+      b.find("Did not run:") >= 0 and b.find(f"**pass {SHA} (") < b.find("Did not run:") < b.find("head `"), b)
+check("n/a: status stays pass, exit code 0", f"**pass {SHA} (" in b and C.exit_code(e_na) == 0, b)
+check("n/a: json block unchanged", json_block(b) == e_na, str(json_block(b)))
+b = C.render(na_env(("R1", "toolchain absent: `cargo` not found (env): set setup-command"), ("R3", "x")))
+check("n/a: several checks on one line, in check order",
+      "Did not run: R1 (toolchain absent: `cargo` not found (env): set setup-command); R3 (x)" in b, b)
+check("n/a: no Did not run line when no check is n/a", "Did not run:" not in C.render(env([])), C.render(env([])))
+
 srv.shutdown()
 print("")
 sys.exit(1 if FAILS else 0)
