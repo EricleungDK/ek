@@ -18,7 +18,8 @@ def merge(parts, reasons):
     if not present:
         raise ValueError("merge needs at least one envelope")
     first = present[0]
-    checks = {c: {"status": "skipped", "note": "not run: no production file changed"} for c in CHECKS}
+    checks = {c: {"status": "skipped", "note": "not run by any job"} for c in CHECKS}
+    checks["R3"] = {"status": "skipped", "note": "not run: no production file changed"}
     kept, ci = [], []
     for job, env in parts.items():
         owned = OWNS[job]
