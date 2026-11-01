@@ -61,6 +61,6 @@ Globs: `**` any depth, `*` one segment.
 
 - Fork PRs get a read-only `GITHUB_TOKEN`: the comment cannot be posted, so `report` fails. The result is still in the job summary.
 - Permissions are `contents: read` and `pull-requests: write` only. The workflow uses `pull_request`, not `pull_request_target`, so forks get no secrets.
-- `guard` decides from git diffs only. `red-first` runs the PR's tests (the code under review), with `contents: read` and no secrets.
+- `guard` decides from git diffs only. `red-first` compiles and runs the PR's tests (the code under review) with the workflow token: `pull-requests: write` on same-repo PRs, read-only on forks, and no other secrets.
 - R1 needs the branch name: the workflow passes `github.head_ref`. A run without it skips R1 and says so.
 - The red commit is checked out as a git worktree; the caller's checkout is not moved.

@@ -163,7 +163,7 @@ def r4(repo, mb, head, adapter, test_globs, cmd, runner):
                                          "fix the build: new or changed tests must run", "a test that does not build"))
                     return check("fail", "does not build at head"), entries
                 if verdict == "error":
-                    entries.append(entry("R4", path, line, f"cannot-run:{name}", "env", "fail",
+                    entries.append(entry("R4", path, line, f"cannot-run:{name}", "agent-fixable", "fail",
                                          f"test `{name}` cannot run at head: {first}",
                                          "fix the test setup (manifest, flags); the toolchain did not reach a test result",
                                          "a check that did not run"))

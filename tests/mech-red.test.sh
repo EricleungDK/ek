@@ -298,7 +298,7 @@ out=$(red "$R" "$B" "$H" --head-branch feat/x); rc=$?
 eq "$rc" 1 "cargo cannot run the test (no manifest): exit 1"
 eq "$(jq -r .checks.R4.status <<<"$out")" fail "cargo cannot run the test: R4 fail"
 has "$(jq -r '[.entries[].problem] | join(" ")' <<<"$out")" "cannot run at head" "cargo cannot run the test: problem names it"
-eq "$(jq -r '.entries[0].class' <<<"$out")" env "cargo cannot run the test: class env"
+eq "$(jq -r '.entries[0].class' <<<"$out")" agent-fixable "cargo cannot run the test: agent-fixable (spec: any R4 failure)"
 
 # ---- all: every implemented check; r2 and red name what they did not run ----
 agent_repo allrun
