@@ -169,6 +169,8 @@ def r1(repo, mb, head, adapter, test_globs, head_branch, agent_prefix, cmd, runn
                   "add the failing test in the red commit", "no failing test(red) commit")]
     entries, red_count, compile_red = [], 0, 0
     with worktree(repo, red) as wt:
+        adapter.worktree_setup(repo, wt, project_dir)
+        cmd = cmd or adapter.test_cmd_in(os.path.join(wt, project_dir))
         for path, name, line in tests:
             verdict, first = run_in(runner, adapter, cmd, wt, project_dir, path, name)
             if verdict == "env":
@@ -206,6 +208,8 @@ def r4(repo, mb, head, adapter, test_globs, cmd, runner, project_dir="."):
             return check("fail", "a changed file does not parse"), entries
         return check("pass", "0 new or changed tests"), []
     with worktree(repo, head) as wt:
+        adapter.worktree_setup(repo, wt, project_dir)
+        cmd = cmd or adapter.test_cmd_in(os.path.join(wt, project_dir))
         for path, name, line in tests:
             verdicts = []
             for _ in range(TEST_RUNS):

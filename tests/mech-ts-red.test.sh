@@ -219,7 +219,7 @@ HEAD_OUT=flaky agent_repo flaky
 out=$(red "$R" "$B" "$H" --head-branch agent/x); rc=$?
 eq "$rc" 1 "ts flaky test at head: exit 1"
 eq "$(jq -r '[.entries[] | select(.check=="R4")][0].class' <<<"$out")" agent-fixable "ts flaky class agent-fixable"
-has "$(jq -r '[.entries[] | select(.check=="R4")][0].problem' <<<"$out")" "failed 2 of 5 runs" "ts flaky names the runs"
+has "$(jq -r '[.entries[] | select(.check=="R4")][0].problem' <<<"$out")" "failed 3 of 5 runs" "ts flaky names the runs"
 
 HEAD_OUT=none agent_repo none
 out=$(red "$R" "$B" "$H" --head-branch agent/x); rc=$?

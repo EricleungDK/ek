@@ -381,7 +381,7 @@ def run(repo, base_ref, head_ref, stack, test_globs, protected_globs=(), which="
         checks["R2"] = {"status": "skipped", "note": f"not run by {which}"}
     from . import red  # lazy: red imports this module
     if "R1" in want or "R4" in want:
-        cmd = test_cmd or adapter.default_test_cmd
+        cmd = test_cmd  # None: each checkout resolves its stack's command (red.r1/r4)
         run_test = runner or red.default_runner()
     if "R1" in want:
         checks["R1"], more = red.r1(repo, mb, head, adapter, test_globs, head_branch, agent_prefix, cmd, run_test,

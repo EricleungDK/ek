@@ -20,6 +20,8 @@ Adapter interface:
 import ast
 import functools
 import io
+import json
+import os
 import re
 import shlex
 import tokenize
@@ -191,6 +193,13 @@ class Adapter:
 
     def outcome(self, rc, out):
         raise NotImplementedError
+
+    def test_cmd_in(self, crate):
+        """the test command for a checkout whose crate dir is `crate` (absolute): --test-cmd overrides it."""
+        return self.default_test_cmd
+
+    def worktree_setup(self, repo, wt, project_dir):
+        """called once a worktree of the repo exists: whatever the toolchain needs beside the checkout (no-op by default)."""
 
     def parse_error(self, text):
         return None
@@ -813,6 +822,41 @@ def _line(text, pos):
     return text.count("\n", 0, pos) + 1
 
 
+TS_BUILD = re.compile(r"Transform failed|Failed to load url|Failed to resolve import|Cannot find module|Cannot find package"
+                      r"|Test suite failed to run|SyntaxError|\bTS\d{4}\b|Failed Suites")
+TS_TESTS = re.compile(r"^\s*Tests\b:?(.*)$", re.M)
+TS_RESULT = re.compile(r"(\d+) (passed|failed)\b")
+TS_RE_SPECIAL = re.compile(r"([\\^$.|?*+()\[\]{}/])")
+
+
+def _ts_counts(out):
+    """(passed, failed) from the last `Tests` summary line of a vitest or jest run, or None when there is none."""
+    lines = TS_TESTS.findall(out or "")
+    if not lines:
+        return None
+    got = {kind: int(n) for n, kind in TS_RESULT.findall(lines[-1])}
+    return got.get("passed", 0), got.get("failed", 0)
+
+
+def _ts_pattern(seg):
+    """a name segment as a regex: literal text escaped; `%s`-style and `$var` placeholders match any text."""
+    return ".*".join(TS_RE_SPECIAL.sub(r"\\\1", piece) for piece in JS_PLACEHOLDER.split(seg))
+
+
+def _ts_runner(crate):
+    """'vitest' or 'jest' from the crate's package.json (vitest wins when both are listed; vitest when neither)."""
+    try:
+        with open(os.path.join(crate, "package.json"), encoding="utf-8") as f:
+            pkg = json.load(f)
+    except (OSError, ValueError):
+        return "vitest"
+    deps = {}
+    for key in ("dependencies", "devDependencies"):
+        if isinstance(pkg, dict) and isinstance(pkg.get(key), dict):
+            deps.update(pkg[key])
+    return "jest" if "jest" in deps and "vitest" not in deps else "vitest"
+
+
 class TsAdapter(Adapter):
     """TypeScript and JavaScript (.ts .tsx .js .jsx .mjs .cjs). Test fns: `it`/`test` (and `.each`, `.skip`, `.only`,
     `.todo`, `xit`, `fit`, `xtest`, `ftest`) inside `describe` (qualified `Describe > test name`, vitest's separator).
@@ -944,11 +988,49 @@ class TsAdapter(Adapter):
     def ignored_text(self, name):
         return f"test `{name}` marked skipped (skip, todo or x-prefixed)"
 
+    def test_cmd_in(self, crate):
+        """vitest when package.json lists vitest (or lists neither), jest when it lists only jest. The runner runs from
+        the crate's own node_modules/.bin."""
+        return "node_modules/.bin/jest" if _ts_runner(crate) == "jest" else "node_modules/.bin/vitest run"
+
+    def worktree_setup(self, repo, wt, project_dir):
+        """a worktree has no node_modules (ignored by git): link the caller checkout's node_modules into the crate dir,
+        so the runner resolves from the repo's own install. Never linked over an existing dir; the link is removed with
+        the worktree, the caller's directory is not touched."""
+        src = os.path.join(repo, project_dir, "node_modules")
+        dst = os.path.join(wt, project_dir, "node_modules")
+        if os.path.isdir(src) and os.path.isdir(os.path.dirname(dst)) and not os.path.lexists(dst):
+            os.symlink(os.path.abspath(src), dst)
+
     def test_argv(self, cmd, path, name):
-        raise NotImplementedError
+        """one named test: the file, then `-t <anchored name>` (both runners match -t as a regex on the full name).
+        vitest joins describe and test names with ` > `, jest with a space; `it.each` placeholders match any value."""
+        argv = shlex.split(cmd)
+        jest = any("jest" in a for a in argv)
+        if not jest and "run" not in argv:
+            at = next((i for i, a in enumerate(argv) if "vitest" in a), len(argv) - 1)
+            argv = argv[:at + 1] + ["run"] + argv[at + 1:]
+        segments = name.split(" > ")
+        full = (" " if jest else " > ").join(_ts_pattern(seg) for seg in segments)
+        return argv + [path, "-t", f"^{full}$"]
 
     def outcome(self, rc, out):
-        raise NotImplementedError
+        """verdict of one run of vitest or jest. Results come from the Tests summary line; a file that did not load
+        (transform, missing import, syntax) is build; a filter that ran nothing is none, even at exit 0."""
+        if rc is None:
+            return "env"
+        if rc == "timeout":
+            return "timeout"
+        counts = _ts_counts(out)
+        if counts is not None and counts[1]:
+            return "fail"
+        if counts is not None and counts[0]:
+            return "pass" if rc == 0 else "fail"
+        if TS_BUILD.search(out):
+            return "build"
+        if counts is None:
+            return "error"
+        return "none" if rc == 0 else "error"
 
 
 ADAPTERS = {"python": PythonAdapter, "rust": RustAdapter, "ts": TsAdapter}
