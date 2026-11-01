@@ -31,7 +31,7 @@ checks (status in envelope: pass | fail | partial | n/a | skipped):
       -> fail (agent-fixable), one entry per mutant; TIMEOUT and UNVIABLE ignored. Budget hit with no MISSED ->
       partial (tested/total), not blocking. Tool not installed -> n/a (env). No production file -> skipped.
       `--shard K/N` runs one of N shards (K is 0-based, as cargo-mutants numbers them).
-  `r2` runs R2. `red` runs R1 and R4. `all` runs R1, R2 and R4. `mutants` runs R3. A check a subcommand does not run
+  `r2` runs R2. `red` runs R1 and R4. `all` = R1, R2 and R4 (R3 is not in `all`: run `mutants`). `mutants` runs R3. A check a subcommand does not run
   is skipped with `not run by <subcommand>`.
   Test runner: the stack default (rust: `cargo test`), or --test-cmd. Env MECH_TEST_STUB=<exe>
   replaces the executable (arguments kept): the injectable runner for tests.

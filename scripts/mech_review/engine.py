@@ -376,6 +376,8 @@ def run(repo, base_ref, head_ref, stack, test_globs, protected_globs=(), which="
         raw += more
     else:
         checks["R4"] = {"status": "skipped", "note": f"not run by {which}"}
+    if which == "all":
+        checks["R3"] = {"status": "skipped", "note": "not run by all: R3 runs only in the mutants subcommand (CI job mutants)"}
     r3 = []
     if "R3" in want:
         from . import mutants  # lazy: mutants imports red, which imports this module

@@ -29,6 +29,8 @@ from .engine import entry, finalize, git
 DEFAULT_CMD = "cargo mutants"
 MUTANT_TIMEOUT = 120  # seconds per cargo command (cargo-mutants --timeout): a mutant whose tests hang is a TIMEOUT
 PROBE_TIMEOUT = 120  # seconds for `cargo mutants --version`
+KILL_GRACE = 15  # seconds between SIGTERM and SIGKILL when a run is over its budget
+REAP = 5  # seconds to wait for a killed run before giving up on it
 
 RE_POS = re.compile(r"^[^\s:]+:\d+:\d+: ")  # "src/lib.rs:2:11: replace + with - in add" -> "replace + with - in add"
 
@@ -118,34 +120,54 @@ def verdict(mo, rc, text, adapter, test_globs):
     return _check("n/a", f"cargo-mutants exit {rc} (env): {_first_line(text)}"), []
 
 
-def _kill_group(proc):
-    """cargo-mutants starts cargo test in its own children: the whole process group goes."""
+def _signal_run(proc, sig):
+    """Signal the run's process group (cargo-mutants and what did not leave it), then the process itself."""
     try:
-        os.killpg(proc.pid, signal.SIGKILL)
+        os.killpg(proc.pid, sig)
     except OSError:
-        proc.kill()
+        pass
+    try:
+        proc.send_signal(sig)
+    except OSError:
+        pass
+
+
+def _stop(proc):
+    """Over budget: SIGTERM first so cargo-mutants can stop its children (it puts cargo test in its own group, which
+    a group signal does not reach); SIGKILL after KILL_GRACE; the wait for the killed process is bounded too."""
+    _signal_run(proc, signal.SIGTERM)
+    try:
+        proc.wait(timeout=KILL_GRACE)
+    except subprocess.TimeoutExpired:
+        _signal_run(proc, signal.SIGKILL)
+        try:
+            proc.wait(timeout=REAP)
+        except subprocess.TimeoutExpired:
+            pass  # a child that escaped the group may outlive it; the runner still returns
 
 
 def default_runner():
     """Real runner: (argv, cwd, budget seconds or None) -> (rc, output); rc None when the executable is missing,
-    "timeout" when the budget killed the run. MECH_TEST_STUB, when set, replaces argv[0] (the stub, like the R1/R4 runner)."""
+    "timeout" when the budget stopped the run. Output goes to a file, not a pipe, so no child holding it can block
+    the runner. MECH_TEST_STUB, when set, replaces argv[0] (the stub, like the R1/R4 runner)."""
     stub = os.environ.get("MECH_TEST_STUB")
 
     def run(argv, cwd, budget):
         if stub:
             argv = [stub] + argv[1:]
-        try:
-            proc = subprocess.Popen(argv, cwd=cwd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                                    start_new_session=True)
-        except OSError:
-            return None, f"{argv[0]}: not found"
-        try:
-            out, _ = proc.communicate(timeout=budget)
-        except subprocess.TimeoutExpired:
-            _kill_group(proc)
-            out, _ = proc.communicate()
-            return "timeout", (out or b"").decode("utf-8", "replace")
-        return proc.returncode, out.decode("utf-8", "replace")
+        with tempfile.TemporaryFile() as out:
+            try:
+                proc = subprocess.Popen(argv, cwd=cwd, stdout=out, stderr=subprocess.STDOUT, start_new_session=True)
+            except OSError:
+                return None, f"{argv[0]}: not found"
+            try:
+                proc.wait(timeout=budget)
+                rc = proc.returncode
+            except subprocess.TimeoutExpired:
+                _stop(proc)
+                rc = "timeout"
+            out.seek(0)
+            return rc, out.read().decode("utf-8", "replace")
 
     return run
 
