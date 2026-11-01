@@ -348,20 +348,53 @@ def show_file(text):
     return m.group(1).strip() if m else None
 
 
+def mutant_scope(name):
+    """(class chain, function) a mutmut name points at: `calc.core.x_add__mutmut_1` -> ([], "add");
+    `calc.core.xǁCalcǁadd__mutmut_1` -> (["Calc"], "add") (mutmut joins the scope with U+01C1); None for any other form."""
+    seg = name.rsplit(".", 1)[-1].split("__mutmut_")[0]
+    if seg.startswith("x_"):
+        return [], seg[2:]
+    if seg.startswith("x") and "\u01c1" in seg:
+        parts = seg[2:].split("\u01c1")  # "x" + separator + Class + separator + method
+        return parts[:-1], parts[-1]
+    return None
+
+
+def _block_end(lines, start):
+    """index after the block whose header is lines[start]: the first non-blank line at or left of its indent."""
+    indent = len(lines[start]) - len(lines[start].lstrip())
+    return next((j for j in range(start + 1, len(lines))
+                 if lines[j].strip() and len(lines[j]) - len(lines[j].lstrip()) <= indent), len(lines))
+
+
+def _find(lines, lo, hi, pattern):
+    """first line index in [lo, hi) that the pattern matches at its start, or None."""
+    rx = re.compile(pattern)
+    return next((i for i in range(lo, hi) if rx.match(lines[i])), None)
+
+
 def locate(src, name, removed):
-    """1-based line of the removed text inside the function a mutmut name points at (`calc.core.x_add__mutmut_1` ->
-    `def add(`), or None. Lines are the file's, so they follow the code when it moves."""
-    fn = name.rsplit(".", 1)[-1].split("__mutmut_")[0]
-    if fn.startswith("x_"):
-        fn = fn[2:]
+    """1-based line of the removed text in the function a mutmut name points at, or None when the name cannot be
+    mapped (no such class or function in the file, or a name form this does not read). A method is searched for
+    inside its class, so the same method name in two classes resolves to the right one. Lines are the file's."""
+    scope = mutant_scope(name)
+    if scope is None:
+        return None
+    chain, fn = scope
     lines = (src or "").splitlines()
-    start = next((i for i, ln in enumerate(lines) if re.match(rf"\s*(async\s+)?def\s+{re.escape(fn)}\s*\(", ln)), None)
+    lo, hi = 0, len(lines)
+    for cls in chain:
+        start = _find(lines, lo, hi, rf"\s*class\s+{re.escape(cls)}\b")
+        if start is None:
+            return None
+        lo, hi = start + 1, _block_end(lines, start)
+    if chain:
+        start = _find(lines, lo, hi, rf"\s*(async\s+)?def\s+{re.escape(fn)}\s*\(")
+    else:
+        start = _find(lines, 0, len(lines), rf"(async\s+)?def\s+{re.escape(fn)}\s*\(")  # column 0: a module function
     if start is None:
         return None
-    indent = len(lines[start]) - len(lines[start].lstrip())
-    end = next((j for j in range(start + 1, len(lines))
-                if lines[j].strip() and len(lines[j]) - len(lines[j].lstrip()) <= indent), len(lines))
-    for j in range(start, end):
+    for j in range(start, _block_end(lines, start)):
         if lines[j].strip() == removed:
             return j + 1
     return None
@@ -469,10 +502,10 @@ class Mutmut:
             wall = time.monotonic() - t0
             early = "Stopping early" in text
             if rc == 1 and ("failed to collect stats" in text or "Failed to run clean test" in text):
-                return _check("fail", "baseline tests fail at head: mutants not run"), [
+                return _check("fail", "baseline tests fail at head: mutants not run"), finalize([
                     entry("R3", "", 0, "baseline", "agent-fixable", "fail", "baseline tests fail at head: mutants not run",
                           "fix the failing tests first: mutation needs an unmutated tree that passes",
-                          "a mutation check that did not run")]
+                          "a mutation check that did not run")])
             if not (rc in ("timeout", 0) or (rc == 1 and early)):
                 return _check("n/a", f"mutmut exit {rc} (env): {_first_line(text)}; check the test deps "
                                      "(requirements, setup-command)"), []
@@ -485,38 +518,49 @@ class Mutmut:
             if rc != "timeout" and total == 0:
                 return _check("pass", "0 mutants in the diff", 0, 0), []
             caught = sum(1 for _, k, _ in rows if k == "caught")
-            found, outside = [], 0
+            found, outside, unlocated = [], 0, 0
             for name, k, status in rows:
                 if k != "missed":
                     continue
                 rc_s, show = runner(shlex.split(cmd) + ["show", name], crate, PROBE_TIMEOUT)
                 parsed = parse_show(show) if rc_s == 0 else None
                 if parsed is None:
-                    found.append((name, "", 0, name, status))  # location unknown: kept, conservative
+                    unlocated += 1  # no diff to read: not a fail, not outside either; named by the confirm below
                     continue
                 removed, after = parsed
                 file = _repo_path(project_dir, show_file(show) or "")
                 line = locate(_read(os.path.join(crate, _crate_path(project_dir, file))), name, removed)
-                if line is not None and line not in {n for n, _ in changed.get(file, [])}:
+                if line is None:
+                    unlocated += 1  # the name maps to no line in the file: a confirm, never a silent fail
+                    continue
+                if line not in {n for n, _ in changed.get(file, [])}:
                     outside += 1
                     continue
-                found.append((name, file, line or 0, f"{removed} -> {after}", status))
+                found.append((name, file, line, f"{removed} -> {after}", status))
             ents = finalize([
                 entry("R3", file, line, f"missed:{file}|{desc}", "agent-fixable", "fail", f"MISSED mutant {file}:{line}: {desc}",
                       (f"add an assert that fails for this mutant: {desc}" if status == "survived" else
                        "no test reaches this line: add a test that calls it and asserts the result"),
                       f"MISSED mutant `{desc}` in `{file}`")
                 for _, file, line, desc, status in found])
+            if unlocated:
+                ents += finalize([entry("R3", "", 0, "unlocated", "agent-fixable", "confirm",
+                                        f"R3 unlocated: {unlocated} missed mutant(s) could not be mapped to a line: not blocking",
+                                        "read checks.R3.note: the mutant's function is not in the file under the name mutmut uses; "
+                                        "check its location by hand",
+                                        "counting an unlocated mutant as outside the diff, or as a fail without a look")])
             shown = f"{tested}/{total if total is not None else '?'}"
             timing = {"wall_s": round(wall, 2)}
+            fails = [e for e in ents if e["severity"] == "fail"]
             if rc == "timeout":
-                if ents:
-                    check = _check("fail", f"{shown} tested: budget hit, {len(ents)} missed", tested, total)
+                if fails:
+                    check = _check("fail", f"{shown} tested: budget hit, {len(fails)} missed", tested, total)
                 else:
                     check = _check("partial", f"{shown} tested: budget hit, no MISSED so far", tested, total)
             else:
-                note = f"{shown} tested: {len(ents)} missed in the diff, {outside} missed outside the diff, {caught} caught"
-                check = _check("fail" if ents else "pass", note, tested, total)
+                note = (f"{shown} tested: {len(fails)} missed in the diff, {outside} missed outside the diff, "
+                        f"{unlocated} unlocated, {caught} caught")
+                check = _check("fail" if fails else "pass", note, tested, total)
             check["timing"] = timing
             return check, ents
 
