@@ -101,10 +101,12 @@ check("reusable: no pull_request_target", "pull_request_target" not in text(W))
 jobs = block(W, "jobs", 0) or []
 job_perm_lines = [n for n, l in enumerate(W) if re.match(r"\s+permissions:", l)]
 red_has_perm = any(l.strip() == "permissions:" for l in (block(jobs, "red-first") or []))
-check("reusable: job-level permissions only on red-first (guard and report inherit top-level)",
-      red_has_perm and len(job_perm_lines) == 1, f"job-level permissions lines: {job_perm_lines}")
-check("reusable: jobs are exactly guard + red-first + report", child_keys(jobs) == {"guard", "red-first", "report"},
-      str(child_keys(jobs)))
+mut_job = block(jobs, "mutants") or []
+mut_has_perm = any(l.strip() == "permissions:" for l in mut_job)
+check("reusable: job-level permissions only on red-first and mutants (PR code jobs; guard, plan, report inherit top-level)",
+      red_has_perm and mut_has_perm and len(job_perm_lines) == 2, f"job-level permissions lines: {job_perm_lines}")
+check("reusable: jobs are exactly guard + red-first + report + plan + mutants",
+      child_keys(jobs) == {"guard", "red-first", "report", "plan", "mutants"}, str(child_keys(jobs)))
 guard = block(jobs, "guard") or []
 red = block(jobs, "red-first") or []
 report = block(jobs, "report") or []
@@ -126,8 +128,8 @@ check("guard: uploads the JSON artifact", "upload-artifact" in gt)
 check("guard: artifact overwrites on re-run", re.search(r"overwrite:\s*true", gt) is not None)
 check("report: downloads the JSON artifact", "download-artifact" in text(report))
 check("report: posts via mech-comment.py", "mech-comment.py" in text(report))
-check("report: downloads both the guard and the red-first artifacts",
-      text(report).count("download-artifact@v4") == 2 and "mech-review-red-json" in text(report),
+check("report: downloads the guard, red-first and mutants artifacts",
+      text(report).count("download-artifact@v4") == 3 and "mech-review-red-json" in text(report),
       text(report))
 check("report: named envelopes, guard as r2 and red-first as red",
       "--envelope r2=" in text(report) and "--envelope red=" in text(report), text(report))
@@ -167,6 +169,92 @@ check("inputs: agent-branch-prefix is used now, not UNUSED",
       "UNUSED" not in " ".join(block(inputs, "agent-branch-prefix") or []), str(block(inputs, "agent-branch-prefix")))
 check("inputs: extra-apt-packages is used now, not UNUSED",
       "UNUSED" not in " ".join(block(inputs, "extra-apt-packages") or []), str(block(inputs, "extra-apt-packages")))
+
+# ---- R3 mutants: plan, shard matrix, merge ----
+pl = block(jobs, "plan") or []
+mu = block(jobs, "mutants") or []
+pt = text(pl)
+mt = text(mu)
+check("plan: job present", bool(pl))
+check("plan: runs mech-review.py plan", "mech-review.py" in pt and " plan" in pt, pt)
+check("plan: caller checkout at PR head with full history",
+      "github.event.pull_request.head.sha" in pt and re.search(r"fetch-depth:\s*0", pt) is not None)
+check("plan: ek checkout at job.workflow_sha", re.search(r"ref:\s*\$\{\{\s*job\.workflow_sha\s*\}\}", pt) is not None)
+check("plan: exposes run, count and shards outputs",
+      all(re.search(rf"^\s+{k}:\s*\$\{{\{{\s*steps\.\w+\.outputs\.{k}\s*\}}\}}", pt, re.M) for k in ("run", "count", "shards")), pt)
+check("plan: no language toolchain", re.search(r"setup-|toolchain|cargo|rustup", pt) is None)
+check("plan: shard count from the mutation shards setting", "--shards" in pt)
+
+check("mutants: needs plan", (value(mu, "needs") or "").strip("[]") == "plan", str(value(mu, "needs")))
+check("mutants: runs only when the plan says so", "needs.plan.outputs.run == 'true'" in (value(mu, "if") or ""),
+      str(value(mu, "if")))
+strategy = block(mu, "strategy") or []
+check("mutants: shard matrix from the plan output", "fromJSON(needs.plan.outputs.shards)" in text(strategy), text(strategy))
+check("mutants: fail-fast off (one shard's failure does not cancel the others)", value(strategy, "fail-fast") == "false",
+      str(value(strategy, "fail-fast")))
+mperm = block(mu, "permissions") or []
+check("mutants: job-level permissions exactly contents read (runs PR code)",
+      {k: value(mperm, k) for k in child_keys(mperm)} == {"contents": "read"}, str({k: value(mperm, k) for k in child_keys(mperm)}))
+check("mutants: no pull_request_target", "pull_request_target" not in mt)
+check("mutants: caller checkout at PR head with full history",
+      "github.event.pull_request.head.sha" in mt and re.search(r"fetch-depth:\s*0", mt) is not None)
+check("mutants: ek checkout at job.workflow_sha", re.search(r"ref:\s*\$\{\{\s*job\.workflow_sha\s*\}\}", mt) is not None)
+
+
+def step(lines, name):
+    """Lines of the step `- name: <name>` (to the next `- name:`), stripped. [] if absent."""
+    start = next((n for n, l in enumerate(lines) if l.strip() == f"- name: {name}" or l.strip().startswith(f"- name: {name} ")), None)
+    if start is None:
+        return []
+    out = []
+    for l in lines[start + 1:]:
+        if l.strip().startswith("- name:"):
+            break
+        out.append(l.strip())
+    return out
+
+
+tcs = step(mu, "Rust toolchain")
+tc_uses = next((l.split("uses:", 1)[1].split("#")[0].strip() for l in tcs if l.startswith("uses:")), "")
+check("mutants: rust-toolchain pinned to a full 40-hex commit SHA",
+      re.fullmatch(r"dtolnay/rust-toolchain@[0-9a-f]{40}", tc_uses) is not None, tc_uses)
+check("mutants: rust-toolchain passes toolchain: stable", "toolchain: stable" in tcs, str(tcs))
+
+ins = step(mu, "install cargo-mutants (pinned)")
+ins_uses = next((l.split("uses:", 1)[1].split("#")[0].strip() for l in ins if l.startswith("uses:")), "")
+check("mutants: cargo-mutants installed by a SHA-pinned action",
+      re.fullmatch(r"taiki-e/install-action@[0-9a-f]{40}", ins_uses) is not None, ins_uses)
+check("mutants: cargo-mutants pinned to 27.1.0", any(l == "tool: cargo-mutants@27.1.0" for l in ins), str(ins))
+check("mutants: install failure does not stop the run (engine reports n/a env)",
+      "continue-on-error: true" in ins, str(ins))
+
+run_step = step(mu, "R3 mutation on the diff (shard)")
+rs = "\n".join(run_step)
+check("mutants: runs mech-review.py mutants", "mech-review.py" in rs and " mutants" in rs, rs)
+check("mutants: shard flag from the matrix and the plan count",
+      "matrix.shard" in rs and "needs.plan.outputs.count" in rs, rs)
+check("mutants: budget from the mutation-budget input", "inputs.mutation-budget" in mt and "--mutation-budget" in rs, rs)
+check("mutants: rc above 1 is no result (crash surfaces at report)", "rc -gt 1" in rs or "-gt 1" in rs, rs)
+up = step(mu, "upload mutants result")
+check("mutants: uploads its JSON artifact per shard", "mech-review-mutants-${{ matrix.shard }}" in "\n".join(up)
+      and "upload-artifact" in mt and any(l == "if: always()" for l in up), str(up))
+
+check("mutation-budget: used by the mutants job, not UNUSED",
+      "UNUSED" not in " ".join(block(inputs, "mutation-budget") or []) and value(block(inputs, "mutation-budget") or [], "default") == "10",
+      str(block(inputs, "mutation-budget")))
+
+check("report: needs plan and mutants",
+      {"plan", "mutants"} <= set(re.split(r"[\s,\[\]]+", needs)), f"needs={needs!r}")
+check("report: downloads the mutants shard artifacts (pattern)", "mech-review-mutants-*" in text(report), text(report))
+check("report: merges the shards with the merge subcommand", "mech-review.py" in text(report) and " merge" in text(report), text(report))
+check("report: mutants envelope only when the plan ran it, a crash is still reported",
+      "mutants=" in text(report) and "PLAN_RESULT" in text(report) and "needs.plan.result" in text(report), text(report))
+
+check("all third-party actions pinned to a full SHA (actions/* are GitHub's own, tag-pinned)",
+      all(re.fullmatch(r"[0-9a-f]{40}", l.split("uses:", 1)[1].split("#")[0].strip().split("@", 1)[1])
+          for l in W if "uses:" in l and not l.split("uses:", 1)[1].strip().startswith("actions/")
+          and "uses: ./" not in l and "uses:" in l),
+      str([l for l in W if "uses:" in l]))
 
 # ---- ek's own caller ----
 SW = ".github/workflows/mech-review-self.yml"
