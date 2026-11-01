@@ -109,23 +109,34 @@ def run_named(runner, adapter, cmd, cwd, path, name):
 
 
 def run_in(runner, adapter, cmd, wt, project_dir, path, name):
-    """run_named in the crate dir. A dir missing in this commit is an error verdict (the test cannot run), not a missing toolchain."""
+    """run_named in the crate dir. A dir missing in this commit is an error verdict (the test cannot run), not a missing toolchain.
+    The test's path is given crate-relative (what pytest and unittest name tests by); the verdict is the same either way."""
     cwd = os.path.join(wt, project_dir)
     if not os.path.isdir(cwd):
         return "error", f"project dir {project_dir} not in this commit"
-    return run_named(runner, adapter, cmd, cwd, path, name)
+    rel = path[len(project_dir) + 1:] if project_dir != "." and path.startswith(project_dir + "/") else path
+    return run_named(runner, adapter, cmd, cwd, rel, name)
+
+
+def manifest_label(adapter):
+    """`Cargo.toml`, or `pyproject.toml, setup.py or setup.cfg`: how a hint names the project's manifest files."""
+    names = list(adapter.manifests)
+    return names[0] if len(names) == 1 else ", ".join(names[:-1]) + " or " + names[-1]
 
 
 def no_manifest_hint(adapter, wt, project_dir):
-    """rust: an existing crate dir with no Cargo.toml in it. Returns the hint suffix naming project-dir, or ''."""
+    """an existing project dir with none of the stack's manifest files. Returns the hint suffix naming project-dir, or ''."""
     cwd = os.path.join(wt, project_dir)
-    if getattr(adapter, "name", "") == "rust" and os.path.isdir(cwd) and not os.path.isfile(os.path.join(cwd, "Cargo.toml")):
-        return f"; no Cargo.toml in {project_dir}: set project-dir"
+    if adapter.manifests and os.path.isdir(cwd) and not any(os.path.isfile(os.path.join(cwd, m)) for m in adapter.manifests):
+        return f"; no {manifest_label(adapter)} in {project_dir}: set project-dir"
     return ""
 
 
-def absent(cmd, what):
-    """n/a note for a toolchain that is not installed: names the tool and the input that installs it."""
+def absent(cmd, what, first=""):
+    """n/a note for a toolchain or test runner that is not installed: names the tool and the input that installs it."""
+    if "No module named" in first:  # python: the runner is there, its test deps are not
+        name = "pytest" if "pytest" in first else "test runner"
+        return f"{name} not installed (env): `{first}`: install the test deps, or set setup-command ({what})"
     return f"toolchain absent: `{shlex.split(cmd)[0]}` not found (env): install it, or set setup-command ({what})"
 
 
@@ -161,7 +172,7 @@ def r1(repo, mb, head, adapter, test_globs, head_branch, agent_prefix, cmd, runn
         for path, name, line in tests:
             verdict, first = run_in(runner, adapter, cmd, wt, project_dir, path, name)
             if verdict == "env":
-                return check("n/a", absent(cmd, "tests at the red commit")), []
+                return check("n/a", absent(cmd, "tests at the red commit", first)), []
             if verdict == "fail":
                 red_count += 1
             elif verdict == "build":
@@ -200,7 +211,7 @@ def r4(repo, mb, head, adapter, test_globs, cmd, runner, project_dir="."):
             for _ in range(TEST_RUNS):
                 verdict, first = run_in(runner, adapter, cmd, wt, project_dir, path, name)
                 if verdict == "env":
-                    return check("n/a", absent(cmd, "new or changed tests")), []
+                    return check("n/a", absent(cmd, "new or changed tests", first)), []
                 if verdict == "build":
                     entries.append(entry("R4", path, line, f"build:{name}", "agent-fixable", "fail",
                                          f"does not build at head: `{name}` cannot run",

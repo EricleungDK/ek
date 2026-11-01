@@ -128,13 +128,18 @@ jobs:
           toolchain: stable
       - name: Python toolchain
         if: inputs.stack == 'python'
+        env:
+          PROJECT_DIR: ${{ inputs.project-dir }}
         run: |
           set -eu
-          # runner python in a venv (the runner's system python is externally managed); pytest pinned; the caller's
-          # requirements files install the test deps. The project itself is not installed: tests import the worktree.
+          # project-dir stays under the repo root; a value that escapes it is a hard stop, not a silent path
+          case "$PROJECT_DIR" in /*|..|../*|*/..|*/../*) echo "::error::project-dir $PROJECT_DIR: want a dir under the repo root"; exit 2 ;; esac
+          # runner python in a venv (the runner's system python is externally managed); pytest pinned; the requirements
+          # files in the project dir install the test deps. The project itself is not installed here: setup-command does
+          # that (it runs after this step, with the venv on PATH).
           python3 -m venv "$RUNNER_TEMP/py-venv"
           "$RUNNER_TEMP/py-venv/bin/python" -m pip install --quiet "pytest==9.2.0"
-          cd "$GITHUB_WORKSPACE/caller"
+          cd "$GITHUB_WORKSPACE/caller/$PROJECT_DIR"
           for f in requirements*.txt; do
             [ -e "$f" ] || continue
             "$RUNNER_TEMP/py-venv/bin/python" -m pip install --quiet -r "$f"
@@ -271,13 +276,18 @@ jobs:
           toolchain: stable
       - name: Python toolchain
         if: inputs.stack == 'python'
+        env:
+          PROJECT_DIR: ${{ inputs.project-dir }}
         run: |
           set -eu
-          # runner python in a venv (the runner's system python is externally managed); pytest pinned; the caller's
-          # requirements files install the test deps. The project itself is not installed: tests import the worktree.
+          # project-dir stays under the repo root; a value that escapes it is a hard stop, not a silent path
+          case "$PROJECT_DIR" in /*|..|../*|*/..|*/../*) echo "::error::project-dir $PROJECT_DIR: want a dir under the repo root"; exit 2 ;; esac
+          # runner python in a venv (the runner's system python is externally managed); pytest and mutmut pinned; the
+          # requirements files in the project dir install the test deps. The project itself is not installed here:
+          # setup-command does that (it runs after this step, with the venv on PATH).
           python3 -m venv "$RUNNER_TEMP/py-venv"
           "$RUNNER_TEMP/py-venv/bin/python" -m pip install --quiet "pytest==9.2.0" "mutmut==3.8.1"
-          cd "$GITHUB_WORKSPACE/caller"
+          cd "$GITHUB_WORKSPACE/caller/$PROJECT_DIR"
           for f in requirements*.txt; do
             [ -e "$f" ] || continue
             "$RUNNER_TEMP/py-venv/bin/python" -m pip install --quiet -r "$f"

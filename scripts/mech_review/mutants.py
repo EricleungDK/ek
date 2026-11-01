@@ -443,8 +443,6 @@ class Mutmut:
         prod = sorted({ch.new for ch in red.prod_changes(repo, mb, head, adapter, test_globs)
                        if ch.new and _under(ch.new, project_dir)})
         files = shard_files(prod, shard)
-        if not files:
-            return _check("pass", "0 mutants in the diff (no changed production file in this shard)", 0, 0), []
         changed = added_lines(repo, mb, head)
         budget = None if budget_min is None else budget_min * 60
         with red.worktree(repo, head) as wt:
@@ -455,6 +453,10 @@ class Mutmut:
                                     f"project dir {project_dir} not found at head: mutants not run",
                                     "set project-dir to the crate dir under the repo root, present at head",
                                     "a mutation check that did not run")])[0]]
+            if not any(os.path.isfile(os.path.join(crate, m)) for m in adapter.manifests):
+                return _check("n/a", f"no {red.manifest_label(adapter)} in {project_dir}: set project-dir"), []
+            if not files:
+                return _check("pass", "0 mutants in the diff (no changed production file in this shard)", 0, 0), []
             if not _write_config(crate, [_crate_path(project_dir, f) for f in files]):
                 return _check("n/a", f"the repo already configures mutmut ([tool.mutmut]) in {project_dir} (env): "
                                      "R3 cannot set only_mutate; not overridden"), []

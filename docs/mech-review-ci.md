@@ -65,9 +65,11 @@ Trust: `setup-command` and `project-dir` come from the caller's workflow file, w
 Python toolchain (`stack: python`), set up in `red-first` and `mutants`:
 
 - A venv from the runner's python (`$RUNNER_TEMP/py-venv`), so PEP 668 does not apply. `pytest` 9.2.0, and in `mutants` `mutmut` 3.8.1. Both pinned.
-- The caller's `requirements*.txt` (every file that exists, from the PR head) are installed with `pip -r`. The step fails if one does not install: a missing dependency is never a silent pass.
-- The project itself is not installed. The tests run in a worktree at the red commit or at head, and must import the code from there: a flat layout works, a `src/` layout needs pytest's `pythonpath` setting. An editable install would import the head's copy instead, so R1 at the red commit would be wrong.
+- The `requirements*.txt` files in the project dir (`project-dir`, default the repo root) are installed with `pip -r`. A requirements file that does not install stops the job: a missing dependency is never a silent pass. `project-dir` must stay under the repo root.
+- Installing the project is left to `setup-command`, which runs after this step with the venv on PATH, e.g. `setup-command: python3 -m pip install -e caller` (the checkout is `caller/` under the workspace root; with `project-dir: pkg`, `caller/pkg`).
+- An editable install imports the checkout's copy. A flat layout is safe: the runner starts in the worktree, so its package comes first on `sys.path`. A `src/` layout is not: at the red commit R1 would import head's code. Use pytest's `pythonpath` setting for a `src/` layout instead, and skip `setup-command` for it.
 - Test runner: `python3 -m pytest` (one nodeid per test, so unittest `TestCase` methods run too). Use `--test-cmd` for another command: a command with `unittest` in it gets dotted names.
+- A python project dir needs one of `pyproject.toml`, `setup.py` or `setup.cfg`. Without one R3 is `n/a` and names `project-dir`, and a test that cannot run names it in its hint. `pytest` missing is `n/a (env)`, and its note names `setup-command`.
 
 ## Result
 

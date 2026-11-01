@@ -165,6 +165,7 @@ def args_of(text, m, i):
 class Adapter:
     name = ""
     default_test_cmd = ""
+    manifests = ()  # files that make a directory a project of this stack (a missing one is named by a hint)
 
     def classify(self, path, test_globs):
         raise NotImplementedError
@@ -206,6 +207,7 @@ def _innermost(spans, pos):
 class RustAdapter(Adapter):
     name = "rust"
     default_test_cmd = "cargo test"
+    manifests = ("Cargo.toml",)
 
     def classify(self, path, test_globs):
         if not path.endswith(".rs"):
@@ -459,6 +461,7 @@ class PythonAdapter(Adapter):
     Names: `test_fn`, `Class::test_method` (Class nested in another class: `Outer::Class::test_method`)."""
     name = "python"
     default_test_cmd = "python3 -m pytest"
+    manifests = ("pyproject.toml", "setup.py", "setup.cfg")
 
     def classify(self, path, test_globs):
         if not path.endswith(".py"):
