@@ -1,0 +1,5 @@
+    calc.core.x_add__mutmut_1: killed
+    calc.core.x_is_positive__mutmut_1: killed
+    calc.core.x_is_positive__mutmut_2: killed
+    calc.core.x_mul__mutmut_1: killed
+    calc.core.x_sub__mutmut_1: killed
