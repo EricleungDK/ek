@@ -60,6 +60,28 @@ Globs: `**` any depth, `*` one segment.
 - Readers trust only the bot's marker comment (`github-actions[bot]`, override `MECH_COMMENT_AUTHOR`): a `<!-- mech-review -->` comment from any other user is ignored.
 - A run whose PR head has moved on leaves the comment alone; the newest push owns it.
 
+## R3 timing and partial
+
+`checks.R3.timing` (JSON, additive) says where the R3 time went. Per shard it comes from cargo-mutants' own `outcomes.json` phase durations (`Build`, `Test`, in seconds) and the runner's clock:
+
+- `wall_s`: wall time of the cargo-mutants run on this shard.
+- `baseline_build_s`, `baseline_test_s`: the unmutated baseline (every shard runs it again).
+- `mutant_build_s`, `mutant_test_s`: summed over the tested mutants. A mutant that fails to build has no `Test` phase and adds 0 to it.
+- `avg_s_per_mutant`: (`mutant_build_s` + `mutant_test_s`) / tested.
+- `slowest`: the five slowest tested mutants, `{name, s}` (`s` = its build plus test seconds).
+
+Merged (`merge`): `wall_s` is the slowest shard, since shards run in parallel. Sums and the average are kept only when every shard reported them. `shards` lists each shard's `wall_s`, so an uneven shard shows. `slowest` is the top five across shards. A field that is missing or not a number is left out, never guessed. A budget-killed run reports what finished.
+
+The comment prints one line under the headline when R3 ran, e.g. `R3 timing: 6/15 mutants, 3.07s wall, avg 0.25s per mutant (build 1.21s, test 0.3s)`. When R3 is partial it adds `R3 slowest:` with the five slowest. Mutant names come from the PR's code, so they pass through the comment's cell rules (pipes escaped, backticks replaced).
+
+A partial R3 adds one `confirm` entry: class `agent-fixable`, id `R3-…` (stable across heads and counts), problem `R3 partial: <untested>/<total> mutants untested at budget` (or `total unknown` when the mutant list was never written). One entry per run, however many shards hit the budget. The check stays green and the exit code stays 0: partial never fails.
+
+What to do with the numbers, in this order:
+
+1. Smaller diff. `untested × avg_s_per_mutant` estimates the extra seconds the shard needs. If that is far above the budget, the diff covers too much for one run: split the change.
+2. Narrower tests. If a few mutants dominate `slowest`, their tests are slow for each mutant. Make those tests faster or narrower; the slow test runs once per mutant.
+3. Raise `mutation-budget` last. If `baseline_build_s` and `baseline_test_s` are large against `wall_s`, the fixed per-shard cost is the problem: a bigger budget only buys more mutants.
+
 ## Limits
 
 - Fork PRs get a read-only `GITHUB_TOKEN`: the comment cannot be posted, so `report` fails. The result is still in the job summary.
