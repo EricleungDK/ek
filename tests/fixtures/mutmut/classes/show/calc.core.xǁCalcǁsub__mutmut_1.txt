@@ -1,0 +1,7 @@
+# calc.core.xǁCalcǁsub__mutmut_1: no tests
+--- src/calc/core.py
++++ src/calc/core.py
+@@ -1,2 +1,2 @@
+ def sub(self, a, b):
+-    return a - b
++    return a + b

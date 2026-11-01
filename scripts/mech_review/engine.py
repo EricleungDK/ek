@@ -162,6 +162,19 @@ def r2(repo, mb, head, adapter, test_globs, protected_globs):
         path = new or old
         before = blob(repo, mb, old) if old else None
         after = blob(repo, head, new) if new else None
+        # a file the stack cannot parse is a truthful fail: its test changes cannot be checked, so nothing passes
+        unparsed = False
+        for lab, text in (("base", before), ("head", after)):
+            err = adapter.parse_error(text) if text is not None else None
+            if err:
+                unparsed = True
+                where = "base file" if lab == "base" else "file"
+                entries.append(entry("R2", path, err[0], f"unparseable:{lab}", "agent-fixable", "fail",
+                                     f"{where} does not parse: {err[1]} (line {err[0]})",
+                                     "fix the syntax error: this file cannot be checked against base",
+                                     "unparseable file hides test changes"))
+        if unparsed:
+            continue
         # each side is classified by its own path: a file moved between test and prod paths is judged per side
         whole_b = old is not None and adapter.classify(old, test_globs) == "test"
         whole_a = new is not None and adapter.classify(new, test_globs) == "test"
@@ -282,9 +295,8 @@ def r2(repo, mb, head, adapter, test_globs, protected_globs):
             for sup in adapter.suppressions(after):
                 if sup.reason or not any(ln in added_nums for ln in range(sup.line, sup.end_line + 1)):
                     continue
-                entries.append(entry("R2", new, sup.line, sup.lints, "agent-fixable", "fail",
-                                     f"#[{sup.kind}({sup.lint_text})] added without a reason",
-                                     'fix the lint, or give the suppression a reason: #[allow(lint, reason = "...")]',
+                problem, hint = adapter.suppression_text(sup)
+                entries.append(entry("R2", new, sup.line, sup.lints, "agent-fixable", "fail", problem, hint,
                                      "silencing a lint without a reason"))
     return entries
 
@@ -344,7 +356,7 @@ WHICH = {"r2": ("R2",), "red": ("R1", "R4"), "all": ("R1", "R2", "R4"), "mutants
 
 
 def run(repo, base_ref, head_ref, stack, test_globs, protected_globs=(), which="r2", agent_prefix="agent/",
-        head_branch=None, test_cmd=None, runner=None, mutants_cmd="cargo mutants", mutation_budget=None, shard=None,
+        head_branch=None, test_cmd=None, runner=None, mutants_cmd=None, mutation_budget=None, shard=None,
         mutant_timeout=120, mutant_runner=None, project_dir="."):
     base = resolve(repo, base_ref)
     head = resolve(repo, head_ref)

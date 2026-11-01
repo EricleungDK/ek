@@ -65,11 +65,30 @@ def touched(repo, a, b, adapter, test_globs):
     for ch in changes(repo, a, b):
         if ch.new is None or adapter.classify(ch.new, test_globs) is None:
             continue
-        after = adapter.test_bodies(blob(repo, b, ch.new))
-        before = adapter.test_bodies(blob(repo, a, ch.old)) if ch.old else {}
+        text_after = blob(repo, b, ch.new)
+        if adapter.parse_error(text_after):
+            continue  # reported by unparseable(): its tests cannot be named
+        after = adapter.test_bodies(text_after)
+        text_before = blob(repo, a, ch.old) if ch.old else None
+        before = adapter.test_bodies(text_before) if text_before is not None and not adapter.parse_error(text_before) else {}
         for name, (line, body) in sorted(after.items(), key=lambda kv: kv[1][0]):
             if name not in before or before[name][1] != body:
                 out.append((ch.new, name, line))
+    return out
+
+
+def unparseable(repo, a, b, adapter, test_globs):
+    """R4 fail entries for changed files at b that the stack cannot parse: their tests cannot run."""
+    out = []
+    for ch in changes(repo, a, b):
+        if ch.new is None or adapter.classify(ch.new, test_globs) is None:
+            continue
+        err = adapter.parse_error(blob(repo, b, ch.new))
+        if err:
+            out.append(entry("R4", ch.new, err[0], f"unparseable:{ch.new}", "agent-fixable", "fail",
+                             f"file does not parse: {err[1]} (line {err[0]})",
+                             "fix the syntax error: the tests in this file cannot run",
+                             "a check that did not run"))
     return out
 
 
@@ -82,31 +101,42 @@ def first_red(repo, mb, head):
     return None
 
 
-def run_named(runner, adapter, cmd, cwd, name):
+def run_named(runner, adapter, cmd, cwd, path, name):
     """(verdict, first line of output): the line says why a run had no test result."""
-    rc, out = runner(adapter.test_argv(cmd, name), cwd)
+    rc, out = runner(adapter.test_argv(cmd, path, name), cwd)
     lines = [l.strip() for l in out.splitlines() if l.strip()]
     return adapter.outcome(rc, out), (lines[0][:200] if lines else "")
 
 
-def run_in(runner, adapter, cmd, wt, project_dir, name):
-    """run_named in the crate dir. A dir missing in this commit is an error verdict (the test cannot run), not a missing toolchain."""
+def run_in(runner, adapter, cmd, wt, project_dir, path, name):
+    """run_named in the crate dir. A dir missing in this commit is an error verdict (the test cannot run), not a missing toolchain.
+    The test's path is given crate-relative (what pytest and unittest name tests by); the verdict is the same either way."""
     cwd = os.path.join(wt, project_dir)
     if not os.path.isdir(cwd):
         return "error", f"project dir {project_dir} not in this commit"
-    return run_named(runner, adapter, cmd, cwd, name)
+    rel = path[len(project_dir) + 1:] if project_dir != "." and path.startswith(project_dir + "/") else path
+    return run_named(runner, adapter, cmd, cwd, rel, name)
+
+
+def manifest_label(adapter):
+    """`Cargo.toml`, or `pyproject.toml, setup.py or setup.cfg`: how a hint names the project's manifest files."""
+    names = list(adapter.manifests)
+    return names[0] if len(names) == 1 else ", ".join(names[:-1]) + " or " + names[-1]
 
 
 def no_manifest_hint(adapter, wt, project_dir):
-    """rust: an existing crate dir with no Cargo.toml in it. Returns the hint suffix naming project-dir, or ''."""
+    """an existing project dir with none of the stack's manifest files. Returns the hint suffix naming project-dir, or ''."""
     cwd = os.path.join(wt, project_dir)
-    if getattr(adapter, "name", "") == "rust" and os.path.isdir(cwd) and not os.path.isfile(os.path.join(cwd, "Cargo.toml")):
-        return f"; no Cargo.toml in {project_dir}: set project-dir"
+    if adapter.manifests and os.path.isdir(cwd) and not any(os.path.isfile(os.path.join(cwd, m)) for m in adapter.manifests):
+        return f"; no {manifest_label(adapter)} in {project_dir}: set project-dir"
     return ""
 
 
-def absent(cmd, what):
-    """n/a note for a toolchain that is not installed: names the tool and the input that installs it."""
+def absent(cmd, what, first=""):
+    """n/a note for a toolchain or test runner that is not installed: names the tool and the input that installs it."""
+    if "No module named" in first:  # python: the runner is there, its test deps are not
+        name = "pytest" if "pytest" in first else "test runner"
+        return f"{name} not installed (env): `{first}`: install the test deps, or set setup-command ({what})"
     return f"toolchain absent: `{shlex.split(cmd)[0]}` not found (env): install it, or set setup-command ({what})"
 
 
@@ -140,9 +170,9 @@ def r1(repo, mb, head, adapter, test_globs, head_branch, agent_prefix, cmd, runn
     entries, red_count, compile_red = [], 0, 0
     with worktree(repo, red) as wt:
         for path, name, line in tests:
-            verdict, first = run_in(runner, adapter, cmd, wt, project_dir, name)
+            verdict, first = run_in(runner, adapter, cmd, wt, project_dir, path, name)
             if verdict == "env":
-                return check("n/a", absent(cmd, "tests at the red commit")), []
+                return check("n/a", absent(cmd, "tests at the red commit", first)), []
             if verdict == "fail":
                 red_count += 1
             elif verdict == "build":
@@ -170,16 +200,18 @@ def r1(repo, mb, head, adapter, test_globs, head_branch, agent_prefix, cmd, runn
 def r4(repo, mb, head, adapter, test_globs, cmd, runner, project_dir="."):
     """R4 determinism: each new or changed test runs TEST_RUNS times at head; any failing run is a fail. Returns (check, entries)."""
     tests = touched(repo, mb, head, adapter, test_globs)
+    entries = unparseable(repo, mb, head, adapter, test_globs)
     if not tests:
+        if entries:
+            return check("fail", "a changed file does not parse"), entries
         return check("pass", "0 new or changed tests"), []
-    entries = []
     with worktree(repo, head) as wt:
         for path, name, line in tests:
             verdicts = []
             for _ in range(TEST_RUNS):
-                verdict, first = run_in(runner, adapter, cmd, wt, project_dir, name)
+                verdict, first = run_in(runner, adapter, cmd, wt, project_dir, path, name)
                 if verdict == "env":
-                    return check("n/a", absent(cmd, "new or changed tests")), []
+                    return check("n/a", absent(cmd, "new or changed tests", first)), []
                 if verdict == "build":
                     entries.append(entry("R4", path, line, f"build:{name}", "agent-fixable", "fail",
                                          f"does not build at head: `{name}` cannot run",

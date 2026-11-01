@@ -1,0 +1,1 @@
+Stopping early, because we could not find any test case for any mutant. It seems that the selected tests do not cover any code that we mutated.

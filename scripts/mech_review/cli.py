@@ -91,7 +91,7 @@ def build_parser():
     p.add_argument("--test-cmd", metavar="CMD", help="test command for R1/R4 (default: the stack's, rust: cargo test)")
     p.add_argument("--project-dir", type=project_dir_arg, default=".", metavar="DIR",
                    help="crate dir under the repo root (default .): R1, R4 and R3 run there; paths stay repo-root")
-    p.add_argument("--mutants-cmd", metavar="CMD", default="cargo mutants", help="mutation tool for R3 (default: cargo mutants)")
+    p.add_argument("--mutants-cmd", metavar="CMD", help="mutation tool for R3 (default: the stack's: rust cargo mutants, python mutmut)")
     p.add_argument("--mutation-budget", type=float, default=10.0, metavar="MIN",
                    help="R3 budget in minutes for this run (default 10); a budget hit is partial, not a failure")
     p.add_argument("--mutant-timeout", type=int, default=120, metavar="SEC",

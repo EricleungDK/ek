@@ -1,4 +1,4 @@
-"""Stack adapters: one interface per language. Rust first; python/ts slot in as more subclasses.
+"""Stack adapters: one interface per language. Rust and Python (stdlib ast, tokenize); ts slots in as another subclass.
 
 Adapter interface:
   classify(path, test_globs) -> "test" | "prod" | None (None: not a source file of this stack)
@@ -10,11 +10,18 @@ Adapter interface:
       text: the whole assert call, whitespace-normalized (for messages)
   test_bodies(text) -> {name: (line, body)}   body: whitespace-normalized source of a #[test] fn item (R1/R4 compare)
   default_test_cmd: the toolchain command a runner starts from (rust: cargo test)
-  test_argv(cmd, name) -> argv that runs one named test       outcome(rc, output) -> verdict of one run:
+  test_argv(cmd, path, name) -> argv that runs one named test (path: the file the test is in)
+  outcome(rc, output) -> verdict of one run:
       pass | fail | build | none | error | timeout | env (rc None: executable missing, toolchain absent)
+  suppressions(text) -> [Suppression(line, end_line, kind, lints, lint_text, reason)]
+  suppression_text(sup) -> (problem, hint) of a suppression without a reason
+  parse_error(text) -> None | (line, message): the file does not parse; the checks cannot read it
 """
+import ast
+import io
 import re
 import shlex
+import tokenize
 from collections import namedtuple
 
 from .globs import any_glob
@@ -158,6 +165,7 @@ def args_of(text, m, i):
 class Adapter:
     name = ""
     default_test_cmd = ""
+    manifests = ()  # files that make a directory a project of this stack (a missing one is named by a hint)
 
     def classify(self, path, test_globs):
         raise NotImplementedError
@@ -177,11 +185,17 @@ class Adapter:
     def test_bodies(self, text):
         raise NotImplementedError
 
-    def test_argv(self, cmd, name):
+    def test_argv(self, cmd, path, name):
         raise NotImplementedError
 
     def outcome(self, rc, out):
         raise NotImplementedError
+
+    def parse_error(self, text):
+        return None
+
+    def suppression_text(self, sup):
+        return f"`{sup.lint_text}` added without a reason", "fix the lint, or give the suppression a reason"
 
 
 def _innermost(spans, pos):
@@ -193,6 +207,7 @@ def _innermost(spans, pos):
 class RustAdapter(Adapter):
     name = "rust"
     default_test_cmd = "cargo test"
+    manifests = ("Cargo.toml",)
 
     def classify(self, path, test_globs):
         if not path.endswith(".rs"):
@@ -262,7 +277,7 @@ class RustAdapter(Adapter):
         _, _, items = self._items(text)
         return {it.qname: (it.line, norm(text[it.span[0]:it.span[1]])) for it in items if it.is_test}
 
-    def test_argv(self, cmd, name):
+    def test_argv(self, cmd, path, name):
         """one named test: libtest --exact matches the full mod-qualified name, so one test per run."""
         return shlex.split(cmd) + ["--", "--exact", name]
 
@@ -311,5 +326,236 @@ class RustAdapter(Adapter):
                                    norm(raw), " ".join(raw.split()), reason))
         return out
 
+    def suppression_text(self, sup):
+        return (f"#[{sup.kind}({sup.lint_text})] added without a reason",
+                'fix the lint, or give the suppression a reason: #[allow(lint, reason = "...")]')
 
-ADAPTERS = {"rust": RustAdapter}
+PY_ASSERT_EQ = {"assertEqual", "assertEquals", "assertDictEqual", "assertListEqual", "assertTupleEqual",
+                "assertSetEqual", "assertMultiLineEqual", "assertSequenceEqual"}
+PY_ASSERT_NE = {"assertNotEqual", "assertNotEquals"}
+PY_SKIP = {"skip", "skipIf", "skipUnless", "skipif", "xfail"}
+PY_NOQA = re.compile(r"#\s*noqa\b(?::\s*([A-Za-z]+\d+(?:\s*,\s*[A-Za-z]+\d+)*))?", re.I)
+PY_TYPE_IGNORE = re.compile(r"#\s*type:\s*ignore\b(?:\[([^\]]*)\])?")
+PY_BUILD = re.compile(r"Failed to import test module|ERROR collecting|during collection|^ERROR \S+\.py\s*$", re.M)
+PY_PASSED = re.compile(r"\b[1-9]\d* passed\b")
+PY_OK = re.compile(r"^OK\b", re.M)
+PY_RAN = re.compile(r"^Ran [1-9]\d* tests?\b", re.M)
+PY_SEP = re.compile(r"^[\s#:;,\-\u2014\u2013]+")
+
+
+def _last(node):
+    """last name of a dotted expression (unittest.TestCase -> TestCase); None for anything else."""
+    if isinstance(node, ast.Attribute):
+        return node.attr
+    if isinstance(node, ast.Name):
+        return node.id
+    return None
+
+
+def _skip_decorated(decorators):
+    return any(_last(d.func if isinstance(d, ast.Call) else d) in PY_SKIP for d in decorators)
+
+
+def _body_skips(fn):
+    """a test body that skips itself at run time: self.skipTest(), pytest.skip(), skip(), raise SkipTest."""
+    for n in ast.walk(fn):
+        if isinstance(n, ast.Call):
+            f = n.func
+            if isinstance(f, ast.Attribute) and (f.attr == "skipTest" or (f.attr == "skip" and _last(f.value) == "pytest")):
+                return True
+            if isinstance(f, ast.Name) and f.id == "skip":
+                return True
+        if isinstance(n, ast.Raise) and n.exc is not None:
+            exc = n.exc.func if isinstance(n.exc, ast.Call) else n.exc
+            if _last(exc) == "SkipTest":
+                return True
+    return False
+
+
+def _ws(s):
+    return re.sub(r"\s+", "", s)
+
+
+class _Scan(ast.NodeVisitor):
+    """One pass over a module: test fns (pytest functions, pytest `Test*` classes, unittest TestCase methods),
+    assertions with their enclosing test fn, calls per function, test bodies. Scope entries: ("class", name,
+    is_test, skipped, None) or ("fn", name, is_test, qname, None)."""
+
+    def __init__(self):
+        self.known = set()  # TestCase-derived class names seen so far (a subclass in the same file counts)
+        self.scope = []
+        self.tests = []
+        self.bodies = {}
+        self.asserts = []
+        self.calls = {}
+
+    def _chain(self):
+        return [e[1] for e in self.scope]
+
+    def _record(self, node, kind, left, right, text):
+        test = next((e[3] for e in reversed(self.scope) if e[0] == "fn" and e[2]), None)
+        fns = [e[3] for e in self.scope if e[0] == "fn"]
+        owner = fns[-1] if fns else None
+        scope = any((e[0] == "fn" and e[2]) or (e[0] == "class" and e[2]) for e in self.scope)
+        self.asserts.append(Assertion(node.lineno, test, scope, kind, left, right, text, owner))
+
+    def visit_ClassDef(self, node):
+        tc = any(_last(b) == "TestCase" or _last(b) in self.known for b in node.bases)
+        if tc:
+            self.known.add(node.name)
+        self.scope.append(("class", node.name, tc or node.name.startswith("Test"), _skip_decorated(node.decorator_list), None))
+        for stmt in node.body:
+            self.visit(stmt)
+        self.scope.pop()
+
+    def _func(self, node):
+        qname = "::".join(self._chain() + [node.name])
+        parent = self.scope[-1] if self.scope else None
+        if parent is None:
+            is_test = node.name.startswith("test")
+        elif parent[0] == "class":
+            is_test = node.name.startswith("test") and parent[2]
+        else:
+            is_test = False
+        skipped = any(e[0] == "class" and e[3] for e in self.scope) or _skip_decorated(node.decorator_list)
+        if is_test:
+            markers = ["ignore"] if skipped or _body_skips(node) else []
+            self.tests.append(TestFn(qname, node.lineno, markers))
+            self.bodies[qname] = (node.lineno, _ws(ast.unparse(node)))
+        self.scope.append(("fn", node.name, is_test, qname, None))
+        for stmt in node.body:
+            self.visit(stmt)
+        self.scope.pop()
+
+    visit_FunctionDef = _func
+    visit_AsyncFunctionDef = _func
+
+    def visit_Assert(self, node):
+        t = node.test
+        kind, left, right = "other", None, None
+        if isinstance(t, ast.Compare) and len(t.ops) == 1 and isinstance(t.ops[0], (ast.Eq, ast.NotEq)):
+            kind = "eq" if isinstance(t.ops[0], ast.Eq) else "ne"
+            left, right = _ws(ast.unparse(t.left)), _ws(ast.unparse(t.comparators[0]))
+        self._record(node, kind, left, right, " ".join(ast.unparse(node).split()))
+
+    def visit_Call(self, node):
+        f = node.func
+        if isinstance(f, ast.Attribute) and isinstance(f.value, ast.Name) and f.value.id == "self" and f.attr.startswith("assert"):
+            kind, left, right = "other", None, None
+            if f.attr in PY_ASSERT_EQ or f.attr in PY_ASSERT_NE:
+                if len(node.args) >= 2:
+                    kind = "eq" if f.attr in PY_ASSERT_EQ else "ne"
+                    left, right = _ws(ast.unparse(node.args[0])), _ws(ast.unparse(node.args[1]))
+            self._record(node, kind, left, right, " ".join(ast.unparse(node).split()))
+        elif isinstance(f, ast.Attribute) and f.attr == "raises" and _last(f.value) == "pytest":
+            self._record(node, "other", None, None, " ".join(ast.unparse(node).split()))
+        fns = [e[3] for e in self.scope if e[0] == "fn"]
+        name = f.id if isinstance(f, ast.Name) else f.attr if isinstance(f, ast.Attribute) and _last(f.value) in ("self", "cls") else None
+        if fns and name:
+            self.calls.setdefault(fns[-1], set()).add(name)
+        self.generic_visit(node)
+
+
+class PythonAdapter(Adapter):
+    """Python: pytest functions and `Test*` classes, unittest TestCase methods (test_* / test* prefix, as both runners collect).
+    Names: `test_fn`, `Class::test_method` (Class nested in another class: `Outer::Class::test_method`)."""
+    name = "python"
+    default_test_cmd = "python3 -m pytest"
+    manifests = ("pyproject.toml", "setup.py", "setup.cfg")
+
+    def classify(self, path, test_globs):
+        if not path.endswith(".py"):
+            return None
+        return "test" if any_glob(path, test_globs) else "prod"
+
+    @staticmethod
+    def _scan(text):
+        tree = ast.parse(text)
+        sc = _Scan()
+        sc.visit(tree)
+        return sc
+
+    def parse_error(self, text):
+        try:
+            ast.parse(text)
+        except SyntaxError as e:
+            return (e.lineno or 1, e.msg)
+        except ValueError as e:
+            return (1, str(e))
+        return None
+
+    def test_fns(self, text):
+        return self._scan(text).tests
+
+    def assertions(self, text):
+        return self._scan(text).asserts
+
+    def calls(self, text):
+        return self._scan(text).calls
+
+    def test_bodies(self, text):
+        return self._scan(text).bodies
+
+    def suppressions(self, text):
+        """`# noqa` (codes optional) and `# type: ignore` (brackets optional) comments; reason: text after the codes."""
+        out = []
+        try:
+            toks = list(tokenize.generate_tokens(io.StringIO(text).readline))
+        except (tokenize.TokenError, SyntaxError):
+            return out
+        for tok in toks:
+            if tok.type != tokenize.COMMENT:
+                continue
+            c = tok.string
+            m = PY_NOQA.search(c)
+            if m:
+                codes = ",".join(x.strip() for x in m.group(1).split(",")) if m.group(1) else ""
+                kind, lints = "noqa", "noqa" + (f" {codes}" if codes else "")
+            else:
+                m = PY_TYPE_IGNORE.search(c)
+                if not m:
+                    continue
+                codes = _ws(m.group(1)) if m.group(1) else ""
+                kind, lints = "type: ignore", "type: ignore" + (f"[{codes}]" if codes else "")
+            reason = bool(PY_SEP.sub("", c[m.end():]).strip())
+            out.append(Suppression(tok.start[0], tok.start[0], kind, lints, c.strip(), reason))
+        return out
+
+    def suppression_text(self, sup):
+        return (f"`{sup.lint_text}` added without a reason",
+                f"fix the lint, or give the suppression a reason after the codes: `{sup.lint_text} - why`")
+
+    def test_argv(self, cmd, path, name):
+        """one named test. pytest: the nodeid (`path::Class::test`), which also runs unittest TestCase methods.
+        A unittest command (`... unittest`): the dotted name (`tests.test_a.Class.test`)."""
+        argv = shlex.split(cmd)
+        if "unittest" in argv:
+            return argv + [path[:-3].replace("/", ".") + "." + name.replace("::", ".")]
+        return argv + ["-q", f"{path}::{name}"]
+
+    def outcome(self, rc, out):
+        """verdict of one run of pytest or unittest. Collection and import errors are build (like a compile error)."""
+        if rc is None:
+            return "env"
+        if rc == "timeout":
+            return "timeout"
+        if re.search(r"No module named '?pytest", out):
+            return "env"
+        if PY_BUILD.search(out):
+            return "build"
+        if "_FailedTest" in out:
+            return "error"  # unittest: the named test does not exist
+        if "no tests ran" in out or re.search(r"^Ran 0 tests?\b", out, re.M) or rc == 5:
+            return "none"
+        if rc == 0:
+            if PY_PASSED.search(out) or (PY_OK.search(out) and PY_RAN.search(out) and "skipped=" not in out):
+                return "pass"
+            if re.search(r"\b\d+ (skipped|xfailed|deselected)\b", out) or "skipped=" in out:
+                return "none"
+            return "error"  # exit 0 with no test result: the runner did not reach a test
+        if rc == 1:
+            return "fail"
+        return "error"
+
+
+ADAPTERS = {"python": PythonAdapter, "rust": RustAdapter}
