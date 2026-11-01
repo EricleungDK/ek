@@ -96,11 +96,13 @@ perm = block(W, "permissions", 0) or []
 perm_map = {k: value(perm, k) for k in child_keys(perm)}
 check("reusable: top permissions exactly contents read + pull-requests write",
       perm_map == {"contents": "read", "pull-requests": "write"}, str(perm_map))
-check("reusable: no job-level permissions block",
-      not any(re.match(r"\s+permissions:", l) for l in W), "a job-level permissions key was found")
 check("reusable: no pull_request_target", "pull_request_target" not in text(W))
 
 jobs = block(W, "jobs", 0) or []
+job_perm_lines = [n for n, l in enumerate(W) if re.match(r"\s+permissions:", l)]
+red_has_perm = any(l.strip() == "permissions:" for l in (block(jobs, "red-first") or []))
+check("reusable: job-level permissions only on red-first (guard and report inherit top-level)",
+      red_has_perm and len(job_perm_lines) == 1, f"job-level permissions lines: {job_perm_lines}")
 check("reusable: jobs are exactly guard + red-first + report", child_keys(jobs) == {"guard", "red-first", "report"},
       str(child_keys(jobs)))
 guard = block(jobs, "guard") or []
@@ -140,9 +142,26 @@ check("red-first: runs mech-review.py red", "mech-review.py" in rt and " red" in
 check("red-first: head branch from github.head_ref", "github.head_ref" in rt)
 check("red-first: agent prefix from the agent-branch-prefix input", "inputs.agent-branch-prefix" in rt)
 check("red-first: toolchain set up for the rust stack", "rust-toolchain" in rt and "inputs.stack == 'rust'" in rt)
+# the step is a list item: its lines run from "- name: Rust toolchain" to the next "- name:"
+_i = next((n for n, l in enumerate(red) if l.strip() == "- name: Rust toolchain"), None)
+tc = []
+if _i is not None:
+    for l in red[_i + 1:]:
+        if l.strip().startswith("- name:"):
+            break
+        tc.append(l)
+tc = [l.strip() for l in tc]
+uses_line = next((l.split("uses:", 1)[1].split("#")[0].strip() for l in tc if l.startswith("uses:")), "")
+check("red-first: rust-toolchain pinned to a full 40-hex commit SHA",
+      re.fullmatch(r"dtolnay/rust-toolchain@[0-9a-f]{40}", uses_line) is not None, uses_line)
+check("red-first: rust-toolchain passes toolchain: stable (required when pinned by SHA)",
+      any(l == "toolchain: stable" for l in tc), str(tc))
 check("red-first: honours extra-apt-packages", "inputs.extra-apt-packages" in rt and "apt-get" in rt)
 check("red-first: uploads its JSON artifact", "mech-review-red-json" in rt and "upload-artifact" in rt)
-check("red-first: no job-level permissions", not any(re.match(r"\s+permissions:", l) for l in red))
+red_perm = block(red, "permissions") or []
+check("red-first: job-level permissions exactly contents read",
+      {k: value(red_perm, k) for k in child_keys(red_perm)} == {"contents": "read"},
+      str({k: value(red_perm, k) for k in child_keys(red_perm)}))
 check("red-first: no pull_request_target", "pull_request_target" not in rt)
 check("inputs: agent-branch-prefix is used now, not UNUSED",
       "UNUSED" not in " ".join(block(inputs, "agent-branch-prefix") or []), str(block(inputs, "agent-branch-prefix")))

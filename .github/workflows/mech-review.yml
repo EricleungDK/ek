@@ -95,6 +95,9 @@ jobs:
   red-first:
     name: mech-review red-first (R1, R4)
     runs-on: ubuntu-latest
+    # runs PR code (cargo test): read-only token, so a PR test cannot edit the comment or PR content
+    permissions:
+      contents: read
     steps:
       - name: caller checkout (full history, PR head)
         uses: actions/checkout@v4
@@ -112,7 +115,9 @@ jobs:
           persist-credentials: false
       - name: Rust toolchain
         if: inputs.stack == 'rust'
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+        with:
+          toolchain: stable
       - name: extra apt packages
         if: inputs.extra-apt-packages != ''
         env:
