@@ -11,6 +11,9 @@ Agent workflow kit for Claude Code: one plugin, same setup on every machine and 
 | `scripts/mech-review.py` | mechanical review engine: `r2`/`all --repo . --base main --head HEAD --stack rust --test-paths 'tests/**' --protected-paths '.github/**' [--format text]` → contract JSON, exit 0 pass / 1 fail / 2 usage. R2 test-diff guard (rust); R1/R3/R4 `skipped`. `--help` for contract |
 | `skills/finish` | end-of-work report: done (evidence per criterion) or blocked (Needs-you block); mech per-check status with head SHA, skipped = not run |
 | [`docs/testing-standard.md`](docs/testing-standard.md) | testing standard: what a good test is, forbidden cheats, mech-review vs code review |
+| `.github/workflows/mech-review.yml` | reusable `workflow_call` mech-review: `guard` runs R2 with no toolchain, `report` edits one `<!-- mech-review -->` PR comment and sets the check. Adopters pin a tag: [`docs/mech-review-ci.md`](docs/mech-review-ci.md) |
+| `.github/workflows/mech-review-self.yml` | ek's own caller of the reusable workflow (local `uses: ./`), the demo path |
+| `scripts/mech-comment.py` | comment poster for the report job: renders the JSON (summary, table, JSON block), find-or-edit via GitHub API; exit 0 pass / 1 fail / 3 API error / 4 no result. `scripts/mech_review/comment.py` is the pure render |
 | `SessionStart` hook | preflight warnings + working rules into context |
 | `PostToolUseFailure` hook | known Bash failure signatures → one context line |
 | `Stop` / `SubagentStop` hook | blocks once per new change set until the finish report is given |

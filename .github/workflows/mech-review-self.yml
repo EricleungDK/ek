@@ -1,0 +1,19 @@
+name: mech-review (ek self)
+
+# ek's own caller. Uses the LOCAL reusable workflow, so on a PR it runs the PR's engine (the demo path).
+# Adopters pin a tag instead: see docs/mech-review-ci.md.
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  mech-review:
+    uses: ./.github/workflows/mech-review.yml
+    with:
+      stack: rust
+      test-paths: 'tests/**'
+      protected-paths: '.github/**'
