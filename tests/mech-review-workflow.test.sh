@@ -252,8 +252,7 @@ check("report: mutants envelope only when the plan ran it, a crash is still repo
 
 check("all third-party actions pinned to a full SHA (actions/* are GitHub's own, tag-pinned)",
       all(re.fullmatch(r"[0-9a-f]{40}", l.split("uses:", 1)[1].split("#")[0].strip().split("@", 1)[1])
-          for l in W if "uses:" in l and not l.split("uses:", 1)[1].strip().startswith("actions/")
-          and "uses: ./" not in l and "uses:" in l),
+          for l in W if l.strip().startswith("uses:") and not l.split("uses:", 1)[1].strip().startswith("actions/")),
       str([l for l in W if "uses:" in l]))
 
 # ---- ek's own caller ----
