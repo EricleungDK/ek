@@ -363,6 +363,22 @@ eq "$(jq -r .checks.R3.status <<<"$out")" n/a "ts no vitest binary: R3 n/a"
 has "$(jq -r .checks.R3.note <<<"$out")" "vitest not installed (env)" "ts no vitest binary: the note names the runner"
 lacks "$(cat "$MECH_STUB_LOG")" "run --mutate" "ts no vitest binary: Stryker is not run"
 
+# a report that is valid JSON but not a report: n/a (env), not a crash
+echo '[1, 2]' > "$T/list.json"
+mrepo badjson
+export MUT_REPORT="$T/list.json" MUT_STDOUT="$FX/missed/stdout.txt" MUT_RC=0
+out=$(st "$R" "$B" "$H" 2>&1); rc=$?
+eq "$(jq -r .checks.R3.status <<<"$out" 2>/dev/null)" n/a "ts report that is a list: R3 n/a, not a crash"
+python3 -c "
+import json
+d = json.load(open('$FX/missed/report.json'))
+d['files']['src/calc.ts']['mutants'].append('not a mutant')
+json.dump(d, open('$T/badmutant.json', 'w'))"
+mrepo badmutant
+export MUT_REPORT="$T/badmutant.json" MUT_STDOUT="$FX/missed/stdout.txt" MUT_RC=0
+out=$(st "$R" "$B" "$H"); rc=$?
+eq "$(jq -r .checks.R3.status <<<"$out")" n/a "ts report with a non-object mutant: R3 n/a, the others are not lost"
+
 # plan: a ts production change runs the mutants job over 4 shards
 mrepo plan
 out=$(python3 -I "$MR" plan --repo "$R" --base "$B" --head "$H" --stack ts --test-paths 'tests/**' --shards 4)

@@ -10,6 +10,9 @@ Adapter interface:
       text: the whole assert call, whitespace-normalized (for messages)
   test_bodies(text) -> {name: (line, body)}   body: whitespace-normalized source of a #[test] fn item (R1/R4 compare)
   default_test_cmd: the toolchain command a runner starts from (rust: cargo test)
+  test_cmd_in(crate) -> the test command for a checkout (ts: vitest or jest from package.json); default: default_test_cmd
+  worktree_setup(repo, wt, project_dir): per-worktree toolchain setup (ts links the caller's node_modules); default no-op
+  ignored_text(name) -> R2 problem for a test marked ignored (ts: skipped)
   test_argv(cmd, path, name) -> argv that runs one named test (path: the file the test is in)
   outcome(rc, output) -> verdict of one run:
       pass | fail | build | none | error | timeout | env (rc None: executable missing, toolchain absent)
@@ -901,7 +904,7 @@ class TsAdapter(Adapter):
     def assertions(self, text):
         m, _, _, _, tests, fns = _ts_parse(text)
         owners = self._owners(text)
-        spans = [(n, t.start, t.end) for n, t, _ in tests if t.args[1:] or t.args]
+        spans = [(n, t.start, t.end) for n, t, _ in tests]
         out = []
         for e in JS_EXPECT.finditer(m):
             pos = e.start()

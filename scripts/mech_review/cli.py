@@ -26,7 +26,8 @@ checks (status in envelope: pass | fail | partial | n/a | skipped):
       Runs in a git worktree at the red commit; n/a when the toolchain is absent.
   R4  determinism (red subcommand): each new or changed #[test] runs 5x at head; any failing run
       is a fail. n/a when the toolchain is absent.
-  R3  mutation on the diff (`mutants`): cargo-mutants `--in-diff`, run in a worktree at head, 120 s per mutant
+  R3  mutation on the diff (`mutants`): cargo-mutants `--in-diff` (rust), mutmut (python), Stryker 10.0.0 (ts: changed
+      lines, `--mutate` ranges), run in a worktree at head, 120 s per mutant
       (`--mutant-timeout`), budget `--mutation-budget MIN` (default 10, per shard). MISSED in a production file
       -> fail (agent-fixable), one entry per mutant; TIMEOUT and UNVIABLE ignored. Budget hit with no MISSED ->
       partial (tested/total), not blocking. Tool not installed -> n/a (env). No production file -> skipped.
@@ -88,10 +89,12 @@ def build_parser():
     p.add_argument("--format", choices=["json", "text"], default="json", help="json (contract, default) or text (summary + entries)")
     p.add_argument("--head-branch", metavar="NAME", help="head branch name (R1 needs it: CI passes github.head_ref)")
     p.add_argument("--agent-prefix", default="agent/", metavar="PREFIX", help="agent branch prefix for R1 (default agent/)")
-    p.add_argument("--test-cmd", metavar="CMD", help="test command for R1/R4 (default: the stack's, rust: cargo test)")
+    p.add_argument("--test-cmd", metavar="CMD", help="test command for R1/R4 (default: the stack's: rust cargo test, python "
+                                                       "pytest, ts node_modules/.bin/vitest or jest from package.json)")
     p.add_argument("--project-dir", type=project_dir_arg, default=".", metavar="DIR",
                    help="crate dir under the repo root (default .): R1, R4 and R3 run there; paths stay repo-root")
-    p.add_argument("--mutants-cmd", metavar="CMD", help="mutation tool for R3 (default: the stack's: rust cargo mutants, python mutmut)")
+    p.add_argument("--mutants-cmd", metavar="CMD", help="mutation tool for R3 (default: the stack's: rust cargo mutants, python "
+                                                          "mutmut, ts node_modules/.bin/stryker)")
     p.add_argument("--mutation-budget", type=float, default=10.0, metavar="MIN",
                    help="R3 budget in minutes for this run (default 10); a budget hit is partial, not a failure")
     p.add_argument("--mutant-timeout", type=int, default=120, metavar="SEC",

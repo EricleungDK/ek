@@ -611,12 +611,18 @@ def stryker_total(log):
 
 
 def stryker_rows(doc):
-    """[(crate-relative file, mutant dict, file source)] for every mutant of a Stryker JSON report."""
+    """[(crate-relative file, mutant dict, file source)] for every mutant of a Stryker JSON report. ValueError when the
+    report's shape is not Stryker's (a file or a mutant that is not an object): a partial read would hide mutants."""
+    files = (doc or {}).get("files") or {}
+    if not isinstance(files, dict):
+        raise ValueError("files is not an object")
     out = []
-    for f, res in ((doc or {}).get("files") or {}).items():
-        if not isinstance(res, dict):
-            continue
+    for f, res in files.items():
+        if not isinstance(res, dict) or not isinstance(res.get("mutants") or [], list):
+            raise ValueError(f"{f} has no mutant list")
         for m in res.get("mutants") or []:
+            if not isinstance(m, dict):
+                raise ValueError(f"a mutant in {f} is not an object")
             out.append((f, m, res.get("source") or ""))
     return out
 
@@ -723,6 +729,8 @@ class Stryker:
             wall = time.monotonic() - t0
             total = stryker_total(text)
             doc = _load(report)
+            if not isinstance(doc, dict):
+                doc = None
             timing = {"wall_s": round(wall, 2)}
             if doc is None:
                 if rc == "timeout":
@@ -736,7 +744,10 @@ class Stryker:
                               "a mutation check that did not run")])
                 return _check("n/a", f"no Stryker report (env): {_first_line(text) or f'exit {rc}'}; check the test runner "
                                      "plugin and the run log"), []
-            rows = stryker_rows(doc)
+            try:
+                rows = stryker_rows(doc)
+            except ValueError as e:
+                return _check("n/a", f"Stryker report is malformed (env): {e}; check the Stryker version and the run log"), []
             silent = [m for _, m, _ in rows if m.get("status") == "Survived" and m.get("coveredBy")
                       and not m.get("testsCompleted")]
             if silent:
