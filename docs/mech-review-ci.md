@@ -12,7 +12,7 @@ Rules: [testing standard](testing-standard.md).
 
 ## Caller
 
-Add to your repo, pin an ek release tag (`v0.1.1` is an example; use the tag that ships this workflow):
+Add to your repo, pin an ek release tag (`v0.2.0` is the first tag that ships this workflow):
 
 ```yaml
 name: mech-review
@@ -23,7 +23,7 @@ permissions:
   pull-requests: write
 jobs:
   mech-review:
-    uses: EricleungDK/ek/.github/workflows/mech-review.yml@v0.1.1
+    uses: EricleungDK/ek/.github/workflows/mech-review.yml@v0.2.0
     with:
       stack: rust
       test-paths: |

@@ -2,6 +2,7 @@
 # fixture: PR branch at HEAD + mech-review JSON with one entry per class path
 set -e
 git init -q -b main .; git config user.email t@t; git config user.name t
+printf '.gitconfig\n.config/\n.npm/\n' >> .git/info/exclude  # sandbox HOME files: not the work, keep the finish gate quiet
 mkdir -p src tests .github/workflows
 echo 'pub fn add(a: i32, b: i32) -> i32 { a + b }' > src/lib.rs
 echo '#[test] fn adds() { assert_eq!(add(1, 1), 2); }' > tests/a.rs

@@ -46,7 +46,7 @@ bash tests/run.sh
 Skill evals (kit dev only; plugin users need none of this):
 
 ```
-claude plugin eval . --scaffold --allow-tools Bash Edit Write
+claude plugin eval . --judge-model claude-opus-5-5 --scaffold --allow-tools Bash Edit Write
 ```
 
 `taste-act-*` cases grant Bash, so the eval sandbox needs `bubblewrap` + `socat` and no symlinks inside `~/.docker`. Their Bash is read-only, so graders check the commands run, not a runner PASS.

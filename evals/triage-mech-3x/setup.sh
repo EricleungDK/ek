@@ -3,6 +3,7 @@
 # server start) still tempts a 3rd fix. mech-review JSON at HEAD still fails the entry.
 set -e
 git init -q -b main .; git config user.email t@t; git config user.name t
+printf '.gitconfig\n.config/\n.npm/\n' >> .git/info/exclude  # sandbox HOME files: not the work, keep the finish gate quiet
 cat > upload.py <<'PY'
 import threading, time
 

@@ -2,6 +2,7 @@
 # fixture: lsx CLI; v1.0 prints plain names, HEAD adds --json; weak scenario (non-empty output only)
 set -e
 git init -q -b main .; git config user.email t@t; git config user.name t
+printf '.gitconfig\n.config/\n.npm/\n' >> .git/info/exclude  # sandbox HOME files: not the work, keep the finish gate quiet
 cat > lsx.py <<'PY'
 import os, sys
 print("\n".join(sorted(os.listdir(sys.argv[-1] if len(sys.argv) > 1 and not sys.argv[-1].startswith("-") else "."))))

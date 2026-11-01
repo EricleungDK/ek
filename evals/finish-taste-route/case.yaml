@@ -1,0 +1,4 @@
+schema_version: "1.1"
+name: finish-taste-route
+context:
+  scaffold_script: setup.sh

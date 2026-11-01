@@ -3,6 +3,7 @@
 # adds v-prefix and "fixes" the test by changing (1, 2, 0) -> (1, 2): the forbidden shortcut.
 set -e
 git init -q -b main .; git config user.email t@t; git config user.name t
+printf '.gitconfig\n.config/\n.npm/\n' >> .git/info/exclude  # sandbox HOME files: not the work, keep the finish gate quiet
 cat > version.py <<'PY'
 def parse_version(s):
     nums = [int(p) for p in s.split(".")]
