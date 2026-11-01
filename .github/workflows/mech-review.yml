@@ -3,7 +3,7 @@ name: mech-review
 # Reusable. Callers pin an ek tag:
 #   uses: EricleungDK/ek/.github/workflows/mech-review.yml@v0.1.1
 # The ek scripts run at the SAME ref the caller pinned: job.workflow_sha / job.workflow_repository
-# are the called workflow file's commit and repo, so the guard and the poster are checked out from there.
+# are the called workflow file's commit and repo, so the guard, red-first and the poster are checked out from there.
 
 on:
   workflow_call:
@@ -23,15 +23,15 @@ on:
         default: |
           .github/**
       agent-branch-prefix:
-        description: "UNUSED by the R2 guard; reserved for the R1 red-first check"
+        description: "R1 red-first runs only on head branches with this prefix"
         type: string
         default: "agent/"
       mutation-budget:
-        description: "UNUSED by the R2 guard; reserved for the R3 mutation check"
+        description: "UNUSED by the R2 guard and red-first; reserved for the R3 mutation check"
         type: string
         default: ""
       extra-apt-packages:
-        description: "UNUSED by the R2 guard; reserved for toolchain jobs (R1/R3)"
+        description: "apt packages (space-separated) installed before the red-first job runs its tests"
         type: string
         default: ""
 
@@ -92,9 +92,72 @@ jobs:
           if-no-files-found: ignore
           overwrite: true
 
+  red-first:
+    name: mech-review red-first (R1, R4)
+    runs-on: ubuntu-latest
+    steps:
+      - name: caller checkout (full history, PR head)
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          path: caller
+          persist-credentials: false
+      - name: ek engine checkout (the ref this workflow was called at)
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          path: ek
+          persist-credentials: false
+      - name: Rust toolchain
+        if: inputs.stack == 'rust'
+        uses: dtolnay/rust-toolchain@stable
+      - name: extra apt packages
+        if: inputs.extra-apt-packages != ''
+        env:
+          EXTRA_APT: ${{ inputs.extra-apt-packages }}
+        run: |
+          set -eu
+          read -ra pkgs <<< "$EXTRA_APT"
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq "${pkgs[@]}"
+      - name: R1 red-first, R4 determinism
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          HEAD_REF: ${{ github.head_ref }}
+          AGENT_PREFIX: ${{ inputs.agent-branch-prefix }}
+          STACK: ${{ inputs.stack }}
+          TEST_PATHS: ${{ inputs.test-paths }}
+        run: |
+          set -uo pipefail
+          args=(--repo "$GITHUB_WORKSPACE/caller" --base "$BASE_SHA" --head "$HEAD_SHA" --stack "$STACK"
+                --head-branch "$HEAD_REF" --agent-prefix "$AGENT_PREFIX")
+          while IFS= read -r g; do
+            if [ -n "$g" ]; then args+=(--test-paths "$g"); fi
+          done <<< "$TEST_PATHS"
+          rc=0
+          python3 -I "$GITHUB_WORKSPACE/ek/scripts/mech-review.py" red "${args[@]}" > mech-review-red.json 2> mech-review-red.err || rc=$?
+          cat mech-review-red.err >&2
+          # exit 1 = fail entries: a result, saved and reported. exit 2+ = usage or git error: no result.
+          if [ "$rc" -gt 1 ]; then
+            rm -f mech-review-red.json
+            echo "::error::mech-review red-first exit $rc (usage or git error): no result"
+            exit "$rc"
+          fi
+      - name: upload red-first result
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mech-review-red-json
+          path: mech-review-red.json
+          if-no-files-found: ignore
+          overwrite: true
+
   report:
     name: mech-review report
-    needs: guard
+    needs: [guard, red-first]
     if: always()
     runs-on: ubuntu-latest
     steps:
@@ -110,6 +173,13 @@ jobs:
         continue-on-error: true
         with:
           name: mech-review-json
+          path: r2-result
+      - name: fetch red-first result
+        uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          name: mech-review-red-json
+          path: red-result
       - name: post or edit the sticky comment, set the check result
         env:
           GITHUB_TOKEN: ${{ github.token }}
@@ -117,4 +187,6 @@ jobs:
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
           python3 -I ek/scripts/mech-comment.py --pr "$PR_NUMBER" --head "$HEAD_SHA" \
-            --envelope mech-review.json --reason "no JSON from the guard job (see its log)"
+            --envelope r2=r2-result/mech-review.json \
+            --envelope red=red-result/mech-review-red.json \
+            --reason "no JSON from the job (see its log)"

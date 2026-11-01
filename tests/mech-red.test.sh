@@ -25,6 +25,7 @@ case "${o:-pass}" in
   fail)  printf 'running 1 test\ntest %s ... FAILED\n\ntest result: FAILED. 0 passed; 1 failed; 0 ignored\n' "$name"; exit 101 ;;
   build) printf 'error[E0425]: cannot find value `x` in this scope\nerror: could not compile `fixture` (lib test) due to 1 previous error\n'; exit 101 ;;
   none)  printf 'running 0 tests\n\ntest result: ok. 0 passed; 0 failed; 0 ignored\n'; exit 0 ;;
+  error) printf 'error: could not find `Cargo.toml` in `%s` or any parent directory\n' "$(pwd -P)"; exit 101 ;;
   flaky) n=$(( $(cat "$MECH_STUB_STATE/$name" 2>/dev/null || echo 0) + 1 )); echo "$n" > "$MECH_STUB_STATE/$name"
          if (( n % 2 )); then printf 'test %s ... FAILED\n\ntest result: FAILED. 0 passed; 1 failed\n' "$name"; exit 101; fi
          printf 'test %s ... ok\n\ntest result: ok. 1 passed; 0 failed\n' "$name"; exit 0 ;;
@@ -291,6 +292,13 @@ HEAD_OUT=none agent_repo r4none
 out=$(red "$R" "$B" "$H" --head-branch feat/x); rc=$?
 eq "$rc" 1 "test ran zero times at head: exit 1"
 has "$(jq -r '[.entries[].problem] | join(" ")' <<<"$out")" "did not run" "zero-run test: problem"
+
+HEAD_OUT=error agent_repo r4err
+out=$(red "$R" "$B" "$H" --head-branch feat/x); rc=$?
+eq "$rc" 1 "cargo cannot run the test (no manifest): exit 1"
+eq "$(jq -r .checks.R4.status <<<"$out")" fail "cargo cannot run the test: R4 fail"
+has "$(jq -r '[.entries[].problem] | join(" ")' <<<"$out")" "cannot run at head" "cargo cannot run the test: problem names it"
+eq "$(jq -r '.entries[0].class' <<<"$out")" env "cargo cannot run the test: class env"
 
 # ---- all: every implemented check; r2 and red name what they did not run ----
 agent_repo allrun

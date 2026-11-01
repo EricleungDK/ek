@@ -82,8 +82,10 @@ def first_red(repo, mb, head):
 
 
 def run_named(runner, adapter, cmd, cwd, name):
+    """(verdict, first line of output): the line says why a run had no test result."""
     rc, out = runner(adapter.test_argv(cmd, name), cwd)
-    return adapter.outcome(rc, out)
+    lines = [l.strip() for l in out.splitlines() if l.strip()]
+    return adapter.outcome(rc, out), (lines[0][:200] if lines else "")
 
 
 def r1(repo, mb, head, adapter, test_globs, head_branch, agent_prefix, cmd, runner):
@@ -116,7 +118,7 @@ def r1(repo, mb, head, adapter, test_globs, head_branch, agent_prefix, cmd, runn
     entries, red_count, compile_red = [], 0, 0
     with worktree(repo, red) as wt:
         for path, name, line in tests:
-            verdict = run_named(runner, adapter, cmd, wt, name)
+            verdict, first = run_named(runner, adapter, cmd, wt, name)
             if verdict == "env":
                 return check("n/a", "toolchain absent: cannot run tests at the red commit (env)"), []
             if verdict == "fail":
@@ -134,7 +136,7 @@ def r1(repo, mb, head, adapter, test_globs, head_branch, agent_prefix, cmd, runn
                                      "no failing test(red) commit"))
             else:
                 entries.append(entry("R1", path, line, f"red-unproven:{name}", "agent-fixable", "fail",
-                                     f"`{name}` cannot be proven red at the red commit ({verdict})",
+                                     f"`{name}` cannot be proven red at the red commit ({verdict}: {first})",
                                      hint, "no failing test(red) commit"))
     note = f"{red_count} red test(s) fail at the red commit"
     if compile_red:
@@ -152,7 +154,7 @@ def r4(repo, mb, head, adapter, test_globs, cmd, runner):
         for path, name, line in tests:
             verdicts = []
             for _ in range(TEST_RUNS):
-                verdict = run_named(runner, adapter, cmd, wt, name)
+                verdict, first = run_named(runner, adapter, cmd, wt, name)
                 if verdict == "env":
                     return check("n/a", "toolchain absent: cannot run new or changed tests (env)"), []
                 if verdict == "build":
@@ -160,6 +162,12 @@ def r4(repo, mb, head, adapter, test_globs, cmd, runner):
                                          f"does not build at head: `{name}` cannot run",
                                          "fix the build: new or changed tests must run", "a test that does not build"))
                     return check("fail", "does not build at head"), entries
+                if verdict == "error":
+                    entries.append(entry("R4", path, line, f"cannot-run:{name}", "env", "fail",
+                                         f"test `{name}` cannot run at head: {first}",
+                                         "fix the test setup (manifest, flags); the toolchain did not reach a test result",
+                                         "a check that did not run"))
+                    return check("fail", "a new or changed test cannot run at head"), entries
                 verdicts.append(verdict)
             bad = [v for v in verdicts if v != "pass"]
             if not bad:
@@ -167,7 +175,8 @@ def r4(repo, mb, head, adapter, test_globs, cmd, runner):
             if len(bad) == TEST_RUNS and all(v == "none" for v in bad):
                 problem = f"test `{name}` did not run at head"
             else:
-                problem = f"test `{name}` failed {len(bad)} of {TEST_RUNS} runs at head"
+                kinds = ", ".join(sorted(set(bad)))
+                problem = f"test `{name}` failed {len(bad)} of {TEST_RUNS} runs at head ({kinds})"
             entries.append(entry("R4", path, line, f"flaky:{name}", "agent-fixable", "fail", problem,
                                  "find the nondeterminism (time, order, shared state, sleep) and fix it; never retry to green",
                                  "retrying a test until it passes"))
