@@ -334,6 +334,10 @@ PY_ASSERT_NE = {"assertNotEqual", "assertNotEquals"}
 PY_SKIP = {"skip", "skipIf", "skipUnless", "skipif", "xfail"}
 PY_NOQA = re.compile(r"#\s*noqa\b(?::\s*([A-Za-z]+\d+(?:\s*,\s*[A-Za-z]+\d+)*))?", re.I)
 PY_TYPE_IGNORE = re.compile(r"#\s*type:\s*ignore\b(?:\[([^\]]*)\])?")
+PY_BUILD = re.compile(r"Failed to import test module|ERROR collecting|during collection|^ERROR \S+\.py\s*$", re.M)
+PY_PASSED = re.compile(r"\b[1-9]\d* passed\b")
+PY_OK = re.compile(r"^OK\b", re.M)
+PY_RAN = re.compile(r"^Ran [1-9]\d* tests?\b", re.M)
 PY_SEP = re.compile(r"^[\s#:;,\-\u2014\u2013]+")
 
 
@@ -517,6 +521,38 @@ class PythonAdapter(Adapter):
     def suppression_text(self, sup):
         return (f"`{sup.lint_text}` added without a reason",
                 f"fix the lint, or give the suppression a reason after the codes: `{sup.lint_text} - why`")
+
+    def test_argv(self, cmd, path, name):
+        """one named test. pytest: the nodeid (`path::Class::test`), which also runs unittest TestCase methods.
+        A unittest command (`... unittest`): the dotted name (`tests.test_a.Class.test`)."""
+        argv = shlex.split(cmd)
+        if "unittest" in argv:
+            return argv + [path[:-3].replace("/", ".") + "." + name.replace("::", ".")]
+        return argv + ["-q", f"{path}::{name}"]
+
+    def outcome(self, rc, out):
+        """verdict of one run of pytest or unittest. Collection and import errors are build (like a compile error)."""
+        if rc is None:
+            return "env"
+        if rc == "timeout":
+            return "timeout"
+        if re.search(r"No module named '?pytest", out):
+            return "env"
+        if PY_BUILD.search(out):
+            return "build"
+        if "_FailedTest" in out:
+            return "error"  # unittest: the named test does not exist
+        if "no tests ran" in out or re.search(r"^Ran 0 tests?\b", out, re.M) or rc == 5:
+            return "none"
+        if rc == 0:
+            if PY_PASSED.search(out) or (PY_OK.search(out) and PY_RAN.search(out) and "skipped=" not in out):
+                return "pass"
+            if re.search(r"\b\d+ (skipped|xfailed|deselected)\b", out) or "skipped=" in out:
+                return "none"
+            return "error"  # exit 0 with no test result: the runner did not reach a test
+        if rc == 1:
+            return "fail"
+        return "error"
 
 
 ADAPTERS = {"python": PythonAdapter, "rust": RustAdapter}

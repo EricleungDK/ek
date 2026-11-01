@@ -65,11 +65,30 @@ def touched(repo, a, b, adapter, test_globs):
     for ch in changes(repo, a, b):
         if ch.new is None or adapter.classify(ch.new, test_globs) is None:
             continue
-        after = adapter.test_bodies(blob(repo, b, ch.new))
-        before = adapter.test_bodies(blob(repo, a, ch.old)) if ch.old else {}
+        text_after = blob(repo, b, ch.new)
+        if adapter.parse_error(text_after):
+            continue  # reported by unparseable(): its tests cannot be named
+        after = adapter.test_bodies(text_after)
+        text_before = blob(repo, a, ch.old) if ch.old else None
+        before = adapter.test_bodies(text_before) if text_before is not None and not adapter.parse_error(text_before) else {}
         for name, (line, body) in sorted(after.items(), key=lambda kv: kv[1][0]):
             if name not in before or before[name][1] != body:
                 out.append((ch.new, name, line))
+    return out
+
+
+def unparseable(repo, a, b, adapter, test_globs):
+    """R4 fail entries for changed files at b that the stack cannot parse: their tests cannot run."""
+    out = []
+    for ch in changes(repo, a, b):
+        if ch.new is None or adapter.classify(ch.new, test_globs) is None:
+            continue
+        err = adapter.parse_error(blob(repo, b, ch.new))
+        if err:
+            out.append(entry("R4", ch.new, err[0], f"unparseable:{ch.new}", "agent-fixable", "fail",
+                             f"file does not parse: {err[1]} (line {err[0]})",
+                             "fix the syntax error: the tests in this file cannot run",
+                             "a check that did not run"))
     return out
 
 
@@ -170,9 +189,11 @@ def r1(repo, mb, head, adapter, test_globs, head_branch, agent_prefix, cmd, runn
 def r4(repo, mb, head, adapter, test_globs, cmd, runner, project_dir="."):
     """R4 determinism: each new or changed test runs TEST_RUNS times at head; any failing run is a fail. Returns (check, entries)."""
     tests = touched(repo, mb, head, adapter, test_globs)
+    entries = unparseable(repo, mb, head, adapter, test_globs)
     if not tests:
+        if entries:
+            return check("fail", "a changed file does not parse"), entries
         return check("pass", "0 new or changed tests"), []
-    entries = []
     with worktree(repo, head) as wt:
         for path, name, line in tests:
             verdicts = []
