@@ -27,6 +27,7 @@ case "${o:-pass}" in
   build) printf 'ERROR tests/a.py\n1 error in 0.01s\n'; exit 4 ;;
   none)  printf 'no tests ran in 0.00s\n'; exit 4 ;;
   error) printf 'INTERNALERROR> boom\n'; exit 3 ;;
+  env)   printf '/usr/bin/python3: No module named pytest\n'; exit 1 ;;
   flaky) n=$(( $(cat "$MECH_STUB_STATE/$name" 2>/dev/null || echo 0) + 1 )); echo "$n" > "$MECH_STUB_STATE/$name"
          if (( n % 2 )); then printf 'FAILED tests/a.py::%s - assert 1 == 2\n1 failed in 0.01s\n' "$name"; exit 1; fi
          printf '1 passed in 0.01s\n'; exit 0 ;;
@@ -233,5 +234,90 @@ agent_repo allrun
 out=$(MECH_TEST_STUB="$STUB" python3 -I "$MR" all --repo "$R" --base "$B" --head "$H" --stack python --test-paths 'tests/**' --head-branch agent/x); rc=$?
 eq "$rc" 0 "python all: exit 0"
 eq "$(jq -r .summary <<<"$out")" "pass $H (0 fail, 0 confirm; ran: R1 R2 R4; skipped: R3)" "python all: runs R1 R2 R4"
+
+# ---- project-dir and manifests on python: R1/R4 run in the crate dir with crate-relative ids; paths stay repo-root ----
+# pd_repo <name>: pkg/ is the crate (pyproject, calc, tests); base adds test_adds, red adds test_fresh, head fixes calc.
+# env: RED_OUT, HEAD_OUT as agent_repo. sets R, B, RED, H
+pd_repo() {
+  R=$(mkrepo "$1"); local red_out="${RED_OUT-fail}" head_out="${HEAD_OUT-pass}"
+  put "$R" pkg/pyproject.toml <<'EOF'
+[project]
+name = "calc"
+version = "0.0.1"
+EOF
+  put "$R" pkg/calc/core.py <<'EOF'
+def add(a, b):
+    return a + b
+EOF
+  put "$R" pkg/tests/test_a.py <<'EOF'
+from calc.core import add
+
+
+def test_adds():
+    assert add(2, 2) == 4
+EOF
+  put "$R" other/x.py <<'EOF'
+X = 1
+EOF
+  B=$(commit "$R" base)
+  put "$R" pkg/tests/test_a.py <<'EOF'
+from calc.core import add
+
+
+def test_adds():
+    assert add(2, 2) == 4
+
+
+def test_fresh():
+    assert add(1, 2) == 3
+EOF
+  printf 'test_fresh %s\ntest_adds pass\n' "$red_out" > "$R/pkg/outcomes"
+  RED=$(commit "$R" "test(red): fresh")
+  printf 'test_fresh %s\ntest_adds pass\n' "$head_out" > "$R/pkg/outcomes"
+  put "$R" pkg/calc/core.py <<'EOF'
+def add(a, b):
+    return a + b  # fixed
+EOF
+  H=$(commit "$R" "feat: fix")
+}
+pd_red() { local r="$1" b="$2" h="$3"; shift 3; MECH_TEST_STUB="$STUB" python3 -I "$MR" red --repo "$r" --base "$b" --head "$h" --stack python --test-paths 'pkg/tests/**' "$@"; }
+
+pd_repo pd1
+: > "$MECH_STUB_LOG"
+out=$(pd_red "$R" "$B" "$H" --project-dir pkg --head-branch agent/x); rc=$?
+eq "$rc" 0 "project-dir python: red fails, head passes: exit 0"
+eq "$(jq -r .checks.R1.status <<<"$out")" pass "project-dir python: R1 pass"
+eq "$(jq -r .checks.R4.status <<<"$out")" pass "project-dir python: R4 pass"
+has "$(cat "$MECH_STUB_LOG")" "/pkg |" "project-dir python: the runner starts in the crate dir"
+has "$(cat "$MECH_STUB_LOG")" "-q tests/test_a.py::test_fresh" "project-dir python: nodeid is crate-relative"
+lacks "$(cat "$MECH_STUB_LOG")" "pkg/tests/test_a.py::" "project-dir python: no repo-root nodeid reaches pytest"
+
+RED_OUT=pass pd_repo pd2
+out=$(pd_red "$R" "$B" "$H" --project-dir pkg --head-branch agent/x); rc=$?
+eq "$rc" 1 "project-dir python: red passes at the red commit: exit 1"
+eq "$(jq -r '.entries[0].file' <<<"$out")" pkg/tests/test_a.py "project-dir python: entry file is repo-root"
+
+pd_repo pd3
+out=$(pd_red "$R" "$B" "$H" --project-dir nosuch --head-branch agent/x); rc=$?
+has "$(jq -r '[.entries[].problem] | join(" ")' <<<"$out")" "project dir nosuch not in this commit" "project-dir python: missing dir named"
+
+# no manifest where the runner ran: the cannot-run hint names project-dir, for python (never Cargo.toml)
+HEAD_OUT=error agent_repo nomanifest
+out=$(red "$R" "$B" "$H" --head-branch agent/x); rc=$?
+eq "$rc" 1 "python: test cannot run at head: exit 1"
+has "$(jq -r '[.entries[] | select(.check=="R4")][0].hint' <<<"$out")" "no pyproject.toml, setup.py or setup.cfg in .: set project-dir" "python: no-manifest hint names the manifest files and project-dir"
+lacks "$(cat <<<"$out")" "Cargo" "python: no Cargo.toml anywhere in the output"
+
+pd_repo pd4
+out=$(HEAD_OUT=error pd_red "$R" "$B" "$H" --project-dir pkg --head-branch agent/x); rc=$?
+lacks "$(jq -r '[.entries[].hint] | join(" ")' <<<"$out")" "set project-dir" "python: manifest present in project-dir: no project-dir hint"
+
+# pytest not installed: n/a names the test deps and setup-command, never the toolchain name
+RED_OUT=env HEAD_OUT=env agent_repo envpy
+out=$(red "$R" "$B" "$H" --head-branch agent/x); rc=$?
+eq "$(jq -r .checks.R1.status <<<"$out")" n/a "python pytest missing: R1 n/a"
+has "$(jq -r .checks.R1.note <<<"$out")" "pytest not installed (env)" "python pytest missing: note names pytest"
+has "$(jq -r .checks.R1.note <<<"$out")" "setup-command" "python pytest missing: note names setup-command"
+lacks "$(jq -r .checks.R1.note <<<"$out")" "\`python3\` not found" "python pytest missing: not a missing executable"
 
 done_tests

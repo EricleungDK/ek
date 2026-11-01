@@ -196,6 +196,7 @@ out=$(env -u MECH_TEST_STUB python3 -I "$MR" mutants --repo "$R" --base "$B" --h
 eq "$rc" 0 "python not installed: exit 0 (n/a is not a failure)"
 eq "$(jq -r .checks.R3.status <<<"$out")" n/a "python not installed: R3 n/a"
 has "$(jq -r .checks.R3.note <<<"$out")" "(env)" "python not installed: note says env"
+has "$(jq -r .checks.R3.note <<<"$out")" "setup-command" "python not installed: note names setup-command"
 eq "$(jq -r .summary <<<"$out")" "pass $H (0 fail, 0 confirm; ran: none; skipped: R1 R2 R4; n/a: R3)" "python not installed: summary names n/a"
 
 # baseline fails at head: fail, agent-fixable, mutants not run
@@ -242,6 +243,7 @@ eq "$(wc -l < "$MECH_STUB_LOG" | tr -d ' ')" 0 "python own [tool.mutmut]: mutmut
 
 # shards: each shard mutates its own share of the changed production files
 R="$T/shards"; mkdir -p "$R/src"; git -C "$R" init -q -b main
+printf '[project]\nname = "x"\n' > "$R/pyproject.toml"
 printf 'def a():\n    return 1\n' > "$R/src/a.py"; printf 'def b():\n    return 2\n' > "$R/src/b.py"
 git -C "$R" add -A; git -C "$R" -c user.name=t -c user.email=t@t commit -qm base; B=$(git -C "$R" rev-parse HEAD)
 printf 'def a():\n    return 3\n' > "$R/src/a.py"; printf 'def b():\n    return 4\n' > "$R/src/b.py"
@@ -273,4 +275,38 @@ out=$(python3 -I "$MR" plan --repo "$R" --base "$B" --head "$H" --stack rust --t
 eq "$(jq -c '{run,count}' <<<"$out")" '{"run":false,"count":1}' "rust stack on .py files: not run (ek itself stays on rust)"
 
 
+# ---- project-dir on python: mutmut runs in the crate dir, config there, file names repo-root ----
+PDR="$T/pdm"; mkdir -p "$PDR/pkg/src/calc" "$PDR/pkg/tests" "$PDR/other"; git -C "$PDR" init -q -b main
+printf '[project]\nname = "calc"\nversion = "0.0.1"\n' > "$PDR/pkg/pyproject.toml"
+printf '%s' "$PYBASE" > "$PDR/pkg/src/calc/core.py"; printf 'X = 1\n' > "$PDR/other/x.py"
+printf 'from calc.core import add\n\n\ndef test_add():\n    assert add(0, 0) == 0\n' > "$PDR/pkg/tests/test_core.py"
+git -C "$PDR" add -A; git -C "$PDR" -c user.name=t -c user.email=t@t commit -qm base; PB=$(git -C "$PDR" rev-parse HEAD)
+cp "$FX/head/src/calc/core.py" "$PDR/pkg/src/calc/core.py"; printf 'X = 2\n' > "$PDR/other/x.py"
+git -C "$PDR" add -A; git -C "$PDR" -c user.name=t -c user.email=t@t commit -qm head; PH=$(git -C "$PDR" rev-parse HEAD)
+: > "$MECH_STUB_LOG"
+out=$(MUT_FIXTURE=missed MUT_RC=0 MECH_TEST_STUB="$MUTSTUB" python3 -I "$MR" mutants --repo "$PDR" --base "$PB" --head "$PH" --stack python --test-paths 'pkg/tests/**' --project-dir pkg); rc=$?
+eq "$rc" 1 "python project-dir: MISSED in the crate: exit 1"
+eq "$(jq -r '[.entries[] | select(.check=="R3")] | length' <<<"$out")" 3 "python project-dir: 3 changed-line misses in the crate"
+eq "$(jq -r '.entries[0].file' <<<"$out")" pkg/src/calc/core.py "python project-dir: entry file is repo-root"
+eq "$(jq -r '.entries[0].line' <<<"$out")" 2 "python project-dir: line of the file in the crate"
+has "$(cat "$MECH_STUB_LOG")" "/pkg | run" "python project-dir: mutmut runs in the crate dir"
+has "$(cat "$MECH_STUB_LOG")" 'only_mutate = ["src/calc/core.py"]' "python project-dir: only_mutate is crate-relative"
+lacks "$(cat "$MECH_STUB_LOG")" "other/x.py" "python project-dir: a changed file outside the crate is not mutated"
+eq "$(git -C "$PDR" status --short | wc -l | tr -d ' ')" 0 "python project-dir: caller checkout untouched"
+
+out=$(MUT_FIXTURE=missed MUT_RC=0 MECH_TEST_STUB="$MUTSTUB" python3 -I "$MR" mutants --repo "$PDR" --base "$PB" --head "$PH" --stack python --test-paths 'pkg/tests/**' --project-dir nosuch 2>&1); rc=$?
+has "$out" "project dir nosuch not found at head" "python project-dir missing: named, mutants not run"
+
+# no manifest in the crate: n/a before mutmut runs; the note names the files and project-dir (never Cargo.toml)
+NMR="$T/nomanifest"; mkdir -p "$NMR/src/calc"; git -C "$NMR" init -q -b main
+printf 'def add(a, b):\n    return a+b\n' > "$NMR/src/calc/core.py"; git -C "$NMR" add -A; git -C "$NMR" -c user.name=t -c user.email=t@t commit -qm base; NB=$(git -C "$NMR" rev-parse HEAD)
+printf 'def add(a, b):\n    return a + b\n' > "$NMR/src/calc/core.py"; git -C "$NMR" add -A; git -C "$NMR" -c user.name=t -c user.email=t@t commit -qm head; NH=$(git -C "$NMR" rev-parse HEAD)
+: > "$MECH_STUB_LOG"
+out=$(MUT_FIXTURE=missed MUT_RC=2 MECH_TEST_STUB="$MUTSTUB" python3 -I "$MR" mutants --repo "$NMR" --base "$NB" --head "$NH" --stack python --test-paths 'tests/**'); rc=$?
+eq "$(jq -r .checks.R3.status <<<"$out")" n/a "python no manifest: R3 n/a"
+eq "$(jq -r .checks.R3.note <<<"$out")" "no pyproject.toml, setup.py or setup.cfg in .: set project-dir" "python no manifest: note names the files and project-dir"
+eq "$(wc -l < "$MECH_STUB_LOG" | tr -d ' ')" 0 "python no manifest: mutmut not invoked"
+lacks "$(jq -c . <<<"$out")" "Cargo" "python no manifest: no Cargo.toml in the result"
+
 done_tests
+

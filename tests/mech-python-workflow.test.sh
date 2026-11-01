@@ -114,6 +114,21 @@ check("red-first: the rust toolchain is still for the rust stack only",
 check("plan job has no toolchain step (git only)", not any("toolchain" in l.lower() for l in plan))
 check("python steps: no PR code run outside the test and mutation jobs", "mech-review.py" not in "\n".join(step(red, "Python toolchain")))
 
+for job_name, job in (("red-first", red), ("mutants", mut)):
+    py = "\n".join(step(job, "Python toolchain"))
+    check(f"{job_name}: python toolchain reads project-dir from the input, not a literal",
+          "inputs.project-dir" in py and "PROJECT_DIR" in py, py)
+    check(f"{job_name}: requirements come from the project dir (caller/<project-dir>)",
+          'caller/$PROJECT_DIR' in py, py)
+
+DOC = read("docs/mech-review-ci.md")
+doc = "\n".join(DOC)
+py_sec = doc[doc.index("Python toolchain"):] if "Python toolchain" in doc else ""
+check("docs: python section no longer says the project is never installed",
+      "The project itself is not installed" not in py_sec, py_sec[:200])
+check("docs: installing the project points to setup-command (e.g. pip install -e)",
+      "setup-command" in py_sec and "pip install -e" in py_sec, py_sec[:400])
+
 sys.exit(1 if FAILS else 0)
 PY
 eq "$?" 0 "workflow: python toolchain steps per stack (red-first, mutants), mutmut pinned, no project install"
