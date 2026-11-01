@@ -164,7 +164,7 @@ out=$(red "$R" "$B" "$H"); eq "$(jq -r .checks.R1.status <<<"$out")" skipped "no
 out=$(red "$R" "$B" "$H" --head-branch agent/x --agent-prefix bot/)
 eq "$(jq -r .checks.R1.status <<<"$out")" skipped "--agent-prefix bot/ does not match agent/x: R1 skipped"
 out=$(red "$R" "$B" "$H" --head-branch bot/x --agent-prefix bot/)
-eq "$(jq -r .checks.R1.status <<<"$out")" fail "--agent-prefix bot/ matches bot/x: R1 runs"
+eq "$(jq -r .checks.R1.status <<<"$out")" pass "--agent-prefix bot/ matches bot/x: R1 runs (red fails: pass)"
 
 put "$R" docs/notes.md <<<"just docs"; D=$(commit "$R" docs)
 out=$(red "$R" "$H" "$D" --head-branch agent/d); rc=$?
@@ -174,7 +174,7 @@ has "$(jq -r .checks.R1.note <<<"$out")" "no production file changed" "docs-only
 eq "$(jq -r .checks.R4.note <<<"$out")" "0 new or changed tests" "docs-only: R4 ran, no tests touched"
 
 # ---- R1 fails ----
-agent_repo r1nored RED_SUBJECT="test: fresh"
+RED_SUBJECT="test: fresh" agent_repo r1nored
 out=$(red "$R" "$B" "$H" --head-branch agent/x); rc=$?
 eq "$rc" 1 "no red commit: exit 1"
 eq "$(jq -r .checks.R1.status <<<"$out")" fail "no red commit: R1 fail"
@@ -182,13 +182,13 @@ eq "$(jq -r '.entries[0].check' <<<"$out")" R1 "no red commit: entry check R1"
 eq "$(jq -r '.entries[0].class' <<<"$out")" agent-fixable "no red commit: agent-fixable"
 has "$(jq -r '.entries[0].problem' <<<"$out")" "no test(red) commit" "no red commit: problem"
 
-agent_repo r1prod RED_PROD=1
+RED_PROD=1 agent_repo r1prod
 out=$(red "$R" "$B" "$H" --head-branch agent/x); rc=$?
 eq "$rc" 1 "red touches production: exit 1"
 eq "$(jq -r '.entries[0].file' <<<"$out")" src/lib.rs "red touches production: entry names the file"
 has "$(jq -r '.entries[0].problem' <<<"$out")" "touches production" "red touches production: problem"
 
-agent_repo r1pass RED_OUT=pass
+RED_OUT=pass agent_repo r1pass
 out=$(red "$R" "$B" "$H" --head-branch agent/x); rc=$?
 eq "$rc" 1 "new test passes at red: exit 1"
 has "$(jq -r '.entries[0].problem' <<<"$out")" "fresh" "new test passes at red: names the test"
@@ -204,19 +204,19 @@ eq "$(jq -r .checks.R1.status <<<"$out")" pass "red fails: R1 pass"
 eq "$(jq -r .summary <<<"$out")" "pass $H (0 fail, 0 confirm; ran: R1 R4; skipped: R2 R3)" "red ok summary"
 eq "$(jq -r .checks.R1.note <<<"$out")" "1 red test(s) fail at the red commit" "red ok: note counts red tests"
 
-agent_repo r1build RED_OUT=build
+RED_OUT=build agent_repo r1build
 out=$(red "$R" "$B" "$H" --head-branch agent/x); rc=$?
 eq "$rc" 0 "compile-red: exit 0 (confirm only)"
 eq "$(jq -r '.entries[0].severity' <<<"$out")" confirm "compile-red: confirm entry"
 has "$(jq -r '.entries[0].problem' <<<"$out")" "compile-red" "compile-red: problem names it"
 eq "$(jq -r .summary <<<"$out")" "pass $H (0 fail, 1 confirm; ran: R1 R4; skipped: R2 R3)" "compile-red: summary counts the confirm"
 
-agent_repo r1notest RED_NOTEST=1
+RED_NOTEST=1 agent_repo r1notest
 out=$(red "$R" "$B" "$H" --head-branch agent/x); rc=$?
 eq "$rc" 1 "red commit adds no test: exit 1"
 has "$(jq -r '.entries[0].problem' <<<"$out")" "adds no new test" "red adds no test: problem"
 
-agent_repo r1first RED2=1
+RED2=1 agent_repo r1first
 out=$(red "$R" "$B" "$H" --head-branch agent/x); rc=$?
 eq "$rc" 0 "first test(red) commit is the one checked (second one would pass)"
 eq "$(jq -r .checks.R1.status <<<"$out")" pass "first test(red) used"
@@ -240,7 +240,7 @@ eq "$(git -C "$R" status --porcelain)" "$st" "checkout: working tree unchanged"
 eq "$(git -C "$R" worktree list | wc -l)" 1 "checkout: no worktree left behind"
 
 # ---- R4: new or changed tests run 5x at head ----
-agent_repo r4flake HEAD_OUT=flaky
+HEAD_OUT=flaky agent_repo r4flake
 rm -rf "$MECH_STUB_STATE"/* ; : > "$MECH_STUB_LOG"
 out=$(red "$R" "$B" "$H" --head-branch feat/x); rc=$?
 eq "$rc" 1 "flaky test: exit 1"
@@ -282,12 +282,12 @@ C=$(commit "$R" "tighten adds")
 out=$(red "$R" "$H" "$C" --head-branch feat/x)
 eq "$(grep -c -- '--exact adds' "$MECH_STUB_LOG")" 5 "changed test: adds re-run 5x at head"
 
-agent_repo r4build HEAD_OUT=build
+HEAD_OUT=build agent_repo r4build
 out=$(red "$R" "$B" "$H" --head-branch feat/x); rc=$?
 eq "$rc" 1 "does not build at head: exit 1"
 has "$(jq -r '[.entries[].problem] | join(" ")' <<<"$out")" "does not build" "does not build at head: problem"
 
-agent_repo r4none HEAD_OUT=none
+HEAD_OUT=none agent_repo r4none
 out=$(red "$R" "$B" "$H" --head-branch feat/x); rc=$?
 eq "$rc" 1 "test ran zero times at head: exit 1"
 has "$(jq -r '[.entries[].problem] | join(" ")' <<<"$out")" "did not run" "zero-run test: problem"

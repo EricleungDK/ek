@@ -291,29 +291,34 @@ def r2(repo, mb, head, adapter, test_globs, protected_globs):
 
 def summarize(head, checks, entries):
     """`all pass <head>` only when every check passed and there are no entries. Otherwise
-    `<pass|fail> <head> (<F> fail, <C> confirm; ran: <checks>[; skipped: <checks>])`."""
+    `<pass|fail> <head> (<F> fail, <C> confirm; ran: <checks>[; skipped: <checks>][; n/a: <checks>])`.
+    n/a (toolchain absent) is not ran and not skipped: it is named so it never reads as a pass."""
     fails = sum(1 for e in entries if e["severity"] == "fail")
     confirms = len(entries) - fails
     if not entries and all(checks[c]["status"] == "pass" for c in CHECKS):
         return f"all pass {head}"
     skipped = [c for c in CHECKS if checks[c]["status"] == "skipped"]
-    ran = [c for c in CHECKS if c not in skipped]
+    na = [c for c in CHECKS if checks[c]["status"] == "n/a"]
+    ran = [c for c in CHECKS if c not in skipped and c not in na]
     parts = f"{fails} fail, {confirms} confirm; ran: {' '.join(ran) or 'none'}"
     if skipped:
         parts += f"; skipped: {' '.join(skipped)}"
+    if na:
+        parts += f"; n/a: {' '.join(na)}"
     return f"{'fail' if fails else 'pass'} {head} ({parts})"
 
 
-def envelope(base, head, entries):
-    fails = [e for e in entries if e["severity"] == "fail"]
-    confirms = [e for e in entries if e["severity"] == "confirm"]
-    checks = {c: {"status": "skipped", "note": "not implemented"} for c in CHECKS}
-    checks["R2"] = {"status": "fail" if fails else "pass", "note": f"{len(fails)} fail, {len(confirms)} confirm"}
+def envelope(base, head, entries, checks):
     return {"ek": ek_version(), "base": base, "head": head, "checks": checks, "entries": entries,
             "summary": summarize(head, checks, entries)}
 
 
-def run(repo, base_ref, head_ref, stack, test_globs, protected_globs=()):
+# which checks each subcommand runs; the rest are reported skipped with the subcommand named
+WHICH = {"r2": ("R2",), "red": ("R1", "R4"), "all": ("R1", "R2", "R4")}
+
+
+def run(repo, base_ref, head_ref, stack, test_globs, protected_globs=(), which="r2", agent_prefix="agent/",
+        head_branch=None, test_cmd=None, runner=None):
     base = resolve(repo, base_ref)
     head = resolve(repo, head_ref)
     try:
@@ -321,5 +326,27 @@ def run(repo, base_ref, head_ref, stack, test_globs, protected_globs=()):
     except Die:
         raise Die(f"no merge base for {base_ref} and {head_ref}")
     adapter = ADAPTERS[stack]()
-    entries = finalize(r2(repo, mb, head, adapter, test_globs, list(protected_globs)))
-    return envelope(base, head, entries)
+    want = WHICH[which]
+    checks = {c: {"status": "skipped", "note": "not implemented"} for c in CHECKS}  # R3: mutation, not built yet
+    raw = []
+    if "R2" in want:
+        raw += r2(repo, mb, head, adapter, test_globs, list(protected_globs))
+        fails = sum(1 for e in raw if e["severity"] == "fail")
+        checks["R2"] = {"status": "fail" if fails else "pass", "note": f"{fails} fail, {len(raw) - fails} confirm"}
+    else:
+        checks["R2"] = {"status": "skipped", "note": f"not run by {which}"}
+    from . import red  # lazy: red imports this module
+    if "R1" in want or "R4" in want:
+        cmd = test_cmd or adapter.default_test_cmd
+        run_test = runner or red.default_runner()
+    if "R1" in want:
+        checks["R1"], more = red.r1(repo, mb, head, adapter, test_globs, head_branch, agent_prefix, cmd, run_test)
+        raw += more
+    else:
+        checks["R1"] = {"status": "skipped", "note": f"not run by {which}"}
+    if "R4" in want:
+        checks["R4"], more = red.r4(repo, mb, head, adapter, test_globs, cmd, run_test)
+        raw += more
+    else:
+        checks["R4"] = {"status": "skipped", "note": f"not run by {which}"}
+    return envelope(base, head, finalize(raw), checks)
