@@ -152,25 +152,25 @@ eq "$(jq -r .checks.R4.status <<<"$out")" pass "python R4 pass"
 eq "$(jq -r .summary <<<"$out")" "pass $H (0 fail, 0 confirm; ran: R1 R4; skipped: R2 R3)" "python: summary names ran and skipped"
 has "$(cat "$MECH_STUB_LOG")" "-m pytest -q tests/test_a.py::test_fresh" "python: pytest runs the new test by nodeid"
 
-agent_repo passes RED_OUT=pass
+RED_OUT=pass agent_repo passes
 out=$(red "$R" "$B" "$H" --head-branch agent/x); rc=$?
 eq "$rc" 1 "python red passes at the red commit: exit 1"
 eq "$(jq -r '.entries[0].problem' <<<"$out")" "new test \`test_fresh\` passes at the red commit" "python red-pass names the test"
 eq "$(jq -r '.entries[0].class' <<<"$out")" agent-fixable "python red-pass class agent-fixable"
 eq "$(jq -r '.entries[0].check' <<<"$out")" R1 "python red-pass check R1"
 
-agent_repo nobuild RED_OUT=build
+RED_OUT=build agent_repo nobuild
 out=$(red "$R" "$B" "$H" --head-branch agent/x); rc=$?
 eq "$rc" 0 "python compile-red is confirm, exit 0"
 eq "$(jq -r '.entries[0].severity' <<<"$out")" confirm "python compile-red severity confirm"
 has "$(jq -r '.entries[0].problem' <<<"$out")" "compile-red" "python compile-red named"
 
-agent_repo prodred RED_PROD=1
+RED_PROD=1 agent_repo prodred
 out=$(red "$R" "$B" "$H" --head-branch agent/x); rc=$?
 eq "$rc" 1 "python red commit touching production: exit 1"
 has "$(jq -r '.entries[0].problem' <<<"$out")" "touches production path src/calc.py" "python red touches production named"
 
-agent_repo notest RED_NOTEST=1
+RED_NOTEST=1 agent_repo notest
 out=$(red "$R" "$B" "$H" --head-branch agent/x); rc=$?
 eq "$rc" 1 "python red commit with no new test: exit 1"
 
@@ -197,24 +197,24 @@ has "$(jq -r .summary <<<"$out")" "n/a: R1 R4" "python missing toolchain: summar
 lacks "$(jq -r .summary <<<"$out")" "all pass" "python missing toolchain: never all pass"
 
 # ---- R4 determinism on python ----
-agent_repo flaky HEAD_OUT=flaky
+HEAD_OUT=flaky agent_repo flaky
 out=$(red "$R" "$B" "$H" --head-branch agent/x); rc=$?
 eq "$rc" 1 "python flaky test at head: exit 1"
 eq "$(jq -r '[.entries[] | select(.check=="R4")][0].class' <<<"$out")" agent-fixable "python flaky class agent-fixable"
 has "$(jq -r '[.entries[] | select(.check=="R4")][0].problem' <<<"$out")" "test \`test_fresh\` failed" "python flaky names the test"
 has "$(jq -r '[.entries[] | select(.check=="R4")][0].id' <<<"$out")" "R4-" "python flaky id"
 
-agent_repo none HEAD_OUT=none
+HEAD_OUT=none agent_repo none
 out=$(red "$R" "$B" "$H" --head-branch agent/x); rc=$?
 eq "$rc" 1 "python test that does not run at head: exit 1"
 has "$(jq -r '[.entries[] | select(.check=="R4")][0].problem' <<<"$out")" "did not run at head" "python not-run problem"
 
-agent_repo broken HEAD_OUT=error
+HEAD_OUT=error agent_repo broken
 out=$(red "$R" "$B" "$H" --head-branch agent/x); rc=$?
 eq "$rc" 1 "python test that cannot run at head: exit 1"
 has "$(jq -r '[.entries[] | select(.check=="R4")][0].problem' <<<"$out")" "cannot run at head" "python cannot-run problem"
 
-agent_repo unparse RED_UNPARSE=1
+RED_UNPARSE=1 agent_repo unparse
 out=$(red "$R" "$B" "$H" --head-branch agent/x); rc=$?
 eq "$rc" 1 "python unparseable test file at head: exit 1, not a crash"
 has "$(jq -r '[.entries[] | select(.check=="R4")][0].problem' <<<"$out")" "does not parse" "python unparseable test file: R4 says does not parse"
@@ -223,7 +223,7 @@ has "$(jq -r '[.entries[] | select(.check=="R4")][0].problem' <<<"$out")" "does 
 agent_repo argv
 : > "$MECH_STUB_LOG"
 red "$R" "$B" "$H" --head-branch agent/x >/dev/null
-has "$(cat "$MECH_STUB_LOG")" "python3 -m pytest" "argv: default command is python3 -m pytest"
+has "$(cat "$MECH_STUB_LOG")" "-m pytest -q tests/test_a.py::test_fresh" "argv: default command is pytest, one nodeid (stub replaces argv[0])"
 : > "$MECH_STUB_LOG"
 MECH_TEST_STUB="$STUB" python3 -I "$MR" red --repo "$R" --base "$B" --head "$H" --stack python --test-paths 'tests/**' --head-branch agent/x --test-cmd "python3 -m unittest" >/dev/null
 has "$(cat "$MECH_STUB_LOG")" "tests.test_a.test_fresh" "argv: unittest command runs the dotted name"
