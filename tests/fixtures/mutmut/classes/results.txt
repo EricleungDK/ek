@@ -1,0 +1,3 @@
+    calc.core.xǁCalcǁadd__mutmut_1: survived
+    calc.core.xǁCalcǁsub__mutmut_1: no tests
+    calc.core.xǁOtherǁadd__mutmut_1: no tests

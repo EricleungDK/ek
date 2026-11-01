@@ -206,6 +206,8 @@ eq "$rc" 1 "python baseline fails: exit 1"
 eq "$(jq -r .checks.R3.status <<<"$out")" fail "python baseline fails: R3 fail"
 has "$(jq -r '.entries[0].problem' <<<"$out")" "baseline tests fail at head" "python baseline fails: names the baseline"
 eq "$(jq -r '.entries[0].class' <<<"$out")" agent-fixable "python baseline fails: agent-fixable"
+eq "$(jq -r '.entries[0].id' <<<"$out")" "R3-$(printf 'R3baseline' | sha1sum | cut -c1-8)" "review 1: baseline entry has a stable id"
+lacks "$(jq -c . <<<"$out")" "_key" "review 1: no internal key leaks into the baseline entry"
 
 # stops early (no test covers any mutant): the untested changed mutants are no tests, so MISSED in the diff
 mrepo uncovered
@@ -307,6 +309,77 @@ eq "$(jq -r .checks.R3.status <<<"$out")" n/a "python no manifest: R3 n/a"
 eq "$(jq -r .checks.R3.note <<<"$out")" "no pyproject.toml, setup.py or setup.cfg in .: set project-dir" "python no manifest: note names the files and project-dir"
 eq "$(wc -l < "$MECH_STUB_LOG" | tr -d ' ')" 0 "python no manifest: mutmut not invoked"
 lacks "$(jq -c . <<<"$out")" "Cargo" "python no manifest: no Cargo.toml in the result"
+
+# ---- review 1: class methods are located in their class; an unlocated name is counted, never a silent fail ----
+python3 -I - "$ROOT" <<'PY'
+import os
+import sys
+
+ROOT = sys.argv[1]
+sys.path.insert(0, os.path.join(ROOT, "scripts"))
+FX = os.path.join(ROOT, "tests", "fixtures", "mutmut")
+FAILS = 0
+
+
+def check(name, got, want):
+    global FAILS
+    if got == want:
+        print(f"  ok   {name}")
+    else:
+        FAILS += 1
+        print(f"  FAIL {name}\n       want: {got!r} == {want!r}")
+
+
+from mech_review import mutants as M  # noqa: E402
+
+with open(os.path.join(FX, "classes", "head", "src", "calc", "core.py"), encoding="utf-8") as f:
+    CLS = f.read()
+check("locate: class method found in its own class",
+      M.locate(CLS, "calc.core.xǁCalcǁadd__mutmut_1", "return a + b"), 3)
+check("locate: same method name in the other class is that class's line",
+      M.locate(CLS, "calc.core.xǁOtherǁadd__mutmut_1", "return a + b"), 11)
+check("locate: a second method of the first class",
+      M.locate(CLS, "calc.core.xǁCalcǁsub__mutmut_1", "return a - b"), 6)
+check("locate: a method of a class not in the file is None",
+      M.locate(CLS, "calc.core.xǁGhostǁadd__mutmut_1", "return a + b"), None)
+check("locate: the removed text must be in that class's method",
+      M.locate(CLS, "calc.core.xǁCalcǁadd__mutmut_1", "return a * b"), None)
+check("locate: module-level function unchanged", M.locate("def add(a, b):\n    return a + b\n",
+      "calc.core.x_add__mutmut_1", "return a + b"), 2)
+sys.exit(1 if FAILS else 0)
+PY
+eq "$?" 0 "review 1: locate resolves class methods by class, names an unknown class as None"
+
+# class repo: base differs from head only on Calc.add (line 3); Calc.sub and Other.add are outside the diff
+mrepo_cls() {
+  R="$T/$1"; mkdir -p "$R/src/calc" "$R/tests"; git -C "$R" init -q -b main
+  printf '[project]\nname = "calc"\nversion = "0.0.1"\n' > "$R/pyproject.toml"
+  sed '3s/a + b/a+b/' "$FX/classes/head/src/calc/core.py" > "$R/src/calc/core.py"
+  printf 'from calc.core import Calc\n\n\ndef test_calc_add():\n    assert Calc().add(0, 0) == 0\n' > "$R/tests/test_core.py"
+  git -C "$R" add -A; git -C "$R" -c user.name=t -c user.email=t@t commit -qm base; B=$(git -C "$R" rev-parse HEAD)
+  cp "$FX/classes/head/src/calc/core.py" "$R/src/calc/core.py"
+  git -C "$R" add -A; git -C "$R" -c user.name=t -c user.email=t@t commit -qm head; H=$(git -C "$R" rev-parse HEAD)
+}
+mrepo_cls classes
+out=$(MUT_FIXTURE=classes MUT_RC=0 mut); rc=$?
+eq "$rc" 1 "review 1: class repo: the changed method's miss fails: exit 1"
+eq "$(jq -r '[.entries[] | select(.check=="R3")] | length' <<<"$out")" 1 "review 1: only the changed method is reported (sub and Other.add are outside)"
+eq "$(jq -r '.entries[0].line' <<<"$out")" 3 "review 1: the changed method's line in its class"
+eq "$(jq -r '.entries[0].problem' <<<"$out")" "MISSED mutant src/calc/core.py:3: return a + b -> return a - b" "review 1: problem names the located line"
+has "$(jq -r .checks.R3.note <<<"$out")" "2 missed outside the diff" "review 1: note counts the two outside misses"
+has "$(jq -r .checks.R3.note <<<"$out")" "0 unlocated" "review 1: note counts unlocated (none here)"
+
+# unlocated: a mutant whose name maps to no class in the file is not a fail; it is one confirm, named, counted
+GX="$T/ghostfx"; mkdir -p "$GX"; cp -r "$FX/classes/." "$GX/"
+printf '    calc.core.xǁGhostǁadd__mutmut_1: survived\n' >> "$GX/results.txt"
+cp "$FX/classes/show/calc.core.xǁCalcǁadd__mutmut_1.txt" "$GX/show/calc.core.xǁGhostǁadd__mutmut_1.txt"
+out=$(MECH_FX="$GX" MUT_FIXTURE=. MUT_RC=0 MECH_TEST_STUB="$MUTSTUB" python3 -I "$MR" mutants --repo "$R" --base "$B" --head "$H" --stack python --test-paths 'tests/**'); rc=$?
+eq "$(jq -r '[.entries[] | select(.check=="R3" and .severity=="fail")] | length' <<<"$out")" 1 "review 1: unlocated is not a fail (only the located miss is)"
+eq "$(jq -r '[.entries[] | select(.check=="R3" and .severity=="confirm")] | length' <<<"$out")" 1 "review 1: unlocated is one confirm entry"
+eq "$(jq -r '[.entries[] | select(.severity=="confirm")][0].problem' <<<"$out")" "R3 unlocated: 1 missed mutant(s) could not be mapped to a line: not blocking" "review 1: confirm names the unlocated count and that it does not block"
+eq "$(jq -r '[.entries[] | select(.severity=="confirm")][0].id' <<<"$out")" "R3-$(printf 'R3unlocated' | sha1sum | cut -c1-8)" "review 1: unlocated confirm id is stable"
+has "$(jq -r .checks.R3.note <<<"$out")" "1 unlocated" "review 1: note counts the unlocated mutant"
+eq "$(jq -r .summary <<<"$out")" "fail $H (1 fail, 1 confirm; ran: R3; skipped: R1 R2 R4)" "review 1: summary counts the confirm"
 
 done_tests
 
