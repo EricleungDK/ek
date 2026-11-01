@@ -19,6 +19,7 @@ cat > "$STUB" <<'SH'
 #!/bin/bash
 name="${*: -1}"
 echo "$(pwd -P) | $*" >> "$MECH_STUB_LOG"
+if [[ -n "${MECH_STUB_MANIFEST-}" && ! -f Cargo.toml ]]; then printf 'error: could not find `Cargo.toml` in `%s` or any parent directory\n' "$(pwd -P)"; exit 101; fi
 o=$(awk -v n="$name" '$1 == n { print $2 }' outcomes 2>/dev/null)
 case "${o:-pass}" in
   pass)  printf 'running 1 test\ntest %s ... ok\n\ntest result: ok. 1 passed; 0 failed; 0 ignored\n' "$name"; exit 0 ;;
@@ -229,6 +230,9 @@ eq "$rc" 0 "toolchain absent: no entries, exit 0"
 eq "$(jq -r .checks.R1.status <<<"$out")" n/a "toolchain absent: R1 n/a"
 has "$(jq -r .checks.R1.note <<<"$out")" "toolchain absent" "toolchain absent: R1 note"
 eq "$(jq -r .checks.R4.status <<<"$out")" n/a "toolchain absent: R4 n/a"
+has "$(jq -r .checks.R1.note <<<"$out")" "\`ek-no-such-toolchain\` not found" "toolchain absent: R1 note names the tool"
+has "$(jq -r .checks.R1.note <<<"$out")" "setup-command" "toolchain absent: R1 note names setup-command"
+has "$(jq -r .checks.R4.note <<<"$out")" "setup-command" "toolchain absent: R4 note names setup-command"
 eq "$(jq -r .summary <<<"$out")" "pass $H (0 fail, 0 confirm; ran: none; skipped: R2 R3; n/a: R1 R4)" "toolchain absent: summary names n/a"
 
 # ---- the caller's checkout is never moved ----
@@ -391,6 +395,7 @@ fn adds() {
 }
 EOF
   put "$R" outside.txt <<<"x"
+  put "$R" sub/Cargo.toml <<<'[package]'
   B=$(commit "$R" base)
   put "$R" sub/tests/a.rs <<'EOF'
 #[test]
@@ -441,6 +446,16 @@ lacks "$(cat "$T/err")" Traceback "project dir missing: no traceback"
 eq "$(jq -r .checks.R1.status <<<"$out")" fail "project dir missing: R1 fail"
 has "$(jq -r '[.entries[].problem] | join(" ")' <<<"$out")" "project dir nosuch" "project dir missing: problem names the dir"
 eq "$(jq -r .checks.R4.status <<<"$out")" fail "project dir missing: R4 fail at head"
+
+# no Cargo.toml where cargo runs (stub reports cargo's own error): cannot run, the hint names project-dir
+subrepo subnom
+out=$(MECH_STUB_MANIFEST=1 red_sub "$R" "$B" "$H" --head-branch agent/x); rc=$?
+eq "$(jq -r .checks.R4.status <<<"$out")" fail "no manifest at the root: R4 fail"
+has "$(jq -r '[.entries[] | select(.check=="R4")][0].problem' <<<"$out")" "cannot run at head" "no manifest at the root: R4 cannot run"
+has "$(jq -r '[.entries[] | select(.check=="R4")][0].hint' <<<"$out")" "no Cargo.toml in .: set project-dir" "no manifest at the root: R4 hint names project-dir"
+has "$(jq -r '[.entries[] | select(.check=="R1")][0].hint' <<<"$out")" "no Cargo.toml in .: set project-dir" "no manifest at the root: R1 hint names project-dir"
+out=$(MECH_STUB_MANIFEST=1 red_sub "$R" "$B" "$H" --project-dir sub --head-branch agent/x)
+eq "$(jq -r .checks.R4.status <<<"$out")" pass "manifest in the project dir: R4 pass"
 
 for bad in ../x /abs sub/../x ""; do
   err=$(red_sub "$R" "$B" "$H" --project-dir "$bad" --head-branch agent/x 2>&1 >/dev/null); rc=$?

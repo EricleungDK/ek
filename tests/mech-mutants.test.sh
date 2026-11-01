@@ -154,6 +154,7 @@ if [[ -n "${MUT_FIXTURE-}" && -n "$out" ]]; then
   mkdir -p "$out/mutants.out"; cp -r "$MECH_FX/$fx/." "$out/mutants.out/"
 fi
 if [[ -n "${MUT_HANG-}" ]]; then sleep 30; fi
+if [[ -n "${MUT_OUT-}" ]]; then printf '%s\n' "$MUT_OUT"; fi
 exit "${MUT_RC:-0}"
 SH
 chmod +x "$MUT"
@@ -163,6 +164,7 @@ mrepo() {
   R="$T/$1"; mkdir -p "$R/src" "$R/tests"; git -C "$R" init -q -b main
   printf 'pub fn add(a: i32, b: i32) -> i32 { a + b }\n' > "$R/src/lib.rs"
   printf '#[test]\nfn adds() {\n    assert_eq!(add(1, 2), 3);\n}\n' > "$R/tests/a.rs"
+  [[ -n "${NO_MANIFEST-}" ]] || printf '[package]\nname = "x"\nversion = "0.1.0"\n' > "$R/Cargo.toml"
   git -C "$R" add -A; git -C "$R" -c user.name=t -c user.email=t@t commit -qm base; B=$(git -C "$R" rev-parse HEAD)
   if [[ "${2-}" == tests-only ]]; then
     printf '#[test]\nfn adds() {\n    assert_eq!(add(1, 2), 3);\n    assert_eq!(add(0, 0), 0);\n}\n' > "$R/tests/a.rs"
@@ -216,12 +218,27 @@ out=$(env -u MECH_TEST_STUB python3 -I "$MR" mutants --repo "$R" --base "$B" --h
 eq "$rc" 0 "not installed: exit 0 (n/a is not a failure)"
 eq "$(jq -r .checks.R3.status <<<"$out")" n/a "not installed: R3 n/a"
 has "$(jq -r .checks.R3.note <<<"$out")" "(env)" "not installed: note says env"
+has "$(jq -r .checks.R3.note <<<"$out")" "\`ek-no-such-cargo mutants\` not runnable" "not installed: note names the tool"
+has "$(jq -r .checks.R3.note <<<"$out")" "install step" "not installed: note says check the install step"
 eq "$(jq -r .summary <<<"$out")" "pass $H (0 fail, 0 confirm; ran: none; skipped: R1 R2 R4; n/a: R3)" "not installed: summary names n/a"
 
 # unexpected exit (cargo cannot find a manifest): n/a (env), not fail, not pass
-mrepo nomanifest
-out=$(MUT_FIXTURE= MUT_RC=1 mut); rc=$?
+# unexpected exit: n/a (env), keeps the first output line, names the job log
+mrepo unexit
+out=$(MUT_RC=1 MUT_OUT=$'error: boom\nsecond line' mut); rc=$?
 eq "$(jq -r .checks.R3.status <<<"$out")" n/a "unexpected exit 1: R3 n/a"
+has "$(jq -r .checks.R3.note <<<"$out")" "cargo-mutants exit 1 (env): error: boom" "unexpected exit: note keeps the first output line"
+has "$(jq -r .checks.R3.note <<<"$out")" "see the job log" "unexpected exit: note names the job log"
+lacks "$(jq -r .checks.R3.note <<<"$out")" "second line" "unexpected exit: only the first line in the note"
+
+# no Cargo.toml in the project dir: n/a, detected before cargo-mutants runs, the note names project-dir
+NO_MANIFEST=1 mrepo nomanifest
+: > "$MECH_STUB_LOG"
+out=$(MUT_RC=0 mut); rc=$?
+eq "$(jq -r .checks.R3.status <<<"$out")" n/a "no manifest: R3 n/a"
+eq "$(jq -r .checks.R3.note <<<"$out")" "no Cargo.toml in .: set project-dir" "no manifest: note names the input to set"
+eq "$(wc -l < "$MECH_STUB_LOG" | tr -d ' ')" 0 "no manifest: cargo-mutants not invoked"
+eq "$rc" 0 "no manifest: n/a is not a failure, exit 0"
 
 # baseline fails at head (exit 4): R3 fail, agent-fixable
 mrepo base4
@@ -257,6 +274,7 @@ msub() {
   printf 'pub fn add(a: i32, b: i32) -> i32 { a + b }\n' > "$R/sub/src/lib.rs"
   printf '#[test]\nfn adds() {\n    assert_eq!(add(1, 2), 3);\n}\n' > "$R/sub/tests/a.rs"
   printf 'notes\n' > "$R/README.md"
+  printf '[package]\nname = "x"\nversion = "0.1.0"\n' > "$R/sub/Cargo.toml"
   git -C "$R" add -A; git -C "$R" -c user.name=t -c user.email=t@t commit -qm base; B=$(git -C "$R" rev-parse HEAD)
   printf 'pub fn add(a: i32, b: i32) -> i32 { a + b } // fixed\n' > "$R/sub/src/lib.rs"
   printf 'notes 2\n' > "$R/README.md"
