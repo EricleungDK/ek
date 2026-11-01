@@ -248,4 +248,99 @@ eq "$rc" 2 "shard 2/2: usage error exit 2"
 out=$(MECH_TEST_STUB="$MUT" python3 -I "$MR" mutants --repo "$R" --base "$B" --head "$H" --stack rust --mutation-budget abc 2>&1); rc=$?
 eq "$rc" 2 "mutation-budget not a number: usage error exit 2"
 
+# ---- merge: shard envelopes -> one R3 envelope; a missing or stale shard is a CI fail that keeps the other shards ----
+MG="$T/merge"; mkdir -p "$MG"
+mrepo mshards
+MUT_FIXTURE='shard-{k}-of-2' MUT_RC=2 mut --shard 0/2 > "$MG/s0.json"
+MUT_FIXTURE='shard-{k}-of-2' MUT_RC=2 mut --shard 1/2 > "$MG/s1.json"
+mg() { python3 -I "$MR" merge --repo "$R" --base "$B" --head "$H" --stack rust --shards "$@"; }
+
+out=$(mg 2 --envelope 0="$MG/s0.json" --envelope 1="$MG/s1.json"); rc=$?
+eq "$rc" 1 "merge: both shards with MISSED: exit 1"
+eq "$(jq -r .checks.R3.status <<<"$out")" fail "merge: R3 fail"
+eq "$(jq -r '[.entries[] | select(.check=="R3")] | length' <<<"$out")" 11 "merge: 3 + 8 entries kept"
+eq "$(jq -r .summary <<<"$out")" "fail $H (11 fail, 0 confirm; ran: R3; skipped: R1 R2 R4)" "merge: summary"
+
+out=$(mg 2 --envelope 0="$MG/s0.json"); rc=$?
+eq "$rc" 1 "merge: missing shard 1 is a failure, exit 1"
+eq "$(jq -r '[.entries[] | select(.check=="CI")] | length' <<<"$out")" 1 "merge: one CI entry for the missing shard"
+eq "$(jq -r '[.entries[] | select(.check=="CI")][0].class' <<<"$out")" env "merge: CI entry class env"
+has "$(jq -r '[.entries[] | select(.check=="CI")][0].problem' <<<"$out")" "shard 1/2" "merge: CI entry names shard 1/2"
+eq "$(jq -r '[.entries[] | select(.check=="R3")] | length' <<<"$out")" 3 "merge: the other shard's entries still there"
+eq "$(jq -r .checks.R3.status <<<"$out")" fail "merge: missing shard fails R3"
+
+python3 -c "import json,sys; d=json.load(open(sys.argv[1])); d['head']='0'*40; json.dump(d, open(sys.argv[2],'w'))" "$MG/s1.json" "$MG/stale.json"
+out=$(mg 2 --envelope 0="$MG/s0.json" --envelope 1="$MG/stale.json"); rc=$?
+has "$(jq -r '[.entries[] | select(.check=="CI")][0].problem' <<<"$out")" "older head" "merge: a stale shard is no result (older head)"
+
+# partial shard + passing shard: partial (12/20), exit 0, never all pass
+mrepo mpartial
+MUT_FIXTURE=partial MUT_RC=0 MUT_HANG=1 mut --shard 0/2 --mutation-budget 0.02 > "$MG/p0.json"
+MUT_FIXTURE=caught MUT_RC=0 mut --shard 1/2 > "$MG/p1.json"
+out=$(mg 2 --envelope 0="$MG/p0.json" --envelope 1="$MG/p1.json"); rc=$?
+eq "$rc" 0 "merge partial: exit 0 (does not block)"
+eq "$(jq -r .checks.R3.status <<<"$out")" partial "merge partial: R3 partial"
+eq "$(jq -r .summary <<<"$out")" "pass $H (0 fail, 0 confirm; ran: R3; partial: R3 (12/20); skipped: R1 R2 R4)" "merge partial: summary sums tested/total"
+
+out=$(mg 2 --envelope 5="$MG/s0.json"); rc=$?
+eq "$rc" 2 "merge: shard index out of range is a usage error"
+
+# ---- job merge: the mutants job owns R3; its absence is a skip, a crash is a fail ----
+python3 -I - "$ROOT" <<'PY'
+import sys
+sys.path.insert(0, sys.argv[1] + "/scripts")
+from mech_review import merge as M
+
+H = "a" * 40
+BASE = "b" * 40
+FAILS = 0
+
+
+def check(name, cond, detail=""):
+    global FAILS
+    if cond:
+        print(f"  ok   {name}")
+    else:
+        FAILS += 1
+        print(f"  FAIL {name}\n       {detail}")
+
+
+def env(checks, entries):
+    fails = sum(1 for e in entries if e["severity"] == "fail")
+    return {"ek": "0.1.1", "base": BASE, "head": H, "checks": checks, "entries": entries,
+            "summary": f"{'fail' if fails else 'pass'} {H}"}
+
+
+def ent(check_name, eid, file="src/lib.rs", line=2):
+    return {"id": eid, "check": check_name, "class": "agent-fixable", "severity": "fail", "file": file, "line": line,
+            "problem": "p", "hint": "h", "forbidden": "f"}
+
+
+r2 = env({"R1": {"status": "skipped", "note": "not run by r2"}, "R2": {"status": "pass", "note": "0 fail"},
+          "R3": {"status": "skipped", "note": "not run by r2"}, "R4": {"status": "skipped", "note": "not run by r2"}}, [])
+mut = env({"R1": {"status": "skipped", "note": "not run by mutants"}, "R2": {"status": "skipped", "note": "not run by mutants"},
+           "R3": {"status": "fail", "note": "1/2 tested"}, "R4": {"status": "skipped", "note": "not run by mutants"}},
+          [ent("R3", "R3-33333333")])
+
+m = M.merge({"r2": r2, "mutants": mut}, {})
+check("mutants present: R3 from the mutants job", m["checks"]["R3"]["status"] == "fail", str(m["checks"]))
+check("mutants present: its R3 entry kept", [e["id"] for e in m["entries"]] == ["R3-33333333"], str(m["entries"]))
+check("mutants present: summary names R3 ran", m["summary"] == f"fail {H} (1 fail, 0 confirm; ran: R2 R3; skipped: R1 R4)", m["summary"])
+
+m = M.merge({"r2": r2}, {})
+check("mutants absent: R3 skipped, no production change named",
+      m["checks"]["R3"]["status"] == "skipped" and "no production file changed" in m["checks"]["R3"]["note"], str(m["checks"]["R3"]))
+
+m = M.merge({"r2": r2, "mutants": None}, {"mutants": "no JSON from the job (see its log)"})
+check("mutants crashed: R3 fail with the reason", m["checks"]["R3"]["status"] == "fail" and "no JSON" in m["checks"]["R3"]["note"],
+      str(m["checks"]["R3"]))
+check("mutants crashed: CI entry names the job", any(e["check"] == "CI" and "mutants" in e["problem"] for e in m["entries"]),
+      str(m["entries"]))
+check("mutants crashed: r2 checks survive", m["checks"]["R2"]["status"] == "pass", str(m["checks"]))
+check("mutants: OWNS R3", M.OWNS.get("mutants") == ("R3",), str(M.OWNS))
+
+sys.exit(1 if FAILS else 0)
+PY
+eq "$?" 0 "job merge: mutants owns R3; absent is skipped; crashed is fail"
+
 done_tests
