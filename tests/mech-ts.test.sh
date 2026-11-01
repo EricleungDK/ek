@@ -5,6 +5,13 @@ source "$(dirname "$0")/lib.sh"
 MR="$ROOT/scripts/mech-review.py"
 T="$(mktemp -d)"; trap 'rm -rf "$T"' EXIT
 
+# mkrepo <name>: fresh git repo on main, prints path
+mkrepo() { local r="$T/$1"; mkdir -p "$r"; git -C "$r" init -q -b main; echo "$r"; }
+# put <repo> <path>: write stdin to file (mkdir -p)
+put() { mkdir -p "$(dirname "$1/$2")"; cat > "$1/$2"; }
+# commit <repo> <msg>: stage all, commit, print sha
+commit() { git -C "$1" add -A; git -C "$1" -c user.name=t -c user.email=t@t -c commit.gpgsign=false commit -qm "$2"; git -C "$1" rev-parse HEAD; }
+
 # ---- adapter unit: classify, manifests, test fns, markers, assertions, bodies, calls, suppressions, parse errors ----
 python3 -I - "$ROOT" <<'PY'
 import sys
@@ -103,7 +110,7 @@ check("assert: helper function assert has no test fn and is out of scope",
 
 bodies = A.test_bodies(SRC)
 check("test bodies: keyed by qualified name, whitespace-normalized",
-      bodies["Calc > adds"][1], 'it("adds",()=>{expect(add(1,2)).toBe(3);});')
+      bodies["Calc > adds"][1], 'it("adds",()=>{expect(add(1,2)).toBe(3);})')
 check("test bodies: body line", bodies["Calc > adds"][0], 4)
 
 calls = A.calls(SRC)
@@ -145,5 +152,318 @@ check("parse: a stray apostrophe in JSX-like text is not an error",
 sys.exit(1 if FAILS else 0)
 PY
 eq "$?" 0 "ts adapter: classify, test fns, markers, assertions, bodies, calls, suppressions, parse errors"
+
+# ---- R2 on temp git repos (ts stack): mirrors the Rust and Python guard cases ----
+# mr <repo> <base> <head> [args]: r2 with the ts stack
+mr() { local r="$1" b="$2" h="$3"; shift 3; python3 -I "$MR" r2 --repo "$r" --base "$b" --head "$h" --stack ts --test-paths 'tests/**' "$@"; }
+# tsrepo <name>: base with src/calc.ts (add) and tests/calc.test.ts (describe Calc > adds). sets R, B
+tsrepo() {
+  R=$(mkrepo "$1")
+  put "$R" src/calc.ts <<'EOF'
+export function add(a: number, b: number): number {
+  return a + b;
+}
+EOF
+  put "$R" tests/calc.test.ts <<'EOF'
+import { describe, it, expect } from "vitest";
+import { add } from "../src/calc";
+
+describe("Calc", () => {
+  it("adds", () => {
+    expect(add(1, 2)).toBe(3);
+  });
+});
+EOF
+  B=$(commit "$R" base)
+}
+TEST_ADDS_BODY='import { describe, it, expect } from "vitest";
+import { add } from "../src/calc";
+
+describe("Calc", () => {
+  it("adds", () => {
+    expect(add(1, 2)).toBe(3);
+  });
+});'
+
+# ---- R2 slice 1: clean change passes, skipped checks named ----
+tsrepo clean
+put "$R" tests/calc.test.ts <<'EOF'
+import { describe, it, expect } from "vitest";
+import { add } from "../src/calc";
+
+describe("Calc", () => {
+  it("adds", () => {
+    expect(add(1, 2)).toBe(3);
+  });
+  it("adds zero", () => {
+    expect(add(0, 2)).toBe(2);
+  });
+});
+EOF
+H=$(commit "$R" "add test")
+out=$(mr "$R" "$B" "$H"); rc=$?
+eq "$rc" 0 "ts clean exit 0"
+eq "$(jq -r .summary <<<"$out")" "pass $H (0 fail, 0 confirm; ran: R2; skipped: R1 R3 R4)" "ts clean summary names skipped checks"
+
+# ---- R2 slice 2: skip, only, describe.skip, todo ----
+tsrepo skip
+put "$R" tests/calc.test.ts <<'EOF'
+import { describe, it, expect } from "vitest";
+import { add } from "../src/calc";
+
+describe("Calc", () => {
+  it.skip("adds", () => {
+    expect(add(1, 2)).toBe(3);
+  });
+});
+EOF
+H=$(commit "$R" cheat)
+out=$(mr "$R" "$B" "$H"); rc=$?
+eq "$rc" 1 "it.skip: exit 1"
+eq "$(jq -r '.entries[0].check' <<<"$out")" R2 "it.skip: R2 entry"
+eq "$(jq -r '.entries[0].class' <<<"$out")" agent-fixable "it.skip: agent-fixable"
+eq "$(jq -r '.entries[0].severity' <<<"$out")" fail "it.skip: fail"
+has "$(jq -r '.entries[0].problem' <<<"$out")" "Calc > adds" "it.skip names the test"
+has "$(jq -r '.entries[0].problem' <<<"$out")" "skipped" "it.skip says skipped"
+
+tsrepo only
+put "$R" tests/calc.test.ts <<'EOF'
+import { describe, it, expect } from "vitest";
+import { add } from "../src/calc";
+
+describe("Calc", () => {
+  it.only("adds", () => {
+    expect(add(1, 2)).toBe(3);
+  });
+});
+EOF
+H=$(commit "$R" only)
+out=$(mr "$R" "$B" "$H")
+eq "$(jq -r '.entries[0].severity' <<<"$out")" fail "it.only: fail"
+has "$(jq -r '.entries[0].problem' <<<"$out")" "only" "it.only says only"
+
+tsrepo dskip
+put "$R" tests/calc.test.ts <<'EOF'
+import { describe, it, expect } from "vitest";
+import { add } from "../src/calc";
+
+describe.skip("Calc", () => {
+  it("adds", () => {
+    expect(add(1, 2)).toBe(3);
+  });
+});
+EOF
+H=$(commit "$R" dskip)
+out=$(mr "$R" "$B" "$H")
+eq "$(jq -r '[.entries[] | select(.check=="R2")] | length' <<<"$out")" 1 "describe.skip marks the test inside it (one entry)"
+has "$(jq -r '.entries[0].problem' <<<"$out")" "Calc > adds" "describe.skip names the inner test"
+
+tsrepo todo
+put "$R" tests/calc.test.ts <<'EOF'
+import { describe, it, expect } from "vitest";
+import { add } from "../src/calc";
+
+describe("Calc", () => {
+  it("adds", () => {
+    expect(add(1, 2)).toBe(3);
+  });
+  it.todo("adds big");
+});
+EOF
+H=$(commit "$R" todo)
+out=$(mr "$R" "$B" "$H")
+eq "$(jq -r '.entries[0].severity' <<<"$out")" fail "it.todo added: fail (a todo is a skip)"
+
+tsrepo xit
+put "$R" tests/calc.test.ts <<'EOF'
+import { describe, it, expect, xit } from "vitest";
+import { add } from "../src/calc";
+
+describe("Calc", () => {
+  xit("adds", () => {
+    expect(add(1, 2)).toBe(3);
+  });
+});
+EOF
+H=$(commit "$R" xit)
+out=$(mr "$R" "$B" "$H")
+eq "$(jq -r '.entries[0].severity' <<<"$out")" fail "xit: fail"
+
+# ---- R2 slice 3: suppressions need a reason (eslint `-- reason`, ts directive text) ----
+tsrepo eslint-noreason
+put "$R" src/calc.ts <<'EOF'
+export function add(a: number, b: number): number {
+  // eslint-disable-next-line no-console
+  console.log(a);
+  return a + b;
+}
+EOF
+H=$(commit "$R" noreason)
+out=$(mr "$R" "$B" "$H"); rc=$?
+eq "$rc" 1 "eslint-disable without reason: exit 1"
+eq "$(jq -r '.entries[0].file' <<<"$out")" src/calc.ts "eslint-disable: file"
+has "$(jq -r '.entries[0].problem' <<<"$out")" "eslint-disable-next-line no-console" "eslint-disable names the rule"
+
+tsrepo eslint-reason
+put "$R" src/calc.ts <<'EOF'
+export function add(a: number, b: number): number {
+  // eslint-disable-next-line no-console -- debug log on purpose
+  console.log(a);
+  return a + b;
+}
+EOF
+H=$(commit "$R" reason)
+out=$(mr "$R" "$B" "$H"); rc=$?
+eq "$rc" 0 "eslint-disable with reason: exit 0"
+
+tsrepo ts-noreason
+put "$R" src/calc.ts <<'EOF'
+export function add(a: number, b: number): number {
+  // @ts-ignore
+  return a + "x";
+}
+EOF
+H=$(commit "$R" tsnoreason)
+out=$(mr "$R" "$B" "$H")
+eq "$(jq -r '.entries[0].severity' <<<"$out")" fail "@ts-ignore without reason: fail"
+has "$(jq -r '.entries[0].problem' <<<"$out")" "@ts-ignore" "@ts-ignore named"
+
+tsrepo ts-reason
+put "$R" src/calc.ts <<'EOF'
+export function add(a: number, b: number): number {
+  // @ts-expect-error: the string is the bad input under test
+  return a + "x";
+}
+EOF
+H=$(commit "$R" tsreason)
+out=$(mr "$R" "$B" "$H")
+eq "$(jq -r '.entries | length' <<<"$out")" 0 "@ts-expect-error with reason: no entry"
+
+# ---- R2 slice 4: removed test, rename, expected value, asserts dropped, replaced ----
+tsrepo removed
+put "$R" tests/calc.test.ts <<'EOF'
+import { describe, it, expect } from "vitest";
+import { add } from "../src/calc";
+
+describe("Calc", () => {
+});
+EOF
+H=$(commit "$R" removed)
+out=$(mr "$R" "$B" "$H")
+eq "$(jq -r '.entries[0].severity' <<<"$out")" fail "removed test: fail"
+has "$(jq -r '.entries[0].problem' <<<"$out")" "test fn \`Calc > adds\` removed" "removed test named"
+
+tsrepo renamed
+put "$R" tests/calc.test.ts <<'EOF'
+import { describe, it, expect } from "vitest";
+import { add } from "../src/calc";
+
+describe("Calc", () => {
+  it("sums two numbers", () => {
+    expect(add(1, 2)).toBe(3);
+  });
+});
+EOF
+H=$(commit "$R" renamed)
+out=$(mr "$R" "$B" "$H")
+eq "$(jq -r '.entries | length' <<<"$out")" 0 "renamed test with the same asserts is not a removal"
+
+tsrepo expected
+put "$R" tests/calc.test.ts <<'EOF'
+import { describe, it, expect } from "vitest";
+import { add } from "../src/calc";
+
+describe("Calc", () => {
+  it("adds", () => {
+    expect(add(1, 2)).toBe(4);
+  });
+});
+EOF
+H=$(commit "$R" expected)
+out=$(mr "$R" "$B" "$H")
+eq "$(jq -r '.entries[0].severity' <<<"$out")" confirm "changed expected value: confirm"
+has "$(jq -r '.entries[0].problem' <<<"$out")" "was 3, now 4" "expected value names was and now"
+
+tsrepo dropped
+put "$R" tests/calc.test.ts <<'EOF'
+import { describe, it, expect } from "vitest";
+import { add } from "../src/calc";
+
+describe("Calc", () => {
+  it("adds", () => {
+    expect(add(1, 2)).toBe(3);
+    expect(add(2, 2)).toBe(4);
+  });
+});
+EOF
+B2=$(commit "$R" two-asserts)
+put "$R" tests/calc.test.ts <<'EOF'
+import { describe, it, expect } from "vitest";
+import { add } from "../src/calc";
+
+describe("Calc", () => {
+  it("adds", () => {
+    expect(add(1, 2)).toBe(3);
+  });
+});
+EOF
+H=$(commit "$R" dropped)
+out=$(mr "$R" "$B2" "$H")
+eq "$(jq -r '.entries[0].severity' <<<"$out")" fail "dropped assert: fail"
+has "$(jq -r '.entries[0].problem' <<<"$out")" "dropped from 2 to 1" "dropped assert counts"
+
+tsrepo replaced
+put "$R" tests/calc.test.ts <<'EOF'
+import { describe, it, expect } from "vitest";
+import { add } from "../src/calc";
+
+describe("Calc", () => {
+  it("adds", () => {
+    expect(add(1, 2)).toBeTruthy();
+  });
+});
+EOF
+H=$(commit "$R" replaced)
+out=$(mr "$R" "$B" "$H")
+eq "$(jq -r '.entries[0].severity' <<<"$out")" confirm "assert replaced in place: confirm"
+
+tsrepo helper
+put "$R" tests/calc.test.ts <<'EOF'
+import { describe, it, expect } from "vitest";
+import { add } from "../src/calc";
+
+function check(a: number, b: number) {
+  expect(a).toBe(b);
+}
+
+describe("Calc", () => {
+  it("adds", () => {
+    check(add(1, 2), 3);
+  });
+});
+EOF
+H=$(commit "$R" helper)
+out=$(mr "$R" "$B" "$H")
+eq "$(jq -r '.entries | length' <<<"$out")" 0 "assert moved into a helper the test calls: no entry"
+
+tsrepo unparse
+put "$R" tests/calc.test.ts <<'EOF'
+import { describe, it, expect } from "vitest";
+import { add } from "../src/calc";
+
+describe("Calc", () => {
+  it("adds", () => {
+    expect(add(1, 2)).toBe(3);
+EOF
+H=$(commit "$R" unparse)
+out=$(mr "$R" "$B" "$H"); rc=$?
+eq "$rc" 1 "unparseable test file: exit 1 (truthful fail)"
+has "$(jq -r '.entries[0].problem' <<<"$out")" "does not parse" "unparseable names the cause"
+
+tsrepo protected
+mkdir -p "$R/.github/workflows"; echo "x" > "$R/.github/workflows/ci.yml"; H=$(commit "$R" ci)
+out=$(python3 -I "$MR" r2 --repo "$R" --base "$B" --head "$H" --stack ts --test-paths 'tests/**' --protected-paths '.github/**')
+eq "$(jq -r '.entries[0].class' <<<"$out")" needs-human "ts protected path: needs-human"
+
 
 done_tests

@@ -206,8 +206,13 @@ def r2(repo, mb, head, adapter, test_globs, protected_globs):
             prev = by_name.get(f.name) or renamed.get(f.name)
             if "ignore" in f.markers and not (prev and "ignore" in prev.markers):
                 entries.append(entry("R2", path, f.line, f"ignore:{f.name}", "agent-fixable", "fail",
-                                     f"test `{f.name}` marked #[ignore]",
+                                     adapter.ignored_text(f.name),
                                      "make it pass or fix the code it covers; do not mark it ignored",
+                                     "#[ignore] / skip / xfail / only on a test"))
+            if "only" in f.markers and not (prev and "only" in prev.markers):
+                entries.append(entry("R2", path, f.line, f"only:{f.name}", "agent-fixable", "fail",
+                                     f"test `{f.name}` marked only: the other tests do not run",
+                                     "remove .only: run the whole suite, not one test",
                                      "#[ignore] / skip / xfail / only on a test"))
             if "should_panic" in f.markers and prev and "should_panic" not in prev.markers:
                 entries.append(entry("R2", path, f.line, f"should-panic:{f.name}", "agent-fixable", "confirm",
