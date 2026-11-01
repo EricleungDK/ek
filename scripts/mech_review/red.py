@@ -101,19 +101,19 @@ def first_red(repo, mb, head):
     return None
 
 
-def run_named(runner, adapter, cmd, cwd, name):
+def run_named(runner, adapter, cmd, cwd, path, name):
     """(verdict, first line of output): the line says why a run had no test result."""
-    rc, out = runner(adapter.test_argv(cmd, name), cwd)
+    rc, out = runner(adapter.test_argv(cmd, path, name), cwd)
     lines = [l.strip() for l in out.splitlines() if l.strip()]
     return adapter.outcome(rc, out), (lines[0][:200] if lines else "")
 
 
-def run_in(runner, adapter, cmd, wt, project_dir, name):
+def run_in(runner, adapter, cmd, wt, project_dir, path, name):
     """run_named in the crate dir. A dir missing in this commit is an error verdict (the test cannot run), not a missing toolchain."""
     cwd = os.path.join(wt, project_dir)
     if not os.path.isdir(cwd):
         return "error", f"project dir {project_dir} not in this commit"
-    return run_named(runner, adapter, cmd, cwd, name)
+    return run_named(runner, adapter, cmd, cwd, path, name)
 
 
 def no_manifest_hint(adapter, wt, project_dir):
@@ -159,7 +159,7 @@ def r1(repo, mb, head, adapter, test_globs, head_branch, agent_prefix, cmd, runn
     entries, red_count, compile_red = [], 0, 0
     with worktree(repo, red) as wt:
         for path, name, line in tests:
-            verdict, first = run_in(runner, adapter, cmd, wt, project_dir, name)
+            verdict, first = run_in(runner, adapter, cmd, wt, project_dir, path, name)
             if verdict == "env":
                 return check("n/a", absent(cmd, "tests at the red commit")), []
             if verdict == "fail":
@@ -198,7 +198,7 @@ def r4(repo, mb, head, adapter, test_globs, cmd, runner, project_dir="."):
         for path, name, line in tests:
             verdicts = []
             for _ in range(TEST_RUNS):
-                verdict, first = run_in(runner, adapter, cmd, wt, project_dir, name)
+                verdict, first = run_in(runner, adapter, cmd, wt, project_dir, path, name)
                 if verdict == "env":
                     return check("n/a", absent(cmd, "new or changed tests")), []
                 if verdict == "build":

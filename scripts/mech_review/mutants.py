@@ -312,8 +312,6 @@ class CargoMutants:
                 wall = time.monotonic() - t0
             check, ents = verdict(os.path.join(out_parent, "mutants.out"), rc, text, adapter, test_globs, wall_s=wall,
                                   project_dir=project_dir)
-            if check["status"] == "partial":
-                ents = ents + [partial_entry(check)]
             return check, ents
         finally:
             shutil.rmtree(tmp, ignore_errors=True)
