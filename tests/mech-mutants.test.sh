@@ -144,7 +144,7 @@ cat > "$MUT" <<'SH'
 if [[ "$1" == mutants && "$2" == --version ]]; then echo "cargo-mutants 27.1.0"; exit 0; fi
 out=""; shard=""; prev=""
 for a in "$@"; do
-  case "$prev" in -o|--output) out="$a" ;; --shard) shard="$a" ;; esac
+  case "$prev" in -o|--output) out="$a" ;; --shard) shard="$a" ;; --in-diff) cp "$a" "$MECH_STUB_LOG.diff" ;; esac
   prev="$a"
 done
 k=${shard%%/*}
@@ -247,6 +247,46 @@ out=$(MECH_TEST_STUB="$MUT" python3 -I "$MR" mutants --repo "$R" --base "$B" --h
 eq "$rc" 2 "shard 2/2: usage error exit 2"
 out=$(MECH_TEST_STUB="$MUT" python3 -I "$MR" mutants --repo "$R" --base "$B" --head "$H" --stack rust --mutation-budget abc 2>&1); rc=$?
 eq "$rc" 2 "mutation-budget not a number: usage error exit 2"
+
+# ---- project dir: crate in sub/: cargo-mutants runs there on a crate-relative diff; entry paths map back to repo root ----
+# msub <name>: base and head change sub/src/lib.rs; README.md (outside the crate) changes too. sets R B H
+msub() {
+  R="$T/$1"; mkdir -p "$R/sub/src" "$R/sub/tests"; git -C "$R" init -q -b main
+  printf 'pub fn add(a: i32, b: i32) -> i32 { a + b }\n' > "$R/sub/src/lib.rs"
+  printf '#[test]\nfn adds() {\n    assert_eq!(add(1, 2), 3);\n}\n' > "$R/sub/tests/a.rs"
+  printf 'notes\n' > "$R/README.md"
+  git -C "$R" add -A; git -C "$R" -c user.name=t -c user.email=t@t commit -qm base; B=$(git -C "$R" rev-parse HEAD)
+  printf 'pub fn add(a: i32, b: i32) -> i32 { a + b } // fixed\n' > "$R/sub/src/lib.rs"
+  printf 'notes 2\n' > "$R/README.md"
+  git -C "$R" add -A; git -C "$R" -c user.name=t -c user.email=t@t commit -qm head; H=$(git -C "$R" rev-parse HEAD)
+}
+# msub_mut <args>: mutants subcommand on the msub repo, crate in sub/
+msub_mut() { MECH_TEST_STUB="$MUT" python3 -I "$MR" mutants --repo "$R" --base "$B" --head "$H" --stack rust --test-paths 'sub/tests/**' "$@"; }
+
+msub subm
+: > "$MECH_STUB_LOG"; rm -f "$MECH_STUB_LOG.diff"
+out=$(MUT_FIXTURE=missed MUT_RC=2 msub_mut --project-dir sub); rc=$?
+eq "$rc" 1 "project dir: MISSED in the crate: exit 1"
+eq "$(jq -r '[.entries[] | select(.check=="R3")] | length' <<<"$out")" 11 "project dir: 11 R3 entries"
+eq "$(jq -r '.entries[0].file' <<<"$out")" sub/src/lib.rs "project dir: entry file is the repo-root path"
+has "$(jq -r '.entries[0].problem' <<<"$out")" "MISSED mutant sub/src/lib.rs:2:11" "project dir: problem names the repo-root path"
+has "$(cat "$MECH_STUB_LOG")" "/sub | " "project dir: cargo-mutants runs in the crate dir"
+has "$(cat "$MECH_STUB_LOG.diff")" "+++ b/src/lib.rs" "project dir: --in-diff paths are crate-relative"
+lacks "$(cat "$MECH_STUB_LOG.diff")" "sub/src" "project dir: no repo-root path in --in-diff"
+lacks "$(cat "$MECH_STUB_LOG.diff")" "README.md" "project dir: changes outside the crate are not in --in-diff"
+
+msub subnone
+out=$(MUT_FIXTURE=missed MUT_RC=2 msub_mut --project-dir nosuch 2>"$T/err"); rc=$?
+eq "$rc" 1 "project dir missing at head: exit 1, a result"
+lacks "$(cat "$T/err")" Traceback "project dir missing at head: no traceback"
+eq "$(jq -r .checks.R3.status <<<"$out")" fail "project dir missing at head: R3 fail"
+has "$(jq -r '.entries[0].problem' <<<"$out")" "project dir nosuch" "project dir missing at head: problem names the dir"
+
+for bad in ../x /abs; do
+  err=$(msub_mut --project-dir "$bad" 2>&1 >/dev/null); rc=$?
+  eq "$rc" 2 "mutants project dir '$bad': usage error exit 2"
+  has "$err" "under the repo root" "mutants project dir '$bad': usage error names the rule"
+done
 
 # ---- merge: shard envelopes -> one R3 envelope; a missing or stale shard is a CI fail that keeps the other shards ----
 MG="$T/merge"; mkdir -p "$MG"

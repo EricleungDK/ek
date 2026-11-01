@@ -88,8 +88,9 @@ on = block(W, "on", 0) or []
 check("reusable: on is workflow_call only", child_keys(on) == {"workflow_call"}, str(child_keys(on)))
 wc = block(on, "workflow_call") or []
 inputs = block(wc, "inputs") or []
-want_inputs = {"stack", "test-paths", "protected-paths", "agent-branch-prefix", "mutation-budget", "extra-apt-packages"}
-check("reusable: exactly the 6 inputs", child_keys(inputs) == want_inputs, str(sorted(child_keys(inputs))))
+want_inputs = {"stack", "test-paths", "protected-paths", "agent-branch-prefix", "mutation-budget", "extra-apt-packages",
+               "project-dir", "setup-command"}
+check("reusable: exactly the 8 inputs", child_keys(inputs) == want_inputs, str(sorted(child_keys(inputs))))
 check("reusable: stack defaults to rust", value(block(inputs, "stack") or [], "default") == "rust")
 
 perm = block(W, "permissions", 0) or []
@@ -254,6 +255,34 @@ check("all third-party actions pinned to a full SHA (actions/* are GitHub's own,
       all(re.fullmatch(r"[0-9a-f]{40}", l.split("uses:", 1)[1].split("#")[0].strip().split("@", 1)[1])
           for l in W if l.strip().startswith("uses:") and not l.split("uses:", 1)[1].strip().startswith("actions/")),
       str([l for l in W if "uses:" in l]))
+
+# ---- project-dir and setup-command: a crate in a subdirectory, a setup step (sysctl) before the tests ----
+check("project-dir: default is the repo root", value(block(inputs, "project-dir") or [], "default") == ".",
+      str(block(inputs, "project-dir")))
+check("setup-command: default is empty", value(block(inputs, "setup-command") or [], "default") == "",
+      str(block(inputs, "setup-command")))
+docs_text = text(read("docs/mech-review-ci.md"))
+check("docs: an Inputs row for every input", all(f"| `{k}` |" in docs_text for k in want_inputs),
+      str(sorted(k for k in want_inputs if f"| `{k}` |" not in docs_text)))
+check("project-dir and setup-command: never interpolated into a run: line",
+      all(("inputs.setup-command" not in l or "if:" in l or "SETUP_COMMAND:" in l)
+          and ("inputs.project-dir" not in l or "PROJECT_DIR:" in l) for l in W),
+      str([l for l in W if "inputs.setup-command" in l or "inputs.project-dir" in l]))
+for job_name, run_name in (("red-first", "R1 red-first, R4 determinism"), ("mutants", "R3 mutation on the diff (shard)")):
+    jl = block(jobs, job_name) or []
+    names = [l.strip()[len("- name: "):] for l in jl if l.strip().startswith("- name: ")]
+    run_st = step(jl, run_name)
+    check(f"{job_name}: passes --project-dir from the input via env",
+          '--project-dir "$PROJECT_DIR"' in text(run_st) and "PROJECT_DIR: ${{ inputs.project-dir }}" in text(run_st),
+          str(run_st))
+    sc = step(jl, "setup command")
+    check(f"{job_name}: setup-command step runs only when set", "if: inputs.setup-command != ''" in sc, str(sc))
+    check(f"{job_name}: setup-command passed through env, run with bash, not interpolated",
+          "SETUP_COMMAND: ${{ inputs.setup-command }}" in sc and "shell: bash" in sc
+          and 'run: bash -c "$SETUP_COMMAND"' in sc and not any("${{" in l for l in sc if l.startswith("run:")), str(sc))
+    order = [n for n in names if n in ("extra apt packages", "setup command", run_name)]
+    check(f"{job_name}: setup-command after extra apt packages, before the tests",
+          order == ["extra apt packages", "setup command", run_name], str(names))
 
 # ---- ek's own caller ----
 SW = ".github/workflows/mech-review-self.yml"

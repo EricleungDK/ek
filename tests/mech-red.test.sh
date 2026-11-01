@@ -377,4 +377,75 @@ sys.exit(1 if FAILS else 0)
 PY
 eq "$?" 0 "merge: one envelope, crash in one job keeps the other's entries"
 
+# ---- project dir: the crate is sub/; tests run there, every path in the result stays repo-root ----
+# subrepo <name>: base; red commit adds `fresh` (RED_OUT, default fail); head fixes sub/src. env: RED_OUT, HEAD_OUT. sets R B RED H
+subrepo() {
+  R=$(mkrepo "$1")
+  put "$R" sub/src/lib.rs <<'EOF'
+pub fn add(a: i32, b: i32) -> i32 { a + b }
+EOF
+  put "$R" sub/tests/a.rs <<'EOF'
+#[test]
+fn adds() {
+    assert_eq!(2, 2);
+}
+EOF
+  put "$R" outside.txt <<<"x"
+  B=$(commit "$R" base)
+  put "$R" sub/tests/a.rs <<'EOF'
+#[test]
+fn adds() {
+    assert_eq!(2, 2);
+}
+
+#[test]
+fn fresh() {
+    assert_eq!(add(1, 2), 3);
+}
+EOF
+  printf 'fresh %s\n' "${RED_OUT-fail}" > "$R/sub/outcomes"
+  RED=$(commit "$R" "test(red): fresh")
+  printf '// fixed\n' >> "$R/sub/src/lib.rs"
+  printf 'fresh %s\nadds pass\n' "${HEAD_OUT-pass}" > "$R/sub/outcomes"
+  H=$(commit "$R" "feat: fix")
+}
+# red_sub <repo> <base> <head> [args]: red with the stub, crate in sub/
+red_sub() { local r="$1" b="$2" h="$3"; shift 3; MECH_TEST_STUB="$STUB" python3 -I "$MR" red --repo "$r" --base "$b" --head "$h" --stack rust --test-paths 'sub/tests/**' "$@"; }
+
+has "$(python3 -I "$MR" --help)" "--project-dir" "help: --project-dir"
+
+subrepo subok
+: > "$MECH_STUB_LOG"
+out=$(red_sub "$R" "$B" "$H" --project-dir sub --head-branch agent/x); rc=$?
+eq "$rc" 0 "project dir: red-first and determinism pass in the crate: exit 0"
+eq "$(jq -r .checks.R1.status <<<"$out")" pass "project dir: R1 pass"
+eq "$(jq -r .checks.R4.status <<<"$out")" pass "project dir: R4 pass"
+has "$(cat "$MECH_STUB_LOG")" "/sub | " "project dir: tests run in the crate dir"
+lacks "$(cat "$MECH_STUB_LOG")" "/wt | " "project dir: tests never run at the repo root"
+
+: > "$MECH_STUB_LOG"
+out=$(red_sub "$R" "$B" "$H" --project-dir ./sub/ --head-branch agent/x); rc=$?
+eq "$rc" 0 "project dir ./sub/: normalized, exit 0"
+has "$(cat "$MECH_STUB_LOG")" "/sub | " "project dir ./sub/: runs in the crate dir"
+
+RED_OUT=pass subrepo subpass
+out=$(red_sub "$R" "$B" "$H" --project-dir sub --head-branch agent/x); rc=$?
+eq "$rc" 1 "project dir: new test passes at red: exit 1"
+eq "$(jq -r '.entries[0].file' <<<"$out")" sub/tests/a.rs "project dir: entry file is the repo-root path"
+has "$(jq -r '.entries[0].problem' <<<"$out")" "passes at the red commit" "project dir: problem names red pass"
+
+subrepo submiss
+out=$(red_sub "$R" "$B" "$H" --project-dir nosuch --head-branch agent/x 2>"$T/err"); rc=$?
+eq "$rc" 1 "project dir missing at the commits: exit 1, a result"
+lacks "$(cat "$T/err")" Traceback "project dir missing: no traceback"
+eq "$(jq -r .checks.R1.status <<<"$out")" fail "project dir missing: R1 fail"
+has "$(jq -r '[.entries[].problem] | join(" ")' <<<"$out")" "project dir nosuch" "project dir missing: problem names the dir"
+eq "$(jq -r .checks.R4.status <<<"$out")" fail "project dir missing: R4 fail at head"
+
+for bad in ../x /abs sub/../x ""; do
+  err=$(red_sub "$R" "$B" "$H" --project-dir "$bad" --head-branch agent/x 2>&1 >/dev/null); rc=$?
+  eq "$rc" 2 "project dir '$bad': usage error exit 2"
+  has "$err" "under the repo root" "project dir '$bad': usage error names the rule"
+done
+
 done_tests
