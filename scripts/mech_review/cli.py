@@ -4,7 +4,7 @@ import json
 import re
 import sys
 
-from . import engine
+from . import engine, merge
 from .stack import ADAPTERS
 
 
@@ -66,9 +66,9 @@ def build_parser():
     p = argparse.ArgumentParser(prog="mech-review.py", description=HELP, formatter_class=argparse.RawDescriptionHelpFormatter,
                                 epilog="example: python3 -I scripts/mech-review.py r2 --repo . --base main --head HEAD "
                                        "--stack rust --test-paths 'tests/**' --protected-paths '.github/**'")
-    p.add_argument("check", choices=["r2", "red", "all", "mutants"],
+    p.add_argument("check", choices=["r2", "red", "all", "mutants", "merge"],
                    help="r2: test-diff guard (R2); red: red-first and determinism (R1, R4); all: R1, R2, R4; "
-                        "mutants: mutation on the diff (R3)")
+                        "mutants: mutation on the diff (R3); merge: combine the mutants shard results (--shards, --envelope)")
     p.add_argument("--repo", default=".", help="git repo (default .)")
     p.add_argument("--base", required=True, help="base ref")
     p.add_argument("--head", required=True, help="head ref")
@@ -86,6 +86,9 @@ def build_parser():
     p.add_argument("--mutant-timeout", type=int, default=120, metavar="SEC",
                    help="R3 per-mutant timeout in seconds, cargo-mutants --timeout (default 120)")
     p.add_argument("--shard", metavar="K/N", help="R3 only: run shard K of N (0-based, as cargo-mutants numbers them)")
+    p.add_argument("--shards", type=int, default=1, metavar="N", help="merge only: number of mutants shards")
+    p.add_argument("--envelope", action="append", metavar="K=FILE",
+                   help="merge only: result of shard K (0-based), repeatable; a missing shard fails R3 with a CI entry")
     return p
 
 
@@ -101,9 +104,43 @@ def render_text(env):
 SHARD = re.compile(r"^(\d+)/(\d+)$")
 
 
+def _merge(parser, args):
+    """Combine the mutants shard envelopes into one R3 envelope on stdout. Exit 1 on any fail entry."""
+    n = args.shards
+    if n < 1:
+        parser.error("--shards N: want N >= 1")
+    try:
+        base = engine.resolve(args.repo, args.base)
+        head = engine.resolve(args.repo, args.head)
+    except engine.Die as e:
+        print(f"mech-review: {e}", file=sys.stderr)
+        return 2
+    shards, reasons = {}, {}
+    for item in args.envelope or []:
+        k, sep, path = item.partition("=")
+        if not sep or not k.isdigit() or int(k) >= n:
+            parser.error(f"--envelope {item}: want K=FILE with 0 <= K < {n}")
+        k = int(k)
+        env = merge.load_envelope(path)
+        if env is None:
+            reasons[k] = "no usable result file"
+        elif env["head"] != head:
+            reasons[k] = f"result is for an older head, not {head}"
+        else:
+            shards[k] = env
+    for k in range(n):
+        shards.setdefault(k, None)
+        reasons.setdefault(k, "no result file given")
+    env = merge.combine_shards(base, head, n, shards, reasons)
+    print(json.dumps(env, indent=2))
+    return 1 if any(e["severity"] == "fail" for e in env["entries"]) else 0
+
+
 def main(argv):
     parser = build_parser()
     args = parser.parse_args(argv)
+    if args.check == "merge":
+        return _merge(parser, args)
     if args.shard is not None:
         m = SHARD.match(args.shard)
         if args.check != "mutants":
