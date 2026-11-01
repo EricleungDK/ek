@@ -101,12 +101,15 @@ check("reusable: no job-level permissions block",
 check("reusable: no pull_request_target", "pull_request_target" not in text(W))
 
 jobs = block(W, "jobs", 0) or []
-check("reusable: jobs are exactly guard + report", child_keys(jobs) == {"guard", "report"}, str(child_keys(jobs)))
+check("reusable: jobs are exactly guard + red-first + report", child_keys(jobs) == {"guard", "red-first", "report"},
+      str(child_keys(jobs)))
 guard = block(jobs, "guard") or []
+red = block(jobs, "red-first") or []
 report = block(jobs, "report") or []
 
 needs = (value(report, "needs") or "").strip("[]")
 check("reusable: report needs guard", "guard" in re.split(r"[\s,]+", needs), f"needs={needs!r}")
+check("reusable: report needs red-first", "red-first" in re.split(r"[\s,]+", needs), f"needs={needs!r}")
 check("reusable: report runs even if guard fails", "always()" in (value(report, "if") or ""),
       f"if={value(report, 'if')!r}")
 
@@ -121,6 +124,30 @@ check("guard: uploads the JSON artifact", "upload-artifact" in gt)
 check("guard: artifact overwrites on re-run", re.search(r"overwrite:\s*true", gt) is not None)
 check("report: downloads the JSON artifact", "download-artifact" in text(report))
 check("report: posts via mech-comment.py", "mech-comment.py" in text(report))
+check("report: downloads both the guard and the red-first artifacts",
+      text(report).count("download-artifact@v4") == 2 and "mech-review-red-json" in text(report),
+      text(report))
+check("report: named envelopes, guard as r2 and red-first as red",
+      "--envelope r2=" in text(report) and "--envelope red=" in text(report), text(report))
+
+rt = text(red)
+check("red-first: checks out ek at job.workflow_sha",
+      re.search(r"ref:\s*\$\{\{\s*job\.workflow_sha\s*\}\}", rt) is not None)
+check("red-first: ek repo from job.workflow_repository", "job.workflow_repository" in rt)
+check("red-first: caller checkout with full history (base..head needs it)",
+      re.search(r"fetch-depth:\s*0", rt) is not None)
+check("red-first: runs mech-review.py red", "mech-review.py" in rt and " red" in rt)
+check("red-first: head branch from github.head_ref", "github.head_ref" in rt)
+check("red-first: agent prefix from the agent-branch-prefix input", "inputs.agent-branch-prefix" in rt)
+check("red-first: toolchain set up for the rust stack", "rust-toolchain" in rt and "inputs.stack == 'rust'" in rt)
+check("red-first: honours extra-apt-packages", "inputs.extra-apt-packages" in rt and "apt-get" in rt)
+check("red-first: uploads its JSON artifact", "mech-review-red-json" in rt and "upload-artifact" in rt)
+check("red-first: no job-level permissions", not any(re.match(r"\s+permissions:", l) for l in red))
+check("red-first: no pull_request_target", "pull_request_target" not in rt)
+check("inputs: agent-branch-prefix is used now, not UNUSED",
+      "UNUSED" not in " ".join(block(inputs, "agent-branch-prefix") or []), str(block(inputs, "agent-branch-prefix")))
+check("inputs: extra-apt-packages is used now, not UNUSED",
+      "UNUSED" not in " ".join(block(inputs, "extra-apt-packages") or []), str(block(inputs, "extra-apt-packages")))
 
 # ---- ek's own caller ----
 SW = ".github/workflows/mech-review-self.yml"
