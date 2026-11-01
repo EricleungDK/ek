@@ -44,8 +44,21 @@ The ek scripts run at the ref you pin (`job.workflow_sha` of the called file), n
 | `agent-branch-prefix` | `agent/` | R1 runs only when the PR head branch starts with it (`--agent-prefix`); other branches skip R1 |
 | `mutation-budget` | `10` | R3 budget in minutes, per mutants shard. A budget hit is `partial` (no MISSED so far) or `fail` (a MISSED found), never a crash |
 | `extra-apt-packages` | `` | apt packages (space-separated) installed before `red-first` runs its tests |
+| `project-dir` | `.` | crate dir under the repo root. R1, R4 and R3 run there; `test-paths` and `protected-paths` stay repo-root globs; a path with `..` or a leading `/` is a usage error |
+| `setup-command` | `` | shell command (run with bash) in `red-first` and `mutants`, after `extra-apt-packages`, before the tests. A non-zero exit stops that job, which then reports a CI entry |
 
 Globs: `**` any depth, `*` one segment.
+
+Subdirectory crate (`project-dir`): `test-paths: alfredo-tui/tests/**`, `project-dir: alfredo-tui`. Tests and cargo-mutants run in that dir; results name files from the repo root (`alfredo-tui/src/x.rs`).
+
+`setup-command` is for host setup a test needs and `extra-apt-packages` cannot do, e.g. an AppArmor sysctl for bubblewrap:
+
+```yaml
+    with:
+      setup-command: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
+```
+
+Trust: `setup-command` and `project-dir` come from the caller's workflow file, which is trusted: the command runs with the job's `contents: read` token and no secrets. For `pull_request` the caller file is the PR's own, so a PR that edits it changes what the job runs. Keep that file behind review: `.github/**` in `protected-paths` reports such an edit as `needs-human`, but the job runs before a human reads it. Both inputs are passed through `env` and never interpolated into a `run:` line. The command runs at the workspace root, before the PR's tests.
 
 ## Result
 
@@ -54,7 +67,7 @@ Globs: `**` any depth, `*` one segment.
 - A job with no usable result (crash, no JSON, or a result for an older head) fails its own checks and adds one `CI` entry naming the job. The other job's entries still show.
 - Check fails on any `fail` entry (`confirm` entries do not fail).
 - A `fail` entry of class `needs-human` reads `needs-human` in the comment (severity cell, and the headline when every fail entry is needs-human). The JSON keeps `severity: fail` and the summary keeps `fail`; the check stays red.
-- R1 on a non-agent branch, or a PR with no production file changed, is `skipped` and named as such. A missing toolchain is `n/a` (not run, not pass).
+- R1 on a non-agent branch, or a PR with no production file changed, is `skipped` and named as such. A missing toolchain is `n/a` (not run, not pass). Each `n/a` note names the cause and the input to set (`setup-command` for a toolchain, the install step for cargo-mutants, `project-dir` for no `Cargo.toml`), and the comment adds one line under the headline: `Did not run: R3 (no Cargo.toml in .: set project-dir)`. A missing `Cargo.toml` where R1 or R4 runs is a `fail` (cannot run), with `set project-dir` in its hint.
 - Summary: `all pass <sha>` only when every check ran and passed. A run with R3 skipped (no production file changed) reads like `pass <sha> (0 fail, 1 confirm; ran: R1 R2 R4; skipped: R3)`. A budget hit reads `partial: R3 (tested/total)`, and an absent tool reads `n/a: R3`; neither is `all pass`.
 - Require the check `mech-review report` in branch protection.
 - Readers trust only the bot's marker comment (`github-actions[bot]`, override `MECH_COMMENT_AUTHOR`): a `<!-- mech-review -->` comment from any other user is ignored.
@@ -91,7 +104,7 @@ What to do with the numbers, in this order:
 - `mutants` runs cargo-mutants, which builds and runs the PR's tests once per mutant, with a job-level `contents: read` token and no other secrets. Each shard also runs the unmutated baseline tests, so the cost is per shard.
 - cargo-mutants is pinned to 27.1.0 through `taiki-e/install-action` (pinned to a full SHA). If the install fails the step continues and R3 reports `n/a (env)`: a missing tool is never a pass and never a code failure.
 - The shard count (4) is fixed in the `plan` job, not an input. The per-mutant timeout is 120 s (`--mutant-timeout`); the budget is per shard, so the wall time of R3 is about the budget, not the budget times the shards.
-- R3 runs cargo-mutants in a worktree at the head, on `base...head` changes only (`--in-diff`). A checkout that does not match head is not mutated.
+- R3 runs cargo-mutants in a worktree at the head, in the crate dir (`project-dir`), on `base...head` changes only (`--in-diff`; the diff is made relative to the crate dir, and result paths are mapped back to the repo root). A checkout that does not match head is not mutated.
 - The red commit is checked out as a git worktree; the caller's checkout is not moved.
 
 ## Trust limits

@@ -345,7 +345,7 @@ WHICH = {"r2": ("R2",), "red": ("R1", "R4"), "all": ("R1", "R2", "R4"), "mutants
 
 def run(repo, base_ref, head_ref, stack, test_globs, protected_globs=(), which="r2", agent_prefix="agent/",
         head_branch=None, test_cmd=None, runner=None, mutants_cmd="cargo mutants", mutation_budget=None, shard=None,
-        mutant_timeout=120, mutant_runner=None):
+        mutant_timeout=120, mutant_runner=None, project_dir="."):
     base = resolve(repo, base_ref)
     head = resolve(repo, head_ref)
     try:
@@ -367,12 +367,13 @@ def run(repo, base_ref, head_ref, stack, test_globs, protected_globs=(), which="
         cmd = test_cmd or adapter.default_test_cmd
         run_test = runner or red.default_runner()
     if "R1" in want:
-        checks["R1"], more = red.r1(repo, mb, head, adapter, test_globs, head_branch, agent_prefix, cmd, run_test)
+        checks["R1"], more = red.r1(repo, mb, head, adapter, test_globs, head_branch, agent_prefix, cmd, run_test,
+                                    project_dir=project_dir)
         raw += more
     else:
         checks["R1"] = {"status": "skipped", "note": f"not run by {which}"}
     if "R4" in want:
-        checks["R4"], more = red.r4(repo, mb, head, adapter, test_globs, cmd, run_test)
+        checks["R4"], more = red.r4(repo, mb, head, adapter, test_globs, cmd, run_test, project_dir=project_dir)
         raw += more
     else:
         checks["R4"] = {"status": "skipped", "note": f"not run by {which}"}
@@ -382,6 +383,6 @@ def run(repo, base_ref, head_ref, stack, test_globs, protected_globs=(), which="
     if "R3" in want:
         from . import mutants  # lazy: mutants imports red, which imports this module
         checks["R3"], r3 = mutants.run(repo, mb, head, adapter, test_globs, mutants_cmd, mutation_budget, shard,
-                                       mutant_timeout, mutant_runner)
+                                       mutant_timeout, mutant_runner, project_dir=project_dir)
     entries = sorted(finalize(raw) + r3, key=lambda e: (e["file"], e["line"] == 0, e["line"], e["id"]))
     return envelope(base, head, entries, checks)

@@ -94,9 +94,24 @@ def _table(entries):
     return "\n".join(rows)
 
 
+CHECK_ORDER = ("R1", "R2", "R3", "R4")
+
+
+def _not_run_lines(env):
+    """One line under the headline when a check is n/a: it did not run, and its note names the input to set.
+    The status and the JSON are unchanged."""
+    checks = env.get("checks") or {}
+    na = [f"{c} ({(checks.get(c) or {}).get('note', '')})" for c in CHECK_ORDER
+          if (checks.get(c) or {}).get("status") == "n/a"]
+    return ["Did not run: " + "; ".join(na)] if na else []
+
+
 def _body(env, shown, json_text):
     entries = env["entries"]
     lines = [MARKER, "## mech-review", "", f"**{headline(env)}**", ""]
+    not_run = _not_run_lines(env)
+    if not_run:
+        lines += not_run + [""]
     timing = _timing_lines(env)
     if timing:
         lines += timing + [""]

@@ -34,6 +34,14 @@ on:
         description: "apt packages (space-separated) installed before the red-first job runs its tests"
         type: string
         default: ""
+      project-dir:
+        description: "crate dir under the repo root (default .): R1, R4 and R3 run there; test-paths and protected-paths stay repo-root globs"
+        type: string
+        default: "."
+      setup-command:
+        description: "shell command (run with bash) before the tests in red-first and mutants, after extra-apt-packages; a failure stops that job. Set it in the caller's workflow file only (trusted)"
+        type: string
+        default: ""
 
 permissions:
   contents: read
@@ -127,6 +135,12 @@ jobs:
           read -ra pkgs <<< "$EXTRA_APT"
           sudo apt-get update -qq
           sudo apt-get install -y -qq "${pkgs[@]}"
+      - name: setup command
+        if: inputs.setup-command != ''
+        env:
+          SETUP_COMMAND: ${{ inputs.setup-command }}
+        shell: bash
+        run: bash -c "$SETUP_COMMAND"
       - name: R1 red-first, R4 determinism
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
@@ -135,10 +149,11 @@ jobs:
           AGENT_PREFIX: ${{ inputs.agent-branch-prefix }}
           STACK: ${{ inputs.stack }}
           TEST_PATHS: ${{ inputs.test-paths }}
+          PROJECT_DIR: ${{ inputs.project-dir }}
         run: |
           set -uo pipefail
           args=(--repo "$GITHUB_WORKSPACE/caller" --base "$BASE_SHA" --head "$HEAD_SHA" --stack "$STACK"
-                --head-branch "$HEAD_REF" --agent-prefix "$AGENT_PREFIX")
+                --head-branch "$HEAD_REF" --agent-prefix "$AGENT_PREFIX" --project-dir "$PROJECT_DIR")
           while IFS= read -r g; do
             if [ -n "$g" ]; then args+=(--test-paths "$g"); fi
           done <<< "$TEST_PATHS"
@@ -249,6 +264,12 @@ jobs:
           read -ra pkgs <<< "$EXTRA_APT"
           sudo apt-get update -qq
           sudo apt-get install -y -qq "${pkgs[@]}"
+      - name: setup command
+        if: inputs.setup-command != ''
+        env:
+          SETUP_COMMAND: ${{ inputs.setup-command }}
+        shell: bash
+        run: bash -c "$SETUP_COMMAND"
       - name: install cargo-mutants (pinned)
         # a failed install is not a stop: the engine reports n/a (env) when the tool is missing
         id: install
@@ -265,10 +286,11 @@ jobs:
           MUTATION_BUDGET: ${{ inputs.mutation-budget }}
           SHARD: ${{ matrix.shard }}
           SHARD_COUNT: ${{ needs.plan.outputs.count }}
+          PROJECT_DIR: ${{ inputs.project-dir }}
         run: |
           set -uo pipefail
           args=(--repo "$GITHUB_WORKSPACE/caller" --base "$BASE_SHA" --head "$HEAD_SHA" --stack "$STACK"
-                --shard "$SHARD/$SHARD_COUNT" --mutation-budget "$MUTATION_BUDGET")
+                --shard "$SHARD/$SHARD_COUNT" --mutation-budget "$MUTATION_BUDGET" --project-dir "$PROJECT_DIR")
           while IFS= read -r g; do
             if [ -n "$g" ]; then args+=(--test-paths "$g"); fi
           done <<< "$TEST_PATHS"

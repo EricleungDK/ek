@@ -35,6 +35,7 @@ checks (status in envelope: pass | fail | partial | n/a | skipped):
   is skipped with `not run by <subcommand>`.
   Test runner: the stack default (rust: `cargo test`), or --test-cmd. Env MECH_TEST_STUB=<exe>
   replaces the executable (arguments kept): the injectable runner for tests.
+  Crate dir: --project-dir DIR (repo-root relative, default .): R1, R4 and R3 run there; paths in results stay repo-root.
 
 summary (one line, text format first line and envelope `summary`):
   `all pass <head sha>`: no entries and every check passed (never while a check is skipped or n/a).
@@ -62,6 +63,13 @@ class Removed(argparse.Action):
         parser.error("--pr-body removed: guard exceptions were removed (#27); a fail stays fail until the code is fixed")
 
 
+def project_dir_arg(value):
+    """Crate dir relative to the repo root: no `..`, not absolute; `./` and trailing `/` are dropped."""
+    if not value or value.startswith("/") or ".." in value.split("/"):
+        raise argparse.ArgumentTypeError(f"{value!r}: want a directory under the repo root (no .., not absolute)")
+    return "/".join(p for p in value.split("/") if p not in ("", ".")) or "."
+
+
 def build_parser():
     p = argparse.ArgumentParser(prog="mech-review.py", description=HELP, formatter_class=argparse.RawDescriptionHelpFormatter,
                                 epilog="example: python3 -I scripts/mech-review.py r2 --repo . --base main --head HEAD "
@@ -81,6 +89,8 @@ def build_parser():
     p.add_argument("--head-branch", metavar="NAME", help="head branch name (R1 needs it: CI passes github.head_ref)")
     p.add_argument("--agent-prefix", default="agent/", metavar="PREFIX", help="agent branch prefix for R1 (default agent/)")
     p.add_argument("--test-cmd", metavar="CMD", help="test command for R1/R4 (default: the stack's, rust: cargo test)")
+    p.add_argument("--project-dir", type=project_dir_arg, default=".", metavar="DIR",
+                   help="crate dir under the repo root (default .): R1, R4 and R3 run there; paths stay repo-root")
     p.add_argument("--mutants-cmd", metavar="CMD", default="cargo mutants", help="mutation tool for R3 (default: cargo mutants)")
     p.add_argument("--mutation-budget", type=float, default=10.0, metavar="MIN",
                    help="R3 budget in minutes for this run (default 10); a budget hit is partial, not a failure")
@@ -172,7 +182,8 @@ def main(argv):
         env = engine.run(args.repo, args.base, args.head, args.stack, args.test_paths, args.protected_paths,
                          which=args.check, agent_prefix=args.agent_prefix, head_branch=args.head_branch,
                          test_cmd=args.test_cmd, mutants_cmd=args.mutants_cmd,
-                         mutation_budget=args.mutation_budget, shard=args.shard, mutant_timeout=args.mutant_timeout)
+                         mutation_budget=args.mutation_budget, shard=args.shard, mutant_timeout=args.mutant_timeout,
+                         project_dir=args.project_dir)
     except engine.Die as e:
         print(f"mech-review: {e}", file=sys.stderr)
         return 2
