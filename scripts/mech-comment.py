@@ -2,7 +2,7 @@
 """mech-review report step: render the guard JSON, post or edit the sticky PR comment, set the exit code.
 
 usage: python3 -I scripts/mech-comment.py --pr N [--envelope FILE | --envelope JOB=FILE ...] [--head SHA] [--reason TEXT]
-JOB is r2 (guard) or red (red-first). Named envelopes are merged into one comment; a job with no usable result
+JOB is r2 (guard), red (red-first) or mutants (R3 shards merged). Named envelopes are merged into one comment; a job with no usable result
 fails its checks and adds a CI entry, the other job's entries stay.
 env: GITHUB_TOKEN, GITHUB_REPOSITORY (owner/repo), GITHUB_API_URL (default https://api.github.com),
      GITHUB_STEP_SUMMARY (optional: rendered comment is also appended there),
@@ -40,7 +40,7 @@ def main(argv):
     ap = argparse.ArgumentParser(prog="mech-comment.py")
     ap.add_argument("--pr", type=int, required=True, help="pull request number")
     ap.add_argument("--envelope", action="append", metavar="[JOB=]FILE",
-                    help="result JSON (mech-review.py output); JOB=FILE with job r2 or red, repeatable, merged")
+                    help="result JSON (mech-review.py output); JOB=FILE with job r2, red or mutants, repeatable, merged")
     ap.add_argument("--head", help="head sha, used for the crash comment")
     ap.add_argument("--reason", default="mech-review produced no JSON", help="crash reason")
     args = ap.parse_args(argv)
@@ -65,7 +65,7 @@ def main(argv):
         elif job in merge.OWNS:
             jobs.append((job, path))
         else:
-            print(f"mech-comment: unknown job '{job}' (r2 or red)", file=sys.stderr)
+            print(f"mech-comment: unknown job '{job}' (r2, red or mutants)", file=sys.stderr)
             return 2
     if jobs and any(j is None for j, _ in jobs) and any(j is not None for j, _ in jobs):
         print("mech-comment: name every --envelope (JOB=FILE) or none", file=sys.stderr)

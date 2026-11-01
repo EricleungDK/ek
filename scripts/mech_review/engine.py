@@ -289,6 +289,29 @@ def r2(repo, mb, head, adapter, test_globs, protected_globs):
     return entries
 
 
+def _partial_label(check, name):
+    """`R3 (tested/total)`; `?` when the total is unknown (budget hit before the mutant list was written)."""
+    if check.get("tested") is None:
+        return name
+    total = check["total"] if check["total"] is not None else "?"
+    return f"{name} ({check['tested']}/{total})"
+
+
+def plan(repo, base_ref, head_ref, stack, test_globs, shards):
+    """Mutants job plan (git only, no toolchain): run only when a production file changed. The matrix is
+    shards 0..N-1 when it runs, one placeholder shard otherwise (the job is skipped by its `if`)."""
+    from . import red  # lazy: red imports this module
+    base = resolve(repo, base_ref)
+    head = resolve(repo, head_ref)
+    try:
+        mb = git(repo, "merge-base", base, head).strip()
+    except Die:
+        raise Die(f"no merge base for {base_ref} and {head_ref}")
+    run_r3 = bool(red.prod_changes(repo, mb, head, ADAPTERS[stack](), test_globs))
+    count = shards if run_r3 else 1
+    return {"run": run_r3, "count": count, "shards": list(range(count))}
+
+
 def summarize(head, checks, entries):
     """`all pass <head>` only when every check passed and there are no entries. Otherwise
     `<pass|fail> <head> (<F> fail, <C> confirm; ran: <checks>[; skipped: <checks>][; n/a: <checks>])`.
@@ -299,8 +322,11 @@ def summarize(head, checks, entries):
         return f"all pass {head}"
     skipped = [c for c in CHECKS if checks[c]["status"] == "skipped"]
     na = [c for c in CHECKS if checks[c]["status"] == "n/a"]
+    partial = [c for c in CHECKS if checks[c]["status"] == "partial"]
     ran = [c for c in CHECKS if c not in skipped and c not in na]
     parts = f"{fails} fail, {confirms} confirm; ran: {' '.join(ran) or 'none'}"
+    if partial:
+        parts += "; partial: " + " ".join(_partial_label(checks[c], c) for c in partial)
     if skipped:
         parts += f"; skipped: {' '.join(skipped)}"
     if na:
@@ -314,11 +340,12 @@ def envelope(base, head, entries, checks):
 
 
 # which checks each subcommand runs; the rest are reported skipped with the subcommand named
-WHICH = {"r2": ("R2",), "red": ("R1", "R4"), "all": ("R1", "R2", "R4")}
+WHICH = {"r2": ("R2",), "red": ("R1", "R4"), "all": ("R1", "R2", "R4"), "mutants": ("R3",)}
 
 
 def run(repo, base_ref, head_ref, stack, test_globs, protected_globs=(), which="r2", agent_prefix="agent/",
-        head_branch=None, test_cmd=None, runner=None):
+        head_branch=None, test_cmd=None, runner=None, mutants_cmd="cargo mutants", mutation_budget=None, shard=None,
+        mutant_timeout=120, mutant_runner=None):
     base = resolve(repo, base_ref)
     head = resolve(repo, head_ref)
     try:
@@ -327,7 +354,7 @@ def run(repo, base_ref, head_ref, stack, test_globs, protected_globs=(), which="
         raise Die(f"no merge base for {base_ref} and {head_ref}")
     adapter = ADAPTERS[stack]()
     want = WHICH[which]
-    checks = {c: {"status": "skipped", "note": "not implemented"} for c in CHECKS}  # R3: mutation, not built yet
+    checks = {c: {"status": "skipped", "note": f"not run by {which}"} for c in CHECKS}
     raw = []
     if "R2" in want:
         raw += r2(repo, mb, head, adapter, test_globs, list(protected_globs))
@@ -349,4 +376,12 @@ def run(repo, base_ref, head_ref, stack, test_globs, protected_globs=(), which="
         raw += more
     else:
         checks["R4"] = {"status": "skipped", "note": f"not run by {which}"}
-    return envelope(base, head, finalize(raw), checks)
+    if which == "all":
+        checks["R3"] = {"status": "skipped", "note": "not run by all: R3 runs only in the mutants subcommand (CI job mutants)"}
+    r3 = []
+    if "R3" in want:
+        from . import mutants  # lazy: mutants imports red, which imports this module
+        checks["R3"], r3 = mutants.run(repo, mb, head, adapter, test_globs, mutants_cmd, mutation_budget, shard,
+                                       mutant_timeout, mutant_runner)
+    entries = sorted(finalize(raw) + r3, key=lambda e: (e["file"], e["line"] == 0, e["line"], e["id"]))
+    return envelope(base, head, entries, checks)

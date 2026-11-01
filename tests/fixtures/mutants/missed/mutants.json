@@ -1,0 +1,546 @@
+[
+  {
+    "diff": "--- src/lib.rs\n+++ replace add -> i32 with 0\n@@ -1,10 +1,10 @@\n pub fn add(a: i32, b: i32) -> i32 {\n-    a + b + 0\n+    0 /* ~ changed by cargo-mutants ~ */\n }\n \n pub fn is_big(x: i32) -> bool {\n     x > 99\n }\n \n pub fn unused_helper(x: i32) -> i32 {\n     x * 3\n",
+    "file": "src/lib.rs",
+    "function": {
+      "function_name": "add",
+      "return_type": "-> i32",
+      "span": {
+        "end": {
+          "column": 2,
+          "line": 3
+        },
+        "start": {
+          "column": 1,
+          "line": 1
+        }
+      }
+    },
+    "genre": "FnValue",
+    "name": "src/lib.rs:2:5: replace add -> i32 with 0",
+    "package": "fixture",
+    "replacement": "0",
+    "span": {
+      "end": {
+        "column": 14,
+        "line": 2
+      },
+      "start": {
+        "column": 5,
+        "line": 2
+      }
+    }
+  },
+  {
+    "diff": "--- src/lib.rs\n+++ replace add -> i32 with 1\n@@ -1,10 +1,10 @@\n pub fn add(a: i32, b: i32) -> i32 {\n-    a + b + 0\n+    1 /* ~ changed by cargo-mutants ~ */\n }\n \n pub fn is_big(x: i32) -> bool {\n     x > 99\n }\n \n pub fn unused_helper(x: i32) -> i32 {\n     x * 3\n",
+    "file": "src/lib.rs",
+    "function": {
+      "function_name": "add",
+      "return_type": "-> i32",
+      "span": {
+        "end": {
+          "column": 2,
+          "line": 3
+        },
+        "start": {
+          "column": 1,
+          "line": 1
+        }
+      }
+    },
+    "genre": "FnValue",
+    "name": "src/lib.rs:2:5: replace add -> i32 with 1",
+    "package": "fixture",
+    "replacement": "1",
+    "span": {
+      "end": {
+        "column": 14,
+        "line": 2
+      },
+      "start": {
+        "column": 5,
+        "line": 2
+      }
+    }
+  },
+  {
+    "diff": "--- src/lib.rs\n+++ replace add -> i32 with -1\n@@ -1,10 +1,10 @@\n pub fn add(a: i32, b: i32) -> i32 {\n-    a + b + 0\n+    -1 /* ~ changed by cargo-mutants ~ */\n }\n \n pub fn is_big(x: i32) -> bool {\n     x > 99\n }\n \n pub fn unused_helper(x: i32) -> i32 {\n     x * 3\n",
+    "file": "src/lib.rs",
+    "function": {
+      "function_name": "add",
+      "return_type": "-> i32",
+      "span": {
+        "end": {
+          "column": 2,
+          "line": 3
+        },
+        "start": {
+          "column": 1,
+          "line": 1
+        }
+      }
+    },
+    "genre": "FnValue",
+    "name": "src/lib.rs:2:5: replace add -> i32 with -1",
+    "package": "fixture",
+    "replacement": "-1",
+    "span": {
+      "end": {
+        "column": 14,
+        "line": 2
+      },
+      "start": {
+        "column": 5,
+        "line": 2
+      }
+    }
+  },
+  {
+    "diff": "--- src/lib.rs\n+++ replace + with - in add\n@@ -1,10 +1,10 @@\n pub fn add(a: i32, b: i32) -> i32 {\n-    a + b + 0\n+    a + b - /* ~ changed by cargo-mutants ~ */ 0\n }\n \n pub fn is_big(x: i32) -> bool {\n     x > 99\n }\n \n pub fn unused_helper(x: i32) -> i32 {\n     x * 3\n",
+    "file": "src/lib.rs",
+    "function": {
+      "function_name": "add",
+      "return_type": "-> i32",
+      "span": {
+        "end": {
+          "column": 2,
+          "line": 3
+        },
+        "start": {
+          "column": 1,
+          "line": 1
+        }
+      }
+    },
+    "genre": "BinaryOperator",
+    "name": "src/lib.rs:2:11: replace + with - in add",
+    "package": "fixture",
+    "replacement": "-",
+    "span": {
+      "end": {
+        "column": 12,
+        "line": 2
+      },
+      "start": {
+        "column": 11,
+        "line": 2
+      }
+    }
+  },
+  {
+    "diff": "--- src/lib.rs\n+++ replace + with * in add\n@@ -1,10 +1,10 @@\n pub fn add(a: i32, b: i32) -> i32 {\n-    a + b + 0\n+    a + b * /* ~ changed by cargo-mutants ~ */ 0\n }\n \n pub fn is_big(x: i32) -> bool {\n     x > 99\n }\n \n pub fn unused_helper(x: i32) -> i32 {\n     x * 3\n",
+    "file": "src/lib.rs",
+    "function": {
+      "function_name": "add",
+      "return_type": "-> i32",
+      "span": {
+        "end": {
+          "column": 2,
+          "line": 3
+        },
+        "start": {
+          "column": 1,
+          "line": 1
+        }
+      }
+    },
+    "genre": "BinaryOperator",
+    "name": "src/lib.rs:2:11: replace + with * in add",
+    "package": "fixture",
+    "replacement": "*",
+    "span": {
+      "end": {
+        "column": 12,
+        "line": 2
+      },
+      "start": {
+        "column": 11,
+        "line": 2
+      }
+    }
+  },
+  {
+    "diff": "--- src/lib.rs\n+++ replace + with - in add\n@@ -1,10 +1,10 @@\n pub fn add(a: i32, b: i32) -> i32 {\n-    a + b + 0\n+    a - /* ~ changed by cargo-mutants ~ */ b + 0\n }\n \n pub fn is_big(x: i32) -> bool {\n     x > 99\n }\n \n pub fn unused_helper(x: i32) -> i32 {\n     x * 3\n",
+    "file": "src/lib.rs",
+    "function": {
+      "function_name": "add",
+      "return_type": "-> i32",
+      "span": {
+        "end": {
+          "column": 2,
+          "line": 3
+        },
+        "start": {
+          "column": 1,
+          "line": 1
+        }
+      }
+    },
+    "genre": "BinaryOperator",
+    "name": "src/lib.rs:2:7: replace + with - in add",
+    "package": "fixture",
+    "replacement": "-",
+    "span": {
+      "end": {
+        "column": 8,
+        "line": 2
+      },
+      "start": {
+        "column": 7,
+        "line": 2
+      }
+    }
+  },
+  {
+    "diff": "--- src/lib.rs\n+++ replace + with * in add\n@@ -1,10 +1,10 @@\n pub fn add(a: i32, b: i32) -> i32 {\n-    a + b + 0\n+    a * /* ~ changed by cargo-mutants ~ */ b + 0\n }\n \n pub fn is_big(x: i32) -> bool {\n     x > 99\n }\n \n pub fn unused_helper(x: i32) -> i32 {\n     x * 3\n",
+    "file": "src/lib.rs",
+    "function": {
+      "function_name": "add",
+      "return_type": "-> i32",
+      "span": {
+        "end": {
+          "column": 2,
+          "line": 3
+        },
+        "start": {
+          "column": 1,
+          "line": 1
+        }
+      }
+    },
+    "genre": "BinaryOperator",
+    "name": "src/lib.rs:2:7: replace + with * in add",
+    "package": "fixture",
+    "replacement": "*",
+    "span": {
+      "end": {
+        "column": 8,
+        "line": 2
+      },
+      "start": {
+        "column": 7,
+        "line": 2
+      }
+    }
+  },
+  {
+    "diff": "--- src/lib.rs\n+++ replace is_big -> bool with true\n@@ -1,11 +1,11 @@\n pub fn add(a: i32, b: i32) -> i32 {\n     a + b + 0\n }\n \n pub fn is_big(x: i32) -> bool {\n-    x > 99\n+    true /* ~ changed by cargo-mutants ~ */\n }\n \n pub fn unused_helper(x: i32) -> i32 {\n     x * 3\n }\n",
+    "file": "src/lib.rs",
+    "function": {
+      "function_name": "is_big",
+      "return_type": "-> bool",
+      "span": {
+        "end": {
+          "column": 2,
+          "line": 7
+        },
+        "start": {
+          "column": 1,
+          "line": 5
+        }
+      }
+    },
+    "genre": "FnValue",
+    "name": "src/lib.rs:6:5: replace is_big -> bool with true",
+    "package": "fixture",
+    "replacement": "true",
+    "span": {
+      "end": {
+        "column": 11,
+        "line": 6
+      },
+      "start": {
+        "column": 5,
+        "line": 6
+      }
+    }
+  },
+  {
+    "diff": "--- src/lib.rs\n+++ replace is_big -> bool with false\n@@ -1,11 +1,11 @@\n pub fn add(a: i32, b: i32) -> i32 {\n     a + b + 0\n }\n \n pub fn is_big(x: i32) -> bool {\n-    x > 99\n+    false /* ~ changed by cargo-mutants ~ */\n }\n \n pub fn unused_helper(x: i32) -> i32 {\n     x * 3\n }\n",
+    "file": "src/lib.rs",
+    "function": {
+      "function_name": "is_big",
+      "return_type": "-> bool",
+      "span": {
+        "end": {
+          "column": 2,
+          "line": 7
+        },
+        "start": {
+          "column": 1,
+          "line": 5
+        }
+      }
+    },
+    "genre": "FnValue",
+    "name": "src/lib.rs:6:5: replace is_big -> bool with false",
+    "package": "fixture",
+    "replacement": "false",
+    "span": {
+      "end": {
+        "column": 11,
+        "line": 6
+      },
+      "start": {
+        "column": 5,
+        "line": 6
+      }
+    }
+  },
+  {
+    "diff": "--- src/lib.rs\n+++ replace > with == in is_big\n@@ -1,11 +1,11 @@\n pub fn add(a: i32, b: i32) -> i32 {\n     a + b + 0\n }\n \n pub fn is_big(x: i32) -> bool {\n-    x > 99\n+    x == /* ~ changed by cargo-mutants ~ */ 99\n }\n \n pub fn unused_helper(x: i32) -> i32 {\n     x * 3\n }\n",
+    "file": "src/lib.rs",
+    "function": {
+      "function_name": "is_big",
+      "return_type": "-> bool",
+      "span": {
+        "end": {
+          "column": 2,
+          "line": 7
+        },
+        "start": {
+          "column": 1,
+          "line": 5
+        }
+      }
+    },
+    "genre": "BinaryOperator",
+    "name": "src/lib.rs:6:7: replace > with == in is_big",
+    "package": "fixture",
+    "replacement": "==",
+    "span": {
+      "end": {
+        "column": 8,
+        "line": 6
+      },
+      "start": {
+        "column": 7,
+        "line": 6
+      }
+    }
+  },
+  {
+    "diff": "--- src/lib.rs\n+++ replace > with < in is_big\n@@ -1,11 +1,11 @@\n pub fn add(a: i32, b: i32) -> i32 {\n     a + b + 0\n }\n \n pub fn is_big(x: i32) -> bool {\n-    x > 99\n+    x < /* ~ changed by cargo-mutants ~ */ 99\n }\n \n pub fn unused_helper(x: i32) -> i32 {\n     x * 3\n }\n",
+    "file": "src/lib.rs",
+    "function": {
+      "function_name": "is_big",
+      "return_type": "-> bool",
+      "span": {
+        "end": {
+          "column": 2,
+          "line": 7
+        },
+        "start": {
+          "column": 1,
+          "line": 5
+        }
+      }
+    },
+    "genre": "BinaryOperator",
+    "name": "src/lib.rs:6:7: replace > with < in is_big",
+    "package": "fixture",
+    "replacement": "<",
+    "span": {
+      "end": {
+        "column": 8,
+        "line": 6
+      },
+      "start": {
+        "column": 7,
+        "line": 6
+      }
+    }
+  },
+  {
+    "diff": "--- src/lib.rs\n+++ replace > with >= in is_big\n@@ -1,11 +1,11 @@\n pub fn add(a: i32, b: i32) -> i32 {\n     a + b + 0\n }\n \n pub fn is_big(x: i32) -> bool {\n-    x > 99\n+    x >= /* ~ changed by cargo-mutants ~ */ 99\n }\n \n pub fn unused_helper(x: i32) -> i32 {\n     x * 3\n }\n",
+    "file": "src/lib.rs",
+    "function": {
+      "function_name": "is_big",
+      "return_type": "-> bool",
+      "span": {
+        "end": {
+          "column": 2,
+          "line": 7
+        },
+        "start": {
+          "column": 1,
+          "line": 5
+        }
+      }
+    },
+    "genre": "BinaryOperator",
+    "name": "src/lib.rs:6:7: replace > with >= in is_big",
+    "package": "fixture",
+    "replacement": ">=",
+    "span": {
+      "end": {
+        "column": 8,
+        "line": 6
+      },
+      "start": {
+        "column": 7,
+        "line": 6
+      }
+    }
+  },
+  {
+    "diff": "--- src/lib.rs\n+++ replace unused_helper -> i32 with 0\n@@ -2,10 +2,10 @@\n     a + b + 0\n }\n \n pub fn is_big(x: i32) -> bool {\n     x > 99\n }\n \n pub fn unused_helper(x: i32) -> i32 {\n-    x * 3\n+    0 /* ~ changed by cargo-mutants ~ */\n }\n",
+    "file": "src/lib.rs",
+    "function": {
+      "function_name": "unused_helper",
+      "return_type": "-> i32",
+      "span": {
+        "end": {
+          "column": 2,
+          "line": 11
+        },
+        "start": {
+          "column": 1,
+          "line": 9
+        }
+      }
+    },
+    "genre": "FnValue",
+    "name": "src/lib.rs:10:5: replace unused_helper -> i32 with 0",
+    "package": "fixture",
+    "replacement": "0",
+    "span": {
+      "end": {
+        "column": 10,
+        "line": 10
+      },
+      "start": {
+        "column": 5,
+        "line": 10
+      }
+    }
+  },
+  {
+    "diff": "--- src/lib.rs\n+++ replace unused_helper -> i32 with 1\n@@ -2,10 +2,10 @@\n     a + b + 0\n }\n \n pub fn is_big(x: i32) -> bool {\n     x > 99\n }\n \n pub fn unused_helper(x: i32) -> i32 {\n-    x * 3\n+    1 /* ~ changed by cargo-mutants ~ */\n }\n",
+    "file": "src/lib.rs",
+    "function": {
+      "function_name": "unused_helper",
+      "return_type": "-> i32",
+      "span": {
+        "end": {
+          "column": 2,
+          "line": 11
+        },
+        "start": {
+          "column": 1,
+          "line": 9
+        }
+      }
+    },
+    "genre": "FnValue",
+    "name": "src/lib.rs:10:5: replace unused_helper -> i32 with 1",
+    "package": "fixture",
+    "replacement": "1",
+    "span": {
+      "end": {
+        "column": 10,
+        "line": 10
+      },
+      "start": {
+        "column": 5,
+        "line": 10
+      }
+    }
+  },
+  {
+    "diff": "--- src/lib.rs\n+++ replace unused_helper -> i32 with -1\n@@ -2,10 +2,10 @@\n     a + b + 0\n }\n \n pub fn is_big(x: i32) -> bool {\n     x > 99\n }\n \n pub fn unused_helper(x: i32) -> i32 {\n-    x * 3\n+    -1 /* ~ changed by cargo-mutants ~ */\n }\n",
+    "file": "src/lib.rs",
+    "function": {
+      "function_name": "unused_helper",
+      "return_type": "-> i32",
+      "span": {
+        "end": {
+          "column": 2,
+          "line": 11
+        },
+        "start": {
+          "column": 1,
+          "line": 9
+        }
+      }
+    },
+    "genre": "FnValue",
+    "name": "src/lib.rs:10:5: replace unused_helper -> i32 with -1",
+    "package": "fixture",
+    "replacement": "-1",
+    "span": {
+      "end": {
+        "column": 10,
+        "line": 10
+      },
+      "start": {
+        "column": 5,
+        "line": 10
+      }
+    }
+  },
+  {
+    "diff": "--- src/lib.rs\n+++ replace * with + in unused_helper\n@@ -2,10 +2,10 @@\n     a + b + 0\n }\n \n pub fn is_big(x: i32) -> bool {\n     x > 99\n }\n \n pub fn unused_helper(x: i32) -> i32 {\n-    x * 3\n+    x + /* ~ changed by cargo-mutants ~ */ 3\n }\n",
+    "file": "src/lib.rs",
+    "function": {
+      "function_name": "unused_helper",
+      "return_type": "-> i32",
+      "span": {
+        "end": {
+          "column": 2,
+          "line": 11
+        },
+        "start": {
+          "column": 1,
+          "line": 9
+        }
+      }
+    },
+    "genre": "BinaryOperator",
+    "name": "src/lib.rs:10:7: replace * with + in unused_helper",
+    "package": "fixture",
+    "replacement": "+",
+    "span": {
+      "end": {
+        "column": 8,
+        "line": 10
+      },
+      "start": {
+        "column": 7,
+        "line": 10
+      }
+    }
+  },
+  {
+    "diff": "--- src/lib.rs\n+++ replace * with / in unused_helper\n@@ -2,10 +2,10 @@\n     a + b + 0\n }\n \n pub fn is_big(x: i32) -> bool {\n     x > 99\n }\n \n pub fn unused_helper(x: i32) -> i32 {\n-    x * 3\n+    x / /* ~ changed by cargo-mutants ~ */ 3\n }\n",
+    "file": "src/lib.rs",
+    "function": {
+      "function_name": "unused_helper",
+      "return_type": "-> i32",
+      "span": {
+        "end": {
+          "column": 2,
+          "line": 11
+        },
+        "start": {
+          "column": 1,
+          "line": 9
+        }
+      }
+    },
+    "genre": "BinaryOperator",
+    "name": "src/lib.rs:10:7: replace * with / in unused_helper",
+    "package": "fixture",
+    "replacement": "/",
+    "span": {
+      "end": {
+        "column": 8,
+        "line": 10
+      },
+      "start": {
+        "column": 7,
+        "line": 10
+      }
+    }
+  }
+]

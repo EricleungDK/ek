@@ -1,0 +1,162 @@
+[
+  {
+    "diff": "--- src/lib.rs\n+++ replace twice -> i32 with 0\n@@ -1,7 +1,7 @@\n pub fn id(x: i32) -> i32 {\n     x\n }\n \n pub fn twice(x: i32) -> i32 {\n-    x * 2\n+    0 /* ~ changed by cargo-mutants ~ */\n }\n",
+    "file": "src/lib.rs",
+    "function": {
+      "function_name": "twice",
+      "return_type": "-> i32",
+      "span": {
+        "end": {
+          "column": 2,
+          "line": 7
+        },
+        "start": {
+          "column": 1,
+          "line": 5
+        }
+      }
+    },
+    "genre": "FnValue",
+    "name": "src/lib.rs:6:5: replace twice -> i32 with 0",
+    "package": "fixture4",
+    "replacement": "0",
+    "span": {
+      "end": {
+        "column": 10,
+        "line": 6
+      },
+      "start": {
+        "column": 5,
+        "line": 6
+      }
+    }
+  },
+  {
+    "diff": "--- src/lib.rs\n+++ replace twice -> i32 with 1\n@@ -1,7 +1,7 @@\n pub fn id(x: i32) -> i32 {\n     x\n }\n \n pub fn twice(x: i32) -> i32 {\n-    x * 2\n+    1 /* ~ changed by cargo-mutants ~ */\n }\n",
+    "file": "src/lib.rs",
+    "function": {
+      "function_name": "twice",
+      "return_type": "-> i32",
+      "span": {
+        "end": {
+          "column": 2,
+          "line": 7
+        },
+        "start": {
+          "column": 1,
+          "line": 5
+        }
+      }
+    },
+    "genre": "FnValue",
+    "name": "src/lib.rs:6:5: replace twice -> i32 with 1",
+    "package": "fixture4",
+    "replacement": "1",
+    "span": {
+      "end": {
+        "column": 10,
+        "line": 6
+      },
+      "start": {
+        "column": 5,
+        "line": 6
+      }
+    }
+  },
+  {
+    "diff": "--- src/lib.rs\n+++ replace twice -> i32 with -1\n@@ -1,7 +1,7 @@\n pub fn id(x: i32) -> i32 {\n     x\n }\n \n pub fn twice(x: i32) -> i32 {\n-    x * 2\n+    -1 /* ~ changed by cargo-mutants ~ */\n }\n",
+    "file": "src/lib.rs",
+    "function": {
+      "function_name": "twice",
+      "return_type": "-> i32",
+      "span": {
+        "end": {
+          "column": 2,
+          "line": 7
+        },
+        "start": {
+          "column": 1,
+          "line": 5
+        }
+      }
+    },
+    "genre": "FnValue",
+    "name": "src/lib.rs:6:5: replace twice -> i32 with -1",
+    "package": "fixture4",
+    "replacement": "-1",
+    "span": {
+      "end": {
+        "column": 10,
+        "line": 6
+      },
+      "start": {
+        "column": 5,
+        "line": 6
+      }
+    }
+  },
+  {
+    "diff": "--- src/lib.rs\n+++ replace * with + in twice\n@@ -1,7 +1,7 @@\n pub fn id(x: i32) -> i32 {\n     x\n }\n \n pub fn twice(x: i32) -> i32 {\n-    x * 2\n+    x + /* ~ changed by cargo-mutants ~ */ 2\n }\n",
+    "file": "src/lib.rs",
+    "function": {
+      "function_name": "twice",
+      "return_type": "-> i32",
+      "span": {
+        "end": {
+          "column": 2,
+          "line": 7
+        },
+        "start": {
+          "column": 1,
+          "line": 5
+        }
+      }
+    },
+    "genre": "BinaryOperator",
+    "name": "src/lib.rs:6:7: replace * with + in twice",
+    "package": "fixture4",
+    "replacement": "+",
+    "span": {
+      "end": {
+        "column": 8,
+        "line": 6
+      },
+      "start": {
+        "column": 7,
+        "line": 6
+      }
+    }
+  },
+  {
+    "diff": "--- src/lib.rs\n+++ replace * with / in twice\n@@ -1,7 +1,7 @@\n pub fn id(x: i32) -> i32 {\n     x\n }\n \n pub fn twice(x: i32) -> i32 {\n-    x * 2\n+    x / /* ~ changed by cargo-mutants ~ */ 2\n }\n",
+    "file": "src/lib.rs",
+    "function": {
+      "function_name": "twice",
+      "return_type": "-> i32",
+      "span": {
+        "end": {
+          "column": 2,
+          "line": 7
+        },
+        "start": {
+          "column": 1,
+          "line": 5
+        }
+      }
+    },
+    "genre": "BinaryOperator",
+    "name": "src/lib.rs:6:7: replace * with / in twice",
+    "package": "fixture4",
+    "replacement": "/",
+    "span": {
+      "end": {
+        "column": 8,
+        "line": 6
+      },
+      "start": {
+        "column": 7,
+        "line": 6
+      }
+    }
+  }
+]

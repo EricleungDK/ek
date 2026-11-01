@@ -3,7 +3,7 @@ name: mech-review
 # Reusable. Callers pin an ek tag:
 #   uses: EricleungDK/ek/.github/workflows/mech-review.yml@v0.1.1
 # The ek scripts run at the SAME ref the caller pinned: job.workflow_sha / job.workflow_repository
-# are the called workflow file's commit and repo, so the guard, red-first and the poster are checked out from there.
+# are the called workflow file's commit and repo, so the guard, red-first, mutants and the poster are checked out from there.
 
 on:
   workflow_call:
@@ -27,9 +27,9 @@ on:
         type: string
         default: "agent/"
       mutation-budget:
-        description: "UNUSED by the R2 guard and red-first; reserved for the R3 mutation check"
+        description: "R3 budget in minutes per mutants shard (cargo-mutants on the diff); a budget hit is partial, not a failure"
         type: string
-        default: ""
+        default: "10"
       extra-apt-packages:
         description: "apt packages (space-separated) installed before the red-first job runs its tests"
         type: string
@@ -160,9 +160,139 @@ jobs:
           if-no-files-found: ignore
           overwrite: true
 
+  plan:
+    name: mech-review plan (R3 shards)
+    runs-on: ubuntu-latest
+    outputs:
+      run: ${{ steps.plan.outputs.run }}
+      count: ${{ steps.plan.outputs.count }}
+      shards: ${{ steps.plan.outputs.shards }}
+    steps:
+      - name: caller checkout (full history, PR head)
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          path: caller
+          persist-credentials: false
+      - name: ek engine checkout (the ref this workflow was called at)
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          path: ek
+          persist-credentials: false
+      - name: R3 plan (does the mutants job run, its shard matrix)
+        id: plan
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          STACK: ${{ inputs.stack }}
+          TEST_PATHS: ${{ inputs.test-paths }}
+          MUTATION_SHARDS: "4"
+        run: |
+          set -eu
+          args=(--repo "$GITHUB_WORKSPACE/caller" --base "$BASE_SHA" --head "$HEAD_SHA" --stack "$STACK" --shards "$MUTATION_SHARDS")
+          while IFS= read -r g; do
+            if [ -n "$g" ]; then args+=(--test-paths "$g"); fi
+          done <<< "$TEST_PATHS"
+          python3 -I "$GITHUB_WORKSPACE/ek/scripts/mech-review.py" plan "${args[@]}" > mech-plan.json
+          python3 -I - "$GITHUB_OUTPUT" <<'PY'
+          import json
+          import sys
+
+          p = json.load(open("mech-plan.json"))
+          with open(sys.argv[1], "a") as out:
+              out.write(f"run={str(p['run']).lower()}\n")
+              out.write(f"count={p['count']}\n")
+              out.write(f"shards={json.dumps(p['shards'])}\n")
+          PY
+
+  mutants:
+    name: mech-review mutants (R3 shard ${{ matrix.shard }})
+    needs: [plan]
+    if: ${{ needs.plan.outputs.run == 'true' }}
+    runs-on: ubuntu-latest
+    # runs PR code (cargo mutants runs its tests): read-only token, same as red-first
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: ${{ fromJSON(needs.plan.outputs.shards) }}
+    steps:
+      - name: caller checkout (full history, PR head)
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          path: caller
+          persist-credentials: false
+      - name: ek engine checkout (the ref this workflow was called at)
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          path: ek
+          persist-credentials: false
+      - name: Rust toolchain
+        if: inputs.stack == 'rust'
+        uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+        with:
+          toolchain: stable
+      - name: extra apt packages
+        if: inputs.extra-apt-packages != ''
+        env:
+          EXTRA_APT: ${{ inputs.extra-apt-packages }}
+        run: |
+          set -eu
+          read -ra pkgs <<< "$EXTRA_APT"
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq "${pkgs[@]}"
+      - name: install cargo-mutants (pinned)
+        # a failed install is not a stop: the engine reports n/a (env) when the tool is missing
+        id: install
+        continue-on-error: true
+        uses: taiki-e/install-action@68a389c788b2cd04016ce8c80ee23b80d2ab3d68 # v2
+        with:
+          tool: cargo-mutants@27.1.0
+      - name: R3 mutation on the diff (shard)
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          STACK: ${{ inputs.stack }}
+          TEST_PATHS: ${{ inputs.test-paths }}
+          MUTATION_BUDGET: ${{ inputs.mutation-budget }}
+          SHARD: ${{ matrix.shard }}
+          SHARD_COUNT: ${{ needs.plan.outputs.count }}
+        run: |
+          set -uo pipefail
+          args=(--repo "$GITHUB_WORKSPACE/caller" --base "$BASE_SHA" --head "$HEAD_SHA" --stack "$STACK"
+                --shard "$SHARD/$SHARD_COUNT" --mutation-budget "$MUTATION_BUDGET")
+          while IFS= read -r g; do
+            if [ -n "$g" ]; then args+=(--test-paths "$g"); fi
+          done <<< "$TEST_PATHS"
+          rc=0
+          python3 -I "$GITHUB_WORKSPACE/ek/scripts/mech-review.py" mutants "${args[@]}" > mech-review-mutants.json 2> mech-review-mutants.err || rc=$?
+          cat mech-review-mutants.err >&2
+          # exit 1 = fail entries: a result, saved and reported. exit 2+ = usage or git error: no result.
+          if [ "$rc" -gt 1 ]; then
+            rm -f mech-review-mutants.json
+            echo "::error::mech-review mutants exit $rc (usage or git error): no result"
+            exit "$rc"
+          fi
+      - name: upload mutants result
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mech-review-mutants-${{ matrix.shard }}
+          path: mech-review-mutants.json
+          if-no-files-found: ignore
+          overwrite: true
+
   report:
     name: mech-review report
-    needs: [guard, red-first]
+    needs: [guard, red-first, plan, mutants]
     if: always()
     runs-on: ubuntu-latest
     steps:
@@ -185,13 +315,48 @@ jobs:
         with:
           name: mech-review-red-json
           path: red-result
+      - name: fetch mutants shard results
+        uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          pattern: "mech-review-mutants-*"
+          path: mutants-result
+      - name: merge mutants shards (R3)
+        if: ${{ needs.plan.outputs.run == 'true' || needs.plan.result != 'success' }}
+        env:
+          COUNT: ${{ needs.plan.outputs.count }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          STACK: ${{ inputs.stack }}
+        run: |
+          set -u
+          # a missing shard file is a CI entry in the merge, never a silent pass
+          args=(--base "$BASE_SHA" --head "$HEAD_SHA" --stack "$STACK" --shards "${COUNT:-1}")
+          for ((k = 0; k < ${COUNT:-1}; k++)); do
+            f="mutants-result/mech-review-mutants-$k/mech-review-mutants.json"
+            if [ -f "$f" ]; then args+=(--envelope "$k=$f"); fi
+          done
+          rc=0
+          python3 -I ek/scripts/mech-review.py merge "${args[@]}" > mutants-merged.json 2> mutants-merged.err || rc=$?
+          cat mutants-merged.err >&2
+          if [ "$rc" -gt 1 ]; then
+            rm -f mutants-merged.json
+            echo "::error::mech-review merge exit $rc (usage error): no mutants result"
+          fi
       - name: post or edit the sticky comment, set the check result
         env:
           GITHUB_TOKEN: ${{ github.token }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          RUN: ${{ needs.plan.outputs.run }}
+          PLAN_RESULT: ${{ needs.plan.result }}
         run: |
+          extra=()
+          if [ "$RUN" = "true" ] || [ "$PLAN_RESULT" != "success" ]; then
+            extra+=(--envelope mutants=mutants-merged.json)
+          fi
           python3 -I ek/scripts/mech-comment.py --pr "$PR_NUMBER" --head "$HEAD_SHA" \
             --envelope r2=r2-result/mech-review.json \
             --envelope red=red-result/mech-review-red.json \
+            "${extra[@]}" \
             --reason "no JSON from the job (see its log)"

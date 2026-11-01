@@ -308,7 +308,7 @@ eq "$(jq -r .summary <<<"$out")" "pass $H (0 fail, 0 confirm; ran: R1 R2 R4; ski
 out=$(python3 -I "$MR" r2 --repo "$R" --base "$B" --head "$H" --stack rust --test-paths 'tests/**')
 has "$(jq -r .checks.R1.note <<<"$out")" "not run by r2" "r2: R1 note says not run by r2"
 has "$(jq -r .checks.R4.note <<<"$out")" "not run by r2" "r2: R4 note says not run by r2"
-eq "$(jq -r .checks.R3.note <<<"$out")" "not implemented" "r2: R3 still not implemented"
+eq "$(jq -r .checks.R3.note <<<"$out")" "not run by r2" "r2: R3 not run by r2 (mutants subcommand runs it)"
 
 # ---- help names the red subcommand and the new inputs ----
 has "$(python3 -I "$MR" --help)" "--head-branch" "help: --head-branch"

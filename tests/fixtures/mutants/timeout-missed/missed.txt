@@ -1,0 +1,2 @@
+src/lib.rs:10:5: replace sign -> i32 with -1
+src/lib.rs:10:10: replace < with <= in sign

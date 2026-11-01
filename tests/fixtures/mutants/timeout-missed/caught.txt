@@ -1,0 +1,12 @@
+src/lib.rs:2:5: replace spin -> i32 with 0
+src/lib.rs:2:5: replace spin -> i32 with 1
+src/lib.rs:2:5: replace spin -> i32 with -1
+src/lib.rs:3:13: replace < with == in spin
+src/lib.rs:3:13: replace < with > in spin
+src/lib.rs:3:13: replace < with <= in spin
+src/lib.rs:4:11: replace += with -= in spin
+src/lib.rs:10:5: replace sign -> i32 with 0
+src/lib.rs:10:5: replace sign -> i32 with 1
+src/lib.rs:10:10: replace < with == in sign
+src/lib.rs:10:10: replace < with > in sign
+src/lib.rs:10:16: delete - in sign

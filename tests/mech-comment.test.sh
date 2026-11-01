@@ -118,6 +118,24 @@ row = next(l for l in b.splitlines() if l.startswith("| R2-deadbeef"))
 check("render: long table cell truncated in the table row", "…" in row and "y" * 500 not in row and len(row) < 400, row)
 check("render: JSON block keeps the full problem", json_block(b) == long_cell)
 
+# ---- needs-human: human render only (table cell, headline); JSON, summary, exit unchanged ----
+nh = env([entry(cls="needs-human", eid="R2-aaaaaaaa", file=".github/x.yml", line=0, problem="protected path changed")])
+b = C.render(nh)
+check("needs-human: severity cell reads needs-human",
+      "| R2-aaaaaaaa | needs-human | .github/x.yml:0 |" in b, b)
+check("needs-human: headline starts needs-human", f"**needs-human {SHA} (" in b, b)
+check("needs-human: json block keeps severity fail and fail summary", json_block(b) == nh, str(json_block(b)))
+check("needs-human: exit still 1", C.exit_code(nh) == 1)
+mixed = env([entry(), entry(cls="needs-human", eid="R2-aaaaaaaa", file=".github/x.yml", line=0, problem="protected path changed")])
+b = C.render(mixed)
+check("needs-human mixed: headline stays fail", f"**fail {SHA} (" in b and "**needs-human" not in b, b)
+check("needs-human mixed: agent-fixable row stays fail", "| R2-deadbeef | fail |" in b, b)
+check("needs-human mixed: needs-human row reads needs-human", "| R2-aaaaaaaa | needs-human |" in b, b)
+conf = env([entry(sev="confirm", cls="needs-human", eid="R2-aaaaaaaa", file=".github/x.yml", line=0)])
+b = C.render(conf)
+check("needs-human confirm only: headline unchanged", f"**pass {SHA} (" in b, b)
+check("needs-human confirm only: severity cell stays confirm", "| R2-aaaaaaaa | confirm |" in b, b)
+
 # ---- crash render ----
 b = C.render_crash(SHA, "guard produced no JSON")
 check("crash: marker is the first line", b.splitlines()[0] == C.MARKER)
