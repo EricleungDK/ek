@@ -2,7 +2,7 @@
 
 One bar for tests in every ek-adopting repo. Apps link this from their agent docs (`AGENTS.md` / `CLAUDE.md`) and add a short local doc with repo specifics ([per-app doc](#per-app-doc)). Don't fork these rules into the app.
 
-Status: R2 implemented (#13, `scripts/mech-review.py`). R1, R3, R4 planned (#12). Until a check runs, a reviewer applies its rule by hand. Never report a planned check as run.
+Status: R1 (red-first) and R4 (determinism) implemented (#16, `mech-review.py red`). R2 implemented (#13). R3 planned (#12). Until a check runs, a reviewer applies its rule by hand. Never report a planned check as run.
 
 ## Contents
 
@@ -80,16 +80,16 @@ If a behaviour can be tested at unit level, test it there. Push e2e to the one p
 | Change expected value to match output | R2 (`confirm`) | editing an expected value to match the code's current output | Check the spec or ticket. The spec sets the value; fix the code. Intended change: reviewer confirms the `confirm` entry. |
 | Lint/type suppression without reason: `#[allow]`, `# noqa`, `# type: ignore`, `@ts-ignore` | R2 (`fail`) | silencing a lint without a reason | Fix the lint. If it must stay, same-line reason (`#[allow(x, reason = "…")]` with a non-empty reason, `# noqa: E501 — url literal`). An empty reason is no reason. |
 | Edit a protected path: CI, gate scripts, agent docs | R2 (`fail`, `needs-human`) | editing CI, gate scripts or agent docs to get the gate green | Stop. A human decides. Never edit the gate to pass. No agent downgrade path. |
-| Test passes before the fix | R1 (planned) | no failing `test(red)` commit | Write the test first in a `test(red): …` commit. It must fail there for the ticket's reason. |
+| Test passes before the fix | R1 | no failing `test(red)` commit | Write the test first in a `test(red): …` commit. It must fail there for the ticket's reason. |
 | Weak or missing assert: test still passes with the code broken | R3 (planned) | MISSED mutant `<desc>` in `<file>` | Add the assert that kills the mutant. |
-| Flaky test: passes and fails on same code | R4 (planned) | flaky test `<name>` | Find the nondeterminism (time, order, shared state, sleep). Fix it. Never retry to green. |
+| Flaky test: passes and fails on same code | R4 | flaky test `<name>` | Find the nondeterminism (time, order, shared state, sleep). Fix it. Never retry to green. |
 | Test asserts internals, mocks own code, bad name, logic in test | code review | n/a | Test through public interface. Mock only boundaries. Rename to the behaviour. Remove the logic. |
 
 ## 4. Checks
 
 | Check | Enforces | Status |
 |---|---|---|
-| R1 red-first | First `test(red): …` commit touches only test paths. Its new tests fail there (or build fails: `compile-red`). They pass at head. Agent branches only, when production files changed. | planned (#12) |
+| R1 red-first | First `test(red): …` commit in base..head touches no production file. Its new or changed tests fail there (build fails: `compile-red`, confirm). They pass at head. Agent branches only (`--head-branch` starts with the agent prefix), when production files changed. Runs in a worktree at the red commit. | implemented (#16) |
 | R2 test-diff guard | Cheat rows above: removed tests (a rename with the same asserts is not a removal), new skip/ignore/xfail/only, `should_panic` added to an existing test (`confirm`), fewer asserts per surviving test fn, weakened or changed expected values (`confirm`), unreasoned suppressions, protected paths. No waiver in the PR body. | implemented (#13, #26, #27, review round 1) |
 
 R2 assert rules:
@@ -100,7 +100,7 @@ R2 assert rules:
 - Each side is classified by its own path: moving a file between test and prod paths is judged per side.
 - Replacing an assert in place (any kind) is `confirm`; reordering is not a change.
 | R3 mutation on diff | Mutation runs on changed production code only. MISSED mutant = `fail`. Timeout and unviable ignored. Budgeted. Budget hit with no MISSED so far = `partial`: reports `R3 partial (tested/total)`, does not block. | planned (#12) |
-| R4 determinism | Each new or changed test runs 5× at head. Any failure = `fail`, class `agent-fixable`. | planned (#12) |
+| R4 determinism | Each new or changed test runs 5× at head, in a worktree. Any failing run = `fail`, class `agent-fixable`. A test that does not build or cannot run is a `fail` too. | implemented (#16) |
 
 Statuses (per check, in the envelope):
 
@@ -108,9 +108,10 @@ Statuses (per check, in the envelope):
 - `fail`: at least one `fail` entry. Blocks. Only a code fix (or a human decision for `needs-human`) clears it.
 - `partial`: R3 budget hit with no MISSED so far. Reported `R3 partial (tested/total)`. Does not block.
 - `n/a`: tool not installable (`n/a (env)`). Not a pass. Say so in the report.
-- `skipped`: check does not apply, or not implemented yet. Reason in the note. R1 is skipped for docs-only PRs and non-agent branches.
+- `skipped`: check does not apply, or not implemented yet, or a subcommand does not run it (`not run by r2`). Reason in the note. R1 is skipped for docs-only PRs and non-agent branches.
+- `n/a`: the check could not run because the toolchain is absent (`toolchain absent … (env)`). Not `pass`, not `skipped`: the summary names it.
 
-Checks not built yet (R1, R3, R4 today): engine emits `skipped` with note `not implemented`. Report them as not run, never as passed.
+Checks not built yet (R3 today): engine emits `skipped` with note `not implemented`. Report it as not run, never as passed.
 
 ## 5. Mech-review vs code review
 
@@ -149,8 +150,8 @@ Envelope: head SHA, base SHA, ek version, per-check status (`pass|fail|partial|n
 
 Summary:
 
-- `all pass <sha>`: no entries and every check passed. Never while a check is skipped.
-- Otherwise `<pass|fail> <sha> (<F> fail, <C> confirm; ran: <checks>[; skipped: <checks>])`. The `; skipped:` part appears only when some check is skipped, e.g. `pass <sha> (0 fail, 1 confirm; ran: R2; skipped: R1 R3 R4)`. `fail` when `F` > 0.
+- `all pass <sha>`: no entries and every check passed. Never while a check is skipped or n/a.
+- Otherwise `<pass|fail> <sha> (<F> fail, <C> confirm; ran: <checks>[; skipped: <checks>][; n/a: <checks>])`. The `; skipped:` part appears only when some check is skipped, `; n/a:` only when some check is n/a, e.g. `pass <sha> (0 fail, 1 confirm; ran: R2; skipped: R1 R3 R4)`. `fail` when `F` > 0.
 - Same format in `--format text` (first line) and in the envelope.
 
 ## Per-app doc

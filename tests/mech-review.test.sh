@@ -31,7 +31,7 @@ eq "$(jq -r .head <<<"$out")" "$H" "envelope head sha"
 eq "$(jq -r .base <<<"$out")" "$B" "envelope base sha"
 eq "$(jq -r .ek <<<"$out")" "0.1.1" "envelope ek version from plugin.json"
 eq "$(jq -r .checks.R2.status <<<"$out")" pass "R2 status pass"
-eq "$(jq -r .checks.R1.note <<<"$out")" "not implemented" "skipped note"
+eq "$(jq -r .checks.R1.note <<<"$out")" "not run by r2" "R1 skipped: r2 runs R2 only"
 eq "$(jq -r .checks.R1.status <<<"$out")" skipped "R1 skipped (not built yet)"
 eq "$(jq -r .checks.R3.status <<<"$out")" skipped "R3 skipped"
 eq "$(jq -r .checks.R4.status <<<"$out")" skipped "R4 skipped"
@@ -654,9 +654,11 @@ out=$(mr "$R" "$B" "$H" --format text); rc=$?
 eq "$rc" 0 "text clean exit 0"
 eq "$out" "pass $H (0 fail, 0 confirm; ran: R2; skipped: R1 R3 R4)" "text clean names skipped checks"
 
-out=$(python3 -I "$MR" all --repo "$R" --base "$B" --head "$H" --stack rust); rc=$?
+# all runs every implemented check: R4 runs the new test c, so the runner is a passing stub (no cargo needed)
+OK_STUB="$T/ok-stub.sh"; printf '#!/bin/bash\necho "test result: ok. 1 passed; 0 failed"\n' > "$OK_STUB"; chmod +x "$OK_STUB"
+out=$(MECH_TEST_STUB="$OK_STUB" python3 -I "$MR" all --repo "$R" --base "$B" --head "$H" --stack rust --test-paths 'tests/**'); rc=$?
 eq "$rc" 0 "all subcommand clean exit 0"
-eq "$(jq -r .summary <<<"$out")" "pass $H (0 fail, 0 confirm; ran: R2; skipped: R1 R3 R4)" "all subcommand summary names skipped checks"
+eq "$(jq -r .summary <<<"$out")" "pass $H (0 fail, 0 confirm; ran: R2 R4; skipped: R1 R3)" "all subcommand summary names skipped checks"
 
 put "$R" tests/a.rs <<'EOF2'
 #[test]

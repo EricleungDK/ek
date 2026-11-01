@@ -301,6 +301,54 @@ check("cli: missing --pr is a usage error (exit 2)", p.returncode == 2 and "--pr
 p = run_cli(["--pr", "5", "--envelope", envp], api="http://127.0.0.1:1")
 check("cli: API unreachable exits 3", p.returncode == 3, f"rc={p.returncode} {p.stderr}")
 
+# ---- named envelopes: one comment merges the r2 guard and the red-first job ----
+def job_env(checks, entries, head=SHA):
+    return {"ek": "0.1.1", "base": BASE, "head": head, "checks": checks, "entries": list(entries), "summary": "x"}
+
+
+R2_ENV = os.path.join(tmp, "r2.json")
+RED_ENV = os.path.join(tmp, "red.json")
+with open(R2_ENV, "w") as fh:
+    json.dump(job_env({"R2": {"status": "fail", "note": "1 fail"}}, [entry()]), fh)
+with open(RED_ENV, "w") as fh:
+    json.dump(job_env({"R1": {"status": "pass", "note": "ok"}, "R4": {"status": "pass", "note": "ok"}}, []), fh)
+MISSING = os.path.join(tmp, "nope.json")
+
+LOG.clear()
+p = run_cli(["--pr", "5", "--head", SHA, "--envelope", f"r2={R2_ENV}", "--envelope", f"red={RED_ENV}"])
+patched = [b.get("body", "") for m, _, b in LOG if m == "PATCH"]
+check("named: both jobs merged, the R2 fail still exits 1", p.returncode == 1, f"rc={p.returncode} {p.stderr}")
+check("named: one comment, carries the R2 entry", patched and "R2-deadbeef" in patched[0], str(patched))
+check("named: merged summary names the red checks as ran", patched and "ran: R1 R2 R4" in patched[0], str(patched))
+
+LOG.clear()
+p = run_cli(["--pr", "5", "--head", SHA, "--envelope", f"r2={R2_ENV}", "--envelope", f"red={MISSING}"],
+            {"GITHUB_STEP_SUMMARY": None})
+patched = [b.get("body", "") for m, _, b in LOG if m == "PATCH"]
+check("named: red-first crash keeps the R2 entry", p.returncode == 1 and patched and "R2-deadbeef" in patched[0], f"rc={p.returncode} {patched}")
+check("named: red-first crash is a CI fail entry naming the job",
+      patched and "CI-" in patched[0] and "red job produced no result" in patched[0], str(patched))
+
+LOG.clear()
+p = run_cli(["--pr", "5", "--head", SHA, "--envelope", f"r2={MISSING}", "--envelope", f"red={MISSING}", "--reason", "boom"])
+patched = [b.get("body", "") for m, _, b in LOG if m == "PATCH"]
+check("named: both jobs missing exits 4", p.returncode == 4, f"rc={p.returncode} {p.stderr}")
+check("named: both jobs missing edits a crash notice", patched and "no result" in patched[0], str(patched))
+
+stale = os.path.join(tmp, "red-stale.json")
+with open(stale, "w") as fh:
+    json.dump(job_env({"R1": {"status": "pass", "note": "ok"}, "R4": {"status": "pass", "note": "ok"}}, [], head=OTHER), fh)
+LOG.clear()
+p = run_cli(["--pr", "5", "--head", SHA, "--envelope", f"r2={R2_ENV}", "--envelope", f"red={stale}"])
+patched = [b.get("body", "") for m, _, b in LOG if m == "PATCH"]
+check("named: stale red-first result is treated as missing", patched and "red job produced no result" in patched[0]
+      and "older head" in patched[0], str(patched))
+
+p = run_cli(["--pr", "5", "--head", SHA, "--envelope", f"r2={R2_ENV}", "--envelope", RED_ENV])
+check("named: mixing named and unnamed envelopes is a usage error (exit 2)", p.returncode == 2, f"rc={p.returncode} {p.stderr}")
+p = run_cli(["--pr", "5", "--head", SHA, "--envelope", f"guard={R2_ENV}", "--envelope", f"red={RED_ENV}"])
+check("named: unknown job name is a usage error (exit 2)", p.returncode == 2, f"rc={p.returncode} {p.stderr}")
+
 srv.shutdown()
 print("")
 sys.exit(1 if FAILS else 0)

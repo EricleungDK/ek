@@ -11,7 +11,7 @@ HELP = """\
 mechanical PR checks over base...head (merge-base diff). Prints the contract JSON.
 
 checks (status in envelope: pass | fail | partial | n/a | skipped):
-  R2  test-diff guard (implemented): removed test fn (a rename with the same asserts is not
+  R2  test-diff guard: removed test fn (a rename with the same asserts is not
       a removal); added #[ignore] or a cfg that disables it or its mod; should_panic added to an
       existing test (confirm); fewer asserts in a surviving test fn, or helper asserts per file;
       assert replaced in place, any kind (confirm); changed expected value (confirm); added
@@ -19,20 +19,23 @@ checks (status in envelope: pass | fail | partial | n/a | skipped):
       paths (needs-human).
       Test fns are keyed by mod-qualified name (m1::works). A test that loses asserts is exempt
       only up to the asserts gained by a helper it calls by name (call-site, each gain used once).
-  R1, R3, R4: not implemented yet, always skipped.
-  `r2` and `all` run the same implemented checks.
-
-entry: id, check, class (agent-fixable | needs-human | env), severity (fail | confirm),
-  file, line (0 = file-level), problem, hint, forbidden.
-  id = <check>-<first 8 hex of sha1(check + file + key)>; key = rule and test fn name
-  (e.g. ignore:<fn>, assert-count:<fn>, assert-count = helpers of a file). Never depends on line
-  numbers. A repeat of one key in a file (line order) gets key `<key>#1`, `<key>#2`; the first keeps the plain key.
+  R1  red-first (red subcommand): the first test(red) commit in base..head touches no production
+      file; its new tests fail there (build failure = compile-red, confirm); they pass at head.
+      Skipped unless --head-branch starts with --agent-prefix and a production file changed.
+      Runs in a git worktree at the red commit; n/a when the toolchain is absent.
+  R4  determinism (red subcommand): each new or changed #[test] runs 5x at head; any failing run
+      is a fail. n/a when the toolchain is absent.
+  R3  mutation: not implemented, always skipped.
+  `r2` runs R2. `red` runs R1 and R4. `all` runs R1, R2 and R4. A check a subcommand does not run
+  is skipped with `not run by <subcommand>`.
+  Test runner: the stack default (rust: `cargo test`), or --test-cmd. Env MECH_TEST_STUB=<exe>
+  replaces the executable (arguments kept): the injectable runner for tests.
 
 summary (one line, text format first line and envelope `summary`):
-  `all pass <head sha>`: no entries and every check passed (never while a check is skipped).
-  otherwise `<pass|fail> <head sha> (<F> fail, <C> confirm; ran: <checks>[; skipped: <checks>])`,
+  `all pass <head sha>`: no entries and every check passed (never while a check is skipped or n/a).
+  otherwise `<pass|fail> <head sha> (<F> fail, <C> confirm; ran: <checks>[; skipped: <checks>][; n/a: <checks>])`,
   e.g. `pass <sha> (0 fail, 1 confirm; ran: R2; skipped: R1 R3 R4)`.
-  `pass` = no fail entries; `fail` = at least one fail entry.
+  `pass` = no fail entries; `fail` = at least one fail entry; `n/a` = toolchain absent, not run.
 
 envelope: ek (plugin version), base, head (full SHAs), checks, entries, summary.
 
@@ -58,7 +61,8 @@ def build_parser():
     p = argparse.ArgumentParser(prog="mech-review.py", description=HELP, formatter_class=argparse.RawDescriptionHelpFormatter,
                                 epilog="example: python3 -I scripts/mech-review.py r2 --repo . --base main --head HEAD "
                                        "--stack rust --test-paths 'tests/**' --protected-paths '.github/**'")
-    p.add_argument("check", choices=["r2", "all"], help="r2: test-diff guard; all: every implemented check")
+    p.add_argument("check", choices=["r2", "red", "all"],
+                   help="r2: test-diff guard (R2); red: red-first and determinism (R1, R4); all: R1, R2, R4")
     p.add_argument("--repo", default=".", help="git repo (default .)")
     p.add_argument("--base", required=True, help="base ref")
     p.add_argument("--head", required=True, help="head ref")
@@ -67,6 +71,9 @@ def build_parser():
     p.add_argument("--protected-paths", action="append", default=[], metavar="GLOB", help="protected file glob, repeatable")
     p.add_argument("--pr-body", nargs="?", action=Removed, help=argparse.SUPPRESS)
     p.add_argument("--format", choices=["json", "text"], default="json", help="json (contract, default) or text (summary + entries)")
+    p.add_argument("--head-branch", metavar="NAME", help="head branch name (R1 needs it: CI passes github.head_ref)")
+    p.add_argument("--agent-prefix", default="agent/", metavar="PREFIX", help="agent branch prefix for R1 (default agent/)")
+    p.add_argument("--test-cmd", metavar="CMD", help="test command for R1/R4 (default: the stack's, rust: cargo test)")
     return p
 
 
@@ -82,7 +89,9 @@ def render_text(env):
 def main(argv):
     args = build_parser().parse_args(argv)
     try:
-        env = engine.run(args.repo, args.base, args.head, args.stack, args.test_paths, args.protected_paths)
+        env = engine.run(args.repo, args.base, args.head, args.stack, args.test_paths, args.protected_paths,
+                         which=args.check, agent_prefix=args.agent_prefix, head_branch=args.head_branch,
+                         test_cmd=args.test_cmd)
     except engine.Die as e:
         print(f"mech-review: {e}", file=sys.stderr)
         return 2

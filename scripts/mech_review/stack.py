@@ -8,20 +8,27 @@ Adapter interface:
       scope: inside a test fn or a #[cfg(test)] mod (production code is never in scope);
       kind: eq | ne | other (assert!(a == b) is eq); left/right: whitespace-normalized operands (eq/ne only);
       text: the whole assert call, whitespace-normalized (for messages)
+  test_bodies(text) -> {name: (line, body)}   body: whitespace-normalized source of a #[test] fn item (R1/R4 compare)
+  default_test_cmd: the toolchain command a runner starts from (rust: cargo test)
+  test_argv(cmd, name) -> argv that runs one named test       outcome(rc, output) -> verdict of one run:
+      pass | fail | build | none | error | timeout | env (rc None: executable missing, toolchain absent)
 """
 import re
+import shlex
 from collections import namedtuple
 
 from .globs import any_glob
 
 TestFn = namedtuple("TestFn", "name line markers")
 Assertion = namedtuple("Assertion", "line fn scope kind left right text owner")
-Item = namedtuple("Item", "qname line is_test markers body")
+Item = namedtuple("Item", "qname line is_test markers body span")
 CFG_TEST = re.compile(r"#\[\s*cfg\s*\(\s*test\s*\)\s*\]")
 BODY_END = re.compile(r"[{;]")
 ATTR = re.compile(r"#\[[^\]]*\]")
 Suppression = namedtuple("Suppression", "line end_line kind lints lint_text reason")
 
+RESULT = re.compile(r"test result: \w+\. (\d+) passed; (\d+) failed")
+BUILD = re.compile(r"could not compile|error\[E\d{4}\]")
 RAW = re.compile(r'(?:br|cr|r)(#*)"')
 FN = re.compile(r'((?:#\[[^\]]*\]\s*)*)(?:pub(?:\s*\([^)]*\))?\s+)?(?:async\s+)?(?:unsafe\s+)?fn\s+(\w+)')
 ATTR_START = re.compile(r"#!?\[")
@@ -150,6 +157,7 @@ def args_of(text, m, i):
 
 class Adapter:
     name = ""
+    default_test_cmd = ""
 
     def classify(self, path, test_globs):
         raise NotImplementedError
@@ -166,6 +174,15 @@ class Adapter:
     def calls(self, text):
         raise NotImplementedError
 
+    def test_bodies(self, text):
+        raise NotImplementedError
+
+    def test_argv(self, cmd, name):
+        raise NotImplementedError
+
+    def outcome(self, rc, out):
+        raise NotImplementedError
+
 
 def _innermost(spans, pos):
     """name of the innermost (name, open, close) span containing pos, or None."""
@@ -175,6 +192,7 @@ def _innermost(spans, pos):
 
 class RustAdapter(Adapter):
     name = "rust"
+    default_test_cmd = "cargo test"
 
     def classify(self, path, test_globs):
         if not path.endswith(".rs"):
@@ -206,8 +224,10 @@ class RustAdapter(Adapter):
             if any(SHOULD_PANIC.match(a) for a in attrs):
                 markers.append("should_panic")
             qname = "::".join([name for _, name in inside] + [f.group(2)])
+            body = self._body(m, f.end())
+            span = (f.start(), body[1] + 1 if body else f.end())
             items.append(Item(qname, m.count("\n", 0, f.start(2)) + 1, any(TEST_ATTR.match(a) for a in attrs),
-                              markers, self._body(m, f.end())))
+                              markers, body, span))
         return m, mods, items
 
     def test_fns(self, text):
@@ -236,6 +256,32 @@ class RustAdapter(Adapter):
             out.append(Assertion(m.count("\n", 0, pos) + 1, _innermost(tests, pos), any(b <= pos < e for _, b, e in scoped),
                                  kind, norm(left), norm(right), call, _innermost(owners, pos)))
         return out
+
+    def test_bodies(self, text):
+        """{qname: (line, body)} for each #[test] fn. body: whitespace-normalized item text, attributes and signature included."""
+        _, _, items = self._items(text)
+        return {it.qname: (it.line, norm(text[it.span[0]:it.span[1]])) for it in items if it.is_test}
+
+    def test_argv(self, cmd, name):
+        """one named test: libtest --exact matches the full mod-qualified name, so one test per run."""
+        return shlex.split(cmd) + ["--", "--exact", name]
+
+    def outcome(self, rc, out):
+        """verdict of one test run from its exit code and output (cargo test / libtest shapes)."""
+        if rc is None:
+            return "env"
+        if rc == "timeout":
+            return "timeout"
+        if BUILD.search(out):
+            return "build"
+        res = RESULT.findall(out)
+        if not res:
+            return "error"  # cargo failed before any test result (no manifest, bad flags)
+        passed = sum(int(p) for p, _ in res)
+        failed = sum(int(f) for _, f in res)
+        if failed or rc != 0:
+            return "fail"
+        return "pass" if passed else "none"
 
     def calls(self, text):
         """{fn qname: bare names it calls as plain or path calls (f(), self::f(), super::f()); method calls (x.f()) excluded}"""
