@@ -65,7 +65,8 @@ def step(lines, name):
 def value(lines, key):
     for l in lines:
         if l.strip().startswith(key + ":"):
-            return l.strip()[len(key) + 1:].strip().strip("'\"")
+            v = l.strip()[len(key) + 1:].strip()
+            return v[1:-1] if len(v) >= 2 and v[0] == v[-1] == '"' else v
     return None
 
 
