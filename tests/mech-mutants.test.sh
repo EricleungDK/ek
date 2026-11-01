@@ -364,4 +364,76 @@ out=$(python3 -I "$MR" merge --repo /no/such/checkout --base "$B" --head "$H" --
 eq "$rc" 1 "merge: full SHAs with no checkout: exit 1, not a git error"
 eq "$(jq -r .checks.R3.status <<<"$out")" fail "merge: full SHAs with no checkout: R3 fail"
 
+# ---- runner stop: over budget returns "timeout" in bounded time, also when the run ignores SIGTERM and a child escaped its group ----
+RUNNER_T="$T/runner"; mkdir -p "$RUNNER_T"
+cat > "$RUNNER_T/ignores-term.sh" <<'SH'
+#!/bin/bash
+trap '' TERM
+setsid sh -c 'trap "" TERM; exec sleep 9770123' &
+wait
+SH
+cat > "$RUNNER_T/dies-on-term.sh" <<'SH'
+#!/bin/bash
+sleep 9770124
+SH
+python3 -I - "$ROOT" "$RUNNER_T" <<'PY'
+import subprocess
+import sys
+import threading
+import time
+
+ROOT, RT = sys.argv[1], sys.argv[2]
+sys.path.insert(0, ROOT + "/scripts")
+from mech_review import mutants as M  # noqa: E402
+
+FAILS = 0
+
+
+def check(name, cond, detail=""):
+    global FAILS
+    if cond:
+        print(f"  ok   {name}")
+    else:
+        FAILS += 1
+        print(f"  FAIL {name}\n       {detail}")
+
+
+def bounded(argv, budget, limit=30):
+    """Run the default runner in a thread: (result or None if still stuck after limit, seconds)."""
+    box = {}
+    th = threading.Thread(target=lambda: box.setdefault("r", M.default_runner()(argv, RT, budget)), daemon=True)
+    t0 = time.time()
+    th.start()
+    th.join(limit)
+    return box.get("r") if not th.is_alive() else None, time.time() - t0
+
+
+M.KILL_GRACE = 1
+r, dt = bounded(["bash", RT + "/ignores-term.sh"], 0.5)
+check("ignores SIGTERM and leaves a child outside the group: returns timeout", r is not None and r[0] == "timeout",
+      f"result={r!r} after {dt:.1f}s")
+check("ignores SIGTERM: returns within the bound (grace + reap), not stuck", dt < 15, f"{dt:.1f}s")
+
+M.KILL_GRACE = 5
+r, dt = bounded(["bash", RT + "/dies-on-term.sh"], 0.5)
+check("honours SIGTERM: returns timeout before the grace ends", r is not None and r[0] == "timeout" and dt < 4,
+      f"result={r!r} after {dt:.1f}s")
+
+r, dt = bounded(["bash", "-c", "echo hi; exit 3"], 5)
+check("normal exit: rc and output kept", r == (3, "hi\n"), repr(r))
+
+subprocess.run(["pkill", "-f", "sleep 9770123"], capture_output=True)
+subprocess.run(["pkill", "-f", "sleep 9770124"], capture_output=True)
+sys.exit(1 if FAILS else 0)
+PY
+eq "$?" 0 "runner stop: bounded over budget, SIGTERM honoured, normal exit kept"
+
+# ---- all: R3 is not in all; its note says where it runs; --help says so ----
+mrepo allnote
+out=$(env -u MECH_TEST_STUB python3 -I "$MR" all --repo "$R" --base "$B" --head "$H" --stack rust --test-paths 'tests/**' --test-cmd "ek-no-such-toolchain test")
+has "$(jq -r .checks.R3.note <<<"$out")" "not run by all" "all: R3 note says not run by all"
+has "$(jq -r .checks.R3.note <<<"$out")" "mutants" "all: R3 note names the mutants subcommand"
+has "$(python3 -I "$MR" --help)" "all" "help: all named"
+has "$(python3 -I "$MR" --help)" "\`all\` = R1, R2 and R4" "help: all is R1, R2 and R4"
+
 done_tests
