@@ -248,7 +248,7 @@ eq "$(jq -r .checks.R3.status <<<"$out")" skipped "ts docs only: R3 skipped"
 eq "$(wc -c < "$MECH_STUB_LOG" | tr -d ' ')" 0 "ts docs only: the stub is never run"
 
 # project-dir: the crate is pkg/; mutants run there, crate-relative mutate, repo-root entry paths
-R=$(mkrepo pd); mkdir -p "$R/pkg/tests"
+R=$(mkrepo pd); mkdir -p "$R/pkg/tests"; fake_runners "$R/pkg"
 put "$R" pkg/package.json <<'EOF'
 {"name":"calc","devDependencies":{"vitest":"5.0.5"}}
 EOF

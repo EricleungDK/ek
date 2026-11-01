@@ -582,6 +582,17 @@ STRYKER_BASELINE = "There were failed tests in the initial test run"
 STRYKER_CONFIG_NAMES = tuple(f"{p}stryker{s}.{e}" for p in ("", ".") for s in (".conf", ".config")
                              for e in ("json", "js", "mjs", "cjs"))  # Stryker's own discovery order
 STRYKER_VERSION = re.compile(r"^\d+\.\d+\.\d+$", re.M)
+# vitest without a repo config: Stryker's command runner runs the suite per mutant (no per-test coverage). The vitest
+# plugin of @stryker-mutator 10.0.0 completes no test for a test nested in describe on vitest 5 (verified), so it is not used.
+VITEST_STRYKER_CONFIG = {"testRunner": "command", "commandRunner": {"command": "npx --no-install vitest run"},
+                         "coverageAnalysis": "off", "checkers": [], "reporters": ["json"],
+                         "thresholds": {"break": None}}
+
+
+def _write_stryker_config(crate, config):
+    """the temp config in the worktree's crate dir (the caller's checkout is never written; the repo has no config)."""
+    with open(os.path.join(crate, "stryker.conf.json"), "w", encoding="utf-8") as f:
+        json.dump(config, f, indent=2)
 
 
 def stryker_kind(status):
@@ -683,6 +694,11 @@ class Stryker:
             if rc != 0 or not STRYKER_VERSION.search(text or ""):
                 return _check("n/a", f"stryker not installed (env): `{cmd}` not runnable; install @stryker-mutator/core "
                                      "10.0.0 and its test runner plugin (ts toolchain step) or set mutants-cmd"), []
+            runner_name = ts_runner(crate)
+            bin_path = os.path.join("node_modules", ".bin", runner_name)
+            if not os.path.isfile(os.path.join(crate, bin_path)):
+                return _check("n/a", f"{runner_name} not installed (env): `{bin_path}` not runnable; install the repo's "
+                                     "dependencies (ts toolchain step) or set setup-command"), []
             ranges = []
             for f in files:
                 crate_f = _crate_path(project_dir, f)
@@ -698,7 +714,10 @@ class Stryker:
             argv = shlex.split(cmd) + ["run", "--mutate", ",".join(ranges), "--reporters", "json",
                                        "--allowConsoleColors", "false", "--timeoutMS", str(mutant_timeout * 1000)]
             if config is None:
-                argv += ["--testRunner", ts_runner(crate)]
+                if runner_name == "vitest":
+                    _write_stryker_config(crate, VITEST_STRYKER_CONFIG)
+                else:
+                    argv += ["--testRunner", runner_name]
             t0 = time.monotonic()
             rc, text = runner(argv, crate, budget)
             wall = time.monotonic() - t0
@@ -718,6 +737,12 @@ class Stryker:
                 return _check("n/a", f"no Stryker report (env): {_first_line(text) or f'exit {rc}'}; check the test runner "
                                      "plugin and the run log"), []
             rows = stryker_rows(doc)
+            silent = [m for _, m, _ in rows if m.get("status") == "Survived" and m.get("coveredBy")
+                      and not m.get("testsCompleted")]
+            if silent:
+                return _check("n/a", f"stryker completed no test for {len(silent)} covered mutant(s) (env): the test runner "
+                                     "did not run them; known: @stryker-mutator/vitest-runner 10.0.0 with vitest 5 and tests "
+                                     "in describe. Use jest, vitest 4, or a repo config that runs the suite per mutant"), []
             caught = 0
             outside = unlocated = 0
             found = []
