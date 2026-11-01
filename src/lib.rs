@@ -1,1 +1,1 @@
-pub fn double(_x: i32) -> i32 { 0 }
+pub fn double(x: i32) -> i32 { x + x }
