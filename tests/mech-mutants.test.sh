@@ -356,4 +356,9 @@ eq "$(jq -c '{run,count}' <<<"$out")" '{"run":false,"count":1}' "plan: default o
 python3 -I "$MR" plan --repo "$R" --base "$B" --head "$H" --stack rust --shards 0 >/dev/null 2>&1; rc=$?
 eq "$rc" 2 "plan: --shards 0 is a usage error"
 
+# merge needs no git checkout when given full SHAs (the report job has none)
+out=$(python3 -I "$MR" merge --repo /no/such/checkout --base "$B" --head "$H" --stack rust --shards 2 --envelope 0="$MG/s0.json" --envelope 1="$MG/s1.json"); rc=$?
+eq "$rc" 1 "merge: full SHAs with no checkout: exit 1, not a git error"
+eq "$(jq -r .checks.R3.status <<<"$out")" fail "merge: full SHAs with no checkout: R3 fail"
+
 done_tests
