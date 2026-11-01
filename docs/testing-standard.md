@@ -2,7 +2,7 @@
 
 One bar for tests in every ek-adopting repo. Apps link this from their agent docs (`AGENTS.md` / `CLAUDE.md`) and add a short local doc with repo specifics ([per-app doc](#per-app-doc)). Don't fork these rules into the app.
 
-Status: R1 (red-first) and R4 (determinism) implemented (#16, `mech-review.py red`). R2 implemented (#13). R3 planned (#12). Until a check runs, a reviewer applies its rule by hand. Never report a planned check as run.
+Status: R1 (red-first) and R4 (determinism) implemented (#16, `mech-review.py red`). R2 implemented (#13). R3 (mutation on the diff) implemented (#17, `mech-review.py mutants`, cargo-mutants 27.1.0). Until a check runs, a reviewer applies its rule by hand. Never report a planned check as run.
 
 ## Contents
 
@@ -81,7 +81,7 @@ If a behaviour can be tested at unit level, test it there. Push e2e to the one p
 | Lint/type suppression without reason: `#[allow]`, `# noqa`, `# type: ignore`, `@ts-ignore` | R2 (`fail`) | silencing a lint without a reason | Fix the lint. If it must stay, same-line reason (`#[allow(x, reason = "…")]` with a non-empty reason, `# noqa: E501 — url literal`). An empty reason is no reason. |
 | Edit a protected path: CI, gate scripts, agent docs | R2 (`fail`, `needs-human`) | editing CI, gate scripts or agent docs to get the gate green | Stop. A human decides. Never edit the gate to pass. No agent downgrade path. |
 | Test passes before the fix | R1 | no failing `test(red)` commit | Write the test first in a `test(red): …` commit. It must fail there for the ticket's reason. |
-| Weak or missing assert: test still passes with the code broken | R3 (planned) | MISSED mutant `<desc>` in `<file>` | Add the assert that kills the mutant. |
+| Weak or missing assert: test still passes with the code broken | R3 | MISSED mutant `<desc>` in `<file>` | Add the assert that kills the mutant. |
 | Flaky test: passes and fails on same code | R4 | flaky test `<name>` | Find the nondeterminism (time, order, shared state, sleep). Fix it. Never retry to green. |
 | Test asserts internals, mocks own code, bad name, logic in test | code review | n/a | Test through public interface. Mock only boundaries. Rename to the behaviour. Remove the logic. |
 
@@ -99,7 +99,7 @@ R2 assert rules:
 - Asserts outside test fns (helpers) are counted per file; the count must not drop.
 - Each side is classified by its own path: moving a file between test and prod paths is judged per side.
 - Replacing an assert in place (any kind) is `confirm`; reordering is not a change.
-| R3 mutation on diff | Mutation runs on changed production code only. MISSED mutant = `fail`. Timeout and unviable ignored. Budgeted. Budget hit with no MISSED so far = `partial`: reports `R3 partial (tested/total)`, does not block. | planned (#12) |
+| R3 mutation on diff | cargo-mutants `--in-diff` on changed production code only, run in a worktree at head. MISSED mutant = `fail` (agent-fixable), one entry per mutant. TIMEOUT and UNVIABLE ignored. 120 s per mutant; budget per shard (`mutation-budget`, minutes). Budget hit with no MISSED so far = `partial`: `R3 partial (tested/total)`, does not block. Tool not installed = `n/a (env)`. No production file changed = skipped. Sharded in the workflow. | implemented (#17) |
 | R4 determinism | Each new or changed test runs 5× at head, in a worktree. Any failing run = `fail`, class `agent-fixable`. A test that does not build or cannot run is a `fail` too. | implemented (#16) |
 
 Statuses (per check, in the envelope):
@@ -108,10 +108,10 @@ Statuses (per check, in the envelope):
 - `fail`: at least one `fail` entry. Blocks. Only a code fix (or a human decision for `needs-human`) clears it.
 - `partial`: R3 budget hit with no MISSED so far. Reported `R3 partial (tested/total)`. Does not block.
 - `n/a`: tool not installable (`n/a (env)`). Not a pass. Say so in the report.
-- `skipped`: check does not apply, or not implemented yet, or a subcommand does not run it (`not run by r2`). Reason in the note. R1 is skipped for docs-only PRs and non-agent branches.
+- `skipped`: check does not apply, or a subcommand does not run it (`not run by r2`). Reason in the note. R1 is skipped for docs-only PRs and non-agent branches.
 - `n/a`: the check could not run because the toolchain is absent (`toolchain absent … (env)`). Not `pass`, not `skipped`: the summary names it.
 
-Checks not built yet (R3 today): engine emits `skipped` with note `not implemented`. Report it as not run, never as passed.
+R3 is not run by `r2`, `red` or `all` (note `not run by <subcommand>`); it runs in the `mutants` subcommand, one shard per workflow job. A check that did not run is never reported as passed.
 
 ## 5. Mech-review vs code review
 
