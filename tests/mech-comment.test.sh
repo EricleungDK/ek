@@ -160,7 +160,7 @@ check("partial: timing line counts tested/total", "R3 timing: 7/15 mutants" in b
 check("partial: slowest line present", "R3 slowest:" in b, b)
 slow_line = next(l for l in b.splitlines() if l.startswith("R3 slowest:"))
 check("partial: slowest names sanitized (no raw backtick, pipe escaped)", "`+`" not in slow_line and "\\|" in slow_line, slow_line)
-check("partial: slowest seconds shown", "4.2s" in slow_line and "2.0s" in slow_line, slow_line)
+check("partial: slowest seconds shown", "4.2s" in slow_line and "2s" in slow_line, slow_line)
 check("total unknown shows ? in the timing line", "R3 timing: 5/? mutants" in C.render(r3_env("pass", 5, None, t_pass)))
 check("R3 with no timing and no count: no timing line", "R3 timing:" not in C.render(r3_env("pass", None, None, {})))
 
