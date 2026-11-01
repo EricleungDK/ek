@@ -118,14 +118,19 @@ def _plan(parser, args):
     return 0
 
 
+def _sha(repo, ref):
+    """A full SHA is taken as is (the merge job has no checkout); any other ref is resolved in repo."""
+    return ref if re.fullmatch(r"[0-9a-f]{40}", ref) else engine.resolve(repo, ref)
+
+
 def _merge(parser, args):
     """Combine the mutants shard envelopes into one R3 envelope on stdout. Exit 1 on any fail entry."""
     n = args.shards
     if n < 1:
         parser.error("--shards N: want N >= 1")
     try:
-        base = engine.resolve(args.repo, args.base)
-        head = engine.resolve(args.repo, args.head)
+        base = _sha(args.repo, args.base)
+        head = _sha(args.repo, args.head)
     except engine.Die as e:
         print(f"mech-review: {e}", file=sys.stderr)
         return 2
