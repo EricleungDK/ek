@@ -228,6 +228,8 @@ mrepo base4
 out=$(MUT_RC=4 mut); rc=$?
 eq "$rc" 1 "baseline fails: exit 1"
 eq "$(jq -r .checks.R3.status <<<"$out")" fail "baseline fails: R3 fail"
+has "$(jq -r '.entries[0].id' <<<"$out")" "R3-" "baseline fails: entry has an R3 id"
+eq "$(jq -r '.entries[0] | has("_key")' <<<"$out")" false "baseline fails: no internal _key in the entry"
 
 # no production file changed: skipped with the reason, cargo-mutants never runs
 mrepo docs tests-only
