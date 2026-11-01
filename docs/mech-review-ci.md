@@ -3,9 +3,9 @@
 Reusable workflow: `EricleungDK/ek/.github/workflows/mech-review.yml`. On each PR it runs up to five jobs and merges them into one sticky comment (marker `<!-- mech-review -->`) and one check result:
 
 - `guard`: R2 test-diff guard (`scripts/mech-review.py r2`), git diffs only, no toolchain.
-- `red-first`: R1 red-first and R4 determinism (`scripts/mech-review.py red`). Compiles and runs the PR's new or changed tests, so it needs the stack toolchain (rust: stable; python: a venv with pytest).
+- `red-first`: R1 red-first and R4 determinism (`scripts/mech-review.py red`). Compiles and runs the PR's new or changed tests, so it needs the stack toolchain (rust: stable; python: a venv with pytest; ts: node 22 and the repo's installed dependencies).
 - `plan`: decides whether R3 runs (a production file changed) and its shard matrix (4 shards). Git only.
-- `mutants`: R3 mutation on the diff (`scripts/mech-review.py mutants`), one job per shard. Runs cargo-mutants 27.1.0 (`--in-diff`) on the PR's code (rust), or mutmut 3.8.1 on the changed files (python). Skipped entirely when `plan` says no production file changed.
+- `mutants`: R3 mutation on the diff (`scripts/mech-review.py mutants`), one job per shard. Runs cargo-mutants 27.1.0 (`--in-diff`) on the PR's code (rust), mutmut 3.8.1 on the changed files (python), or Stryker 10.0.0 on the changed lines (ts). Skipped entirely when `plan` says no production file changed.
 - `report`: merges the two results, edits the comment, sets the check.
 
 Rules: [testing standard](testing-standard.md).
@@ -34,19 +34,21 @@ jobs:
 
 Python: the same, with `stack: python` and `test-paths: tests/**` (`tests/test_*.py` or any layout under `tests/`).
 
+TypeScript / JavaScript: `stack: ts` with `test-paths: src/**/*.test.ts` (or `tests/**`). `.ts .tsx .js .jsx .mjs .cjs` files are this stack; the project dir needs a `package.json`.
+
 The ek scripts run at the ref you pin (`job.workflow_sha` of the called file), not at your checkout. Bump the tag to upgrade.
 
 ## Inputs
 
 | Input | Default | Use |
 |---|---|---|
-| `stack` | `rust` | language adapter: `rust` (cargo test, cargo-mutants) or `python` (pytest, mutmut). Sets up the toolchain for `red-first` and `mutants` |
+| `stack` | `rust` | language adapter: `rust` (cargo test, cargo-mutants), `python` (pytest, mutmut) or `ts` (vitest or jest, Stryker). Sets up the toolchain for `red-first` and `mutants` |
 | `test-paths` | `tests/**` | test file globs, one per line; `.rs` files here count every assert; a `.rs` file outside them is production code for R1 |
 | `protected-paths` | `.github/**` | globs, one per line; any change under them is a `needs-human` fail |
 | `agent-branch-prefix` | `agent/` | R1 runs only when the PR head branch starts with it (`--agent-prefix`); other branches skip R1 |
 | `mutation-budget` | `10` | R3 budget in minutes, per mutants shard. A budget hit is `partial` (no MISSED so far) or `fail` (a MISSED found), never a crash. Applies to both stacks |
 | `extra-apt-packages` | `` | apt packages (space-separated) installed before `red-first` runs its tests |
-| `project-dir` | `.` | crate dir under the repo root. R1, R4 and R3 run there; `test-paths` and `protected-paths` stay repo-root globs; a path with `..` or a leading `/` is a usage error |
+| `project-dir` | `.` | crate dir under the repo root (`package.json` for ts). R1, R4 and R3 run there; `test-paths` and `protected-paths` stay repo-root globs; a path with `..` or a leading `/` is a usage error |
 | `setup-command` | `` | shell command (run with bash) in `red-first` and `mutants`, after `extra-apt-packages`, before the tests. A non-zero exit stops that job, which then reports a CI entry |
 
 Globs: `**` any depth, `*` one segment.
@@ -84,6 +86,16 @@ Python toolchain (`stack: python`), set up in `red-first` and `mutants`:
 - Readers trust only the bot's marker comment (`github-actions[bot]`, override `MECH_COMMENT_AUTHOR`): a `<!-- mech-review -->` comment from any other user is ignored.
 - A run whose PR head has moved on leaves the comment alone; the newest push owns it.
 
+TypeScript toolchain (`stack: ts`), set up in `red-first` and `mutants`:
+
+- `actions/setup-node` (pinned to a full SHA, node 22). The install in `caller/<project-dir>` follows the lockfile: `npm ci` for `package-lock.json`, the repo's `pnpm` (10.34.6) or `yarn` (1.22.22, classic) for theirs, both pinned through `npx`. No lockfile is a stop: the install must be reproducible. Install scripts run, as the test code does; the job's token is read-only.
+- The tests run the repo's own runner from its `node_modules/.bin`: `vitest` or `jest`, chosen from `package.json` (vitest when it lists vitest, or neither). A worktree has no `node_modules`, so the engine links the caller checkout's `node_modules` into the worktree's crate dir (never over an existing one; the caller's copy is not touched). A runner that is not installed is `n/a (env)`, named by its `node_modules/.bin` path.
+- Named tests: `vitest run <file> -t '^Describe > test$'`, `jest <file> -t '^Describe test$'` (jest joins names with a space). A test name is matched anchored, so `describe("A") > works` and `describe("B") > works` are two tests. `it.each` placeholders match any value.
+- Outcomes: a filter that runs nothing is `none` (never a pass, also at exit 0). A file that does not load (transform, missing import, syntax) is `build`: the R1 compile-red confirm, or an R4 fail.
+- The test command: `--test-cmd` overrides it (a vitest command gets `run` inserted; a command with `jest` in it gets jest's argv).
+- Stryker is installed into the runner temp dir (`@stryker-mutator/core@10.0.0`, `@stryker-mutator/jest-runner@10.0.0`), not the repo's `node_modules`. A failed install is not a stop: R3 is `n/a (env)`.
+- Test files are `.ts`/`.js` files matched by `test-paths`; a test is `it`/`test` (and `.each`, `.skip`, `.only`, `.todo`, `xit`, `fit`, `xtest`, `ftest`) inside `describe` or at top level.
+
 ## Python R3 (mutmut)
 
 - The runner appends a `[tool.mutmut]` table (`source_paths`, `only_mutate` = the changed production files of the shard) to the worktree's `pyproject.toml`. The caller's checkout is never written. A `setup.cfg` `[mutmut]` section is ignored once the table exists.
@@ -114,6 +126,18 @@ What to do with the numbers, in this order:
 2. Narrower tests. If a few mutants dominate `slowest`, their tests are slow for each mutant. Make those tests faster or narrower; the slow test runs once per mutant.
 3. Raise `mutation-budget` last. If `baseline_build_s` and `baseline_test_s` are large against `wall_s`, the fixed per-shard cost is the problem: a bigger budget only buys more mutants.
 
+## TypeScript R3 (Stryker)
+
+- Stryker 10.0.0 runs on the changed lines only: each changed run of lines is a `--mutate file:start-end` range. Stryker mutates the mutants fully inside a range, so the MISSED list is already the diff; a mutant outside it is counted in the note, not a fail. Class methods are mutated like any other lines.
+- vitest, with no repo Stryker config: a temp `stryker.conf.json` is written into the worktree (the caller's checkout is never written) that runs `npx --no-install vitest run` per mutant with `coverageAnalysis: off`. Stryker's own vitest plugin (`@stryker-mutator/vitest-runner` 10.0.0) completes no test for a test nested in `describe` on vitest 5.0.5 (checked: the mutants read as survived with 0 tests run); vitest 4.1.12 with the same Stryker kills them. The command runner is correct on vitest 5, at the cost of running the whole suite per mutant.
+- jest, with no repo config: `--testRunner jest` (the jest plugin, per-test coverage; checked on nested describes).
+- A repo with its own Stryker config (`stryker.conf.*`, `stryker.config.*`) keeps it: Stryker reads it, and `mutate`, the reporter and the timeout are set on the command line, which wins over the file. The test runner comes from the repo's config. The JSON report is read from Stryker's default `reports/mutation/mutation.json`; a repo that moves `jsonReporter.fileName` gets `n/a (env)`.
+- A covered mutant with no test completed (`coveredBy` set, `testsCompleted` 0, `Survived`) means the runner did not run the tests: R3 is `n/a (env)` for the whole check, not a MISSED. This is the guard for the vitest-plugin case above.
+- Results: `Killed` is caught; `Survived` and `NoCoverage` (no test reaches the mutant) are MISSED; `Timeout`, `CompileError`, `RuntimeError`, `Ignored` and `Pending` are neither. A report that is missing or unreadable is `n/a (env)`.
+- Budget: Stryker writes its report at the end of a run, so a budget hit before that is `partial` with the mutant count from its log (`tested` unknown). A partial is not blocking.
+- Timing is wall time only (`checks.R3.timing.wall_s`): Stryker's JSON has no per-phase durations.
+- `--mutant-timeout` sets Stryker's `timeoutMS`.
+
 ## Limits
 
 - Fork PRs get a read-only `GITHUB_TOKEN`: the comment cannot be posted, so `report` fails. The result is still in the job summary.
@@ -122,6 +146,7 @@ What to do with the numbers, in this order:
 - R1 needs the branch name: the workflow passes `github.head_ref`. A run without it skips R1 and says so.
 - `mutants` runs cargo-mutants, which builds and runs the PR's tests once per mutant, with a job-level `contents: read` token and no other secrets. Each shard also runs the unmutated baseline tests, so the cost is per shard.
 - cargo-mutants is pinned to 27.1.0 through `taiki-e/install-action` (pinned to a full SHA). If the install fails the step continues and R3 reports `n/a (env)`: a missing tool is never a pass and never a code failure.
+- ts: Stryker 10.0.0 is pinned in the workflow. The vitest and jest plugins, and the install scripts of the repo's dependencies, run PR code with a read-only token, as the tests do. Yarn berry (PnP, no `node_modules`) and `node --test` are not supported: the runner is `node_modules/.bin/vitest` or `jest`.
 - python: `mutmut` 3.8.1 is pinned in the venv. A repo that already has `[tool.mutmut]` in its `pyproject.toml` gets R3 `n/a (env)`: the runner needs `only_mutate` to limit the run to the changed files, and does not override the repo's table.
 - The shard count (4) is fixed in the `plan` job, not an input. The per-mutant timeout is 120 s (`--mutant-timeout`); the budget is per shard, so the wall time of R3 is about the budget, not the budget times the shards.
 - R3 runs cargo-mutants in a worktree at the head, in the crate dir (`project-dir`), on `base...head` changes only (`--in-diff`; the diff is made relative to the crate dir, and result paths are mapped back to the repo root). A checkout that does not match head is not mutated.
