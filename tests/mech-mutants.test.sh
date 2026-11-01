@@ -144,7 +144,7 @@ cat > "$MUT" <<'SH'
 if [[ "$1" == mutants && "$2" == --version ]]; then echo "cargo-mutants 27.1.0"; exit 0; fi
 out=""; shard=""; prev=""
 for a in "$@"; do
-  case "$prev" in -o) out="$a" ;; --shard) shard="$a" ;; esac
+  case "$prev" in -o|--output) out="$a" ;; --shard) shard="$a" ;; esac
   prev="$a"
 done
 k=${shard%%/*}
