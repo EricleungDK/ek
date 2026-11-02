@@ -13,7 +13,7 @@ Rules: [testing standard](testing-standard.md).
 
 ## Caller
 
-Add to your repo, pin an ek release tag (use the latest tag; `v0.2.1` shown):
+Add to your repo, pin an ek release tag (use the latest tag; `v0.2.2` shown):
 
 ```yaml
 name: mech-review
@@ -24,7 +24,7 @@ permissions:
   pull-requests: write
 jobs:
   mech-review:
-    uses: EricleungDK/ek/.github/workflows/mech-review.yml@v0.2.1
+    uses: EricleungDK/ek/.github/workflows/mech-review.yml@v0.2.2
     with:
       stack: rust
       test-paths: |
@@ -170,3 +170,4 @@ What to do with the numbers, in this order:
 - `partial` (budget hit, nothing MISSED so far) does not block, so part of the diff was not mutated. The reviewer reads the `tested/total` note; a bigger `mutation-budget` (or fewer changed lines) is the fix. A budget hit with a MISSED found is `fail`.
 - Shard results are merged by `mech-review.py merge`. A missing or stale shard is a CI `fail` entry that names the shard; the other shards' entries are kept.
 
+The `baseline` job runs PR code too (rust), and its outputs decide whether the shards run, so a malicious test can forge them and skip R3. The outputs reach later jobs only through `env` and the matrix, never a `run:` script. R2 stays the hard guard.
