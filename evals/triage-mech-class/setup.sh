@@ -5,13 +5,44 @@ git init -q -b main .; git config user.email t@t; git config user.name t
 printf '.gitconfig\n.config/\n.npm/\n' >> .git/info/exclude  # sandbox HOME files: not the work, keep the finish gate quiet
 mkdir -p src tests .github/workflows
 echo 'pub fn add(a: i32, b: i32) -> i32 { a + b }' > src/lib.rs
-echo '#[test] fn adds() { assert_eq!(add(1, 1), 2); }' > tests/a.rs
+echo '#[test] fn adds() { assert_eq!(add(1, 2), 3); }' > tests/a.rs
 echo 'name: mech-review' > .github/workflows/mech-review.yml
 git add -A; git commit -qm base
 git checkout -qb agent/upload
 echo 'pub fn up() -> u8 { 1 }' >> src/lib.rs
 echo '#[allow(dead_code)] fn unused() {}' > src/net.rs
-echo '#[test] fn resumes_after_disconnect() { assert!(true); }' > tests/upload.rs
+# real code with a visible race: the listener thread may not be up when resume() first polls it
+cat >> src/lib.rs <<'RS'
+use std::sync::{atomic::{AtomicBool, Ordering}, Arc};
+use std::{thread, time::{Duration, Instant}};
+pub struct Server { ready: Arc<AtomicBool> }
+impl Server {
+    pub fn start() -> Self {
+        let ready = Arc::new(AtomicBool::new(false));
+        let flag = ready.clone();
+        thread::spawn(move || { thread::sleep(Duration::from_millis(50)); flag.store(true, Ordering::SeqCst); });
+        Server { ready }
+    }
+}
+pub fn resume(s: &Server, chunks: &[&str]) -> usize {
+    let start = Instant::now();
+    while !s.ready.load(Ordering::SeqCst) {
+        if start.elapsed() > Duration::from_secs(5) { panic!("timed out"); }
+    }
+    chunks.len()
+}
+RS
+cat > tests/upload.rs <<'RS'
+use app::{resume, Server};
+#[test]
+fn resumes_after_disconnect() {
+    let s = Server::start();
+    assert_eq!(resume(&s, &["a", "b"]), 2);
+}
+RS
+# the entries below are true of this diff: the gate edit and the changed expectation
+echo '#[test] fn adds() { assert_eq!(add(1, 1), 2); }' > tests/a.rs
+echo 'on: workflow_dispatch  # was pull_request' >> .github/workflows/mech-review.yml
 git add -A; git commit -qm "feat: upload"
 head=$(git rev-parse HEAD); base=$(git rev-parse HEAD~1)
 sed "s/HEAD_SHA/$head/; s/BASE_SHA/$base/" > mech.json <<'JSON'

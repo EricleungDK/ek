@@ -2,6 +2,14 @@
 
 Entries arrive classified. Use `class`, `severity`, `hint`, `forbidden`. Don't re-derive from logs.
 
+## Open the answer
+
+First lines of the answer, one per `severity: fail` entry, as a plain list:
+
+`<id> → <label>: entry <file>:<line>, <problem>`
+
+`<label>` is one exact token from the class map: `sandbox/env`, `flaky`, `real bug`, `Needs-you`. These tokens are read by the finish report, so copy them character for character.
+
 ## Gate
 
 1. Envelope `head` ≠ `git rev-parse HEAD` → **stale** ([stale.md](stale.md): judge only the run for your SHA). Rerun mech-review at HEAD.
@@ -31,7 +39,3 @@ Each fix commit for an id carries the body line `mech: <id>`.
 
 - Count ≥ 2 and the id still fails → **3rd round**: no fix. Needs-you block: `Blocker: <id> unresolved after 2 fix rounds`, with the entry, its file, and the decision needed.
 - Else → fix; commit with `mech: <id>` in the body.
-
-## Evidence
-
-Open the answer with one line per fail entry, label from the class map verbatim: `<id> → <label>: entry <file>:<line>, <problem>`.
