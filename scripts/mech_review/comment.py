@@ -59,7 +59,7 @@ def _timing_lines(env):
     if tested is None and not t:
         return []
     parts = []
-    if _num(tested):
+    if _num(tested) and tested:  # nothing tested (0/0 or 0/N): no count, the wall time says the rest
         parts.append(f"{tested}/{total if _num(total) else '?'} mutants")
     if _num(t.get("wall_s")):
         parts.append(f"{_fmt(t['wall_s'])}s wall")

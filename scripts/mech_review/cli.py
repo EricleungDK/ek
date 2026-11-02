@@ -27,10 +27,11 @@ checks (status in envelope: pass | fail | partial | n/a | skipped):
   R4  determinism (red subcommand): each new or changed #[test] runs 5x at head; any failing run
       is a fail. n/a when the toolchain is absent.
   R3  mutation on the diff (`mutants`): cargo-mutants `--in-diff` (rust), mutmut (python), Stryker 10.0.0 (ts: changed
-      lines, `--mutate` ranges), run in a worktree at head, 120 s per mutant
-      (`--mutant-timeout`), budget `--mutation-budget MIN` (default 10, per shard). MISSED in a production file
-      -> fail (agent-fixable), one entry per mutant; TIMEOUT and UNVIABLE ignored. Budget hit with no MISSED ->
-      partial (tested/total), not blocking. Tool not installed -> n/a (env). No production file -> skipped.
+      lines, `--mutate` ranges), run in a worktree at head, per-mutant timeout auto (`--mutant-timeout SEC` to set;
+      auto sends no --timeout, so the baseline runs unlimited), budget `--mutation-budget MIN` (default 10, per shard).
+      MISSED in a production file -> fail (agent-fixable), one entry per mutant; TIMEOUT and UNVIABLE ignored. Budget
+      hit with no MISSED -> partial (tested/total), not blocking. A baseline timeout -> n/a (names mutant-timeout).
+      Tool not installed -> n/a (env). No production file -> skipped.
       `--shard K/N` runs one of N shards (K is 0-based, as cargo-mutants numbers them).
   `r2` runs R2. `red` runs R1 and R4. `all` = R1, R2 and R4 (R3 is not in `all`: run `mutants`). `mutants` runs R3. A check a subcommand does not run
   is skipped with `not run by <subcommand>`.
@@ -62,6 +63,15 @@ class Removed(argparse.Action):
 
     def __call__(self, parser, namespace, values, option_string=None):
         parser.error("--pr-body removed: guard exceptions were removed (#27); a fail stays fail until the code is fixed")
+
+
+def mutant_timeout_arg(value):
+    """--mutant-timeout: `auto` (None: no --timeout is sent) or whole seconds >= 1."""
+    if value == "auto":
+        return None
+    if value.isdigit() and int(value) >= 1:
+        return int(value)
+    raise argparse.ArgumentTypeError(f"{value!r}: want auto or whole seconds >= 1")
 
 
 def project_dir_arg(value):
@@ -97,8 +107,9 @@ def build_parser():
                                                           "mutmut, ts node_modules/.bin/stryker)")
     p.add_argument("--mutation-budget", type=float, default=10.0, metavar="MIN",
                    help="R3 budget in minutes for this run (default 10); a budget hit is partial, not a failure")
-    p.add_argument("--mutant-timeout", type=int, default=120, metavar="SEC",
-                   help="R3 per-mutant timeout in seconds, cargo-mutants --timeout (default 120)")
+    p.add_argument("--mutant-timeout", type=mutant_timeout_arg, default=None, metavar="SEC|auto",
+                   help="R3 per-mutant timeout: auto (default: no --timeout, cargo-mutants sets it from the baseline and the "
+                        "baseline runs unlimited) or whole seconds (cargo-mutants --timeout, which also caps the baseline)")
     p.add_argument("--shard", metavar="K/N", help="R3 only: run shard K of N (0-based, as cargo-mutants numbers them)")
     p.add_argument("--shards", type=int, default=1, metavar="N", help="merge and plan: number of mutants shards")
     p.add_argument("--envelope", action="append", metavar="K=FILE",

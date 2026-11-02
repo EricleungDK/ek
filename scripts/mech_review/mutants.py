@@ -14,7 +14,10 @@ Summary per mutant: MissedMutant, CaughtMutant, Timeout, Unviable, Success (base
 
 Verdict (per shard):
   MISSED in a production file -> fail entry per mutant (class agent-fixable). TIMEOUT and UNVIABLE are ignored.
-  budget hit: partial `tested/total` when no MISSED so far; fail when a MISSED was found.
+  budget hit: partial `tested/total` when no MISSED so far; fail when a MISSED was found. A budget hit before the
+  baseline finished: partial 0 tested, the note says the baseline did not finish.
+  baseline Timeout (exit 4, outcomes Baseline summary Timeout): n/a, never a fail. Only an explicit --timeout limits the
+  baseline (cargo-mutants 27.1.0), so the note names mutant-timeout. baseline Failure: fail (agent-fixable).
   tool not runnable or an unexpected exit -> n/a (env), never pass.
   no mutants in the diff -> pass.
 """
@@ -26,6 +29,7 @@ import shlex
 import shutil
 import signal
 import subprocess
+import sys
 import tempfile
 import time
 
@@ -34,7 +38,6 @@ from .engine import added_lines, entry, finalize, git
 from .stack import ts_runner
 
 DEFAULT_CMD = "cargo mutants"
-MUTANT_TIMEOUT = 120  # seconds per cargo command (cargo-mutants --timeout): a mutant whose tests hang is a TIMEOUT
 PROBE_TIMEOUT = 120  # seconds for `cargo mutants --version`
 KILL_GRACE = 15  # seconds between SIGTERM and SIGKILL when a run is over its budget
 REAP = 5  # seconds to wait for a killed run before giving up on it
@@ -77,6 +80,12 @@ def _mutant_outcomes(doc):
     return out
 
 
+def _baseline(doc):
+    """the Baseline scenario's outcome dict in outcomes.json, or None (not written yet: the run was killed before it ended)."""
+    return next((oc for oc in (doc or {}).get("outcomes", [])
+                 if isinstance(oc, dict) and oc.get("scenario") == "Baseline"), None)
+
+
 def _desc(name):
     """mutant description without its file:line:col prefix: stable across line moves."""
     return RE_POS.sub("", name or "", count=1)
@@ -109,8 +118,7 @@ def _timing(doc, rows, wall_s):
     t = {}
     if wall_s is not None:
         t["wall_s"] = round(float(wall_s), 2)
-    base = next((oc for oc in (doc or {}).get("outcomes", [])
-                 if isinstance(oc, dict) and oc.get("scenario") == "Baseline"), None)
+    base = _baseline(doc)
     if base:
         for key, phase in (("baseline_build_s", "Build"), ("baseline_test_s", "Test")):
             v = _phase(base.get("phase_results"), phase, absent=None)
@@ -168,10 +176,18 @@ def _repo_path(project_dir, path):
     return path if project_dir == "." else posixpath.join(project_dir, path)
 
 
-def verdict(mo, rc, text, adapter, test_globs, wall_s=None, project_dir="."):
+def _baseline_timeout_note(timeout_s):
+    """n/a note for a baseline cargo-mutants timed out: names the timeout, its seconds and the two inputs that set it."""
+    after = f" after {timeout_s:g}s" if timeout_s is not None else ""
+    return (f"baseline tests timed out{after} (mutant-timeout caps the baseline too): mutants not run; raise mutant-timeout "
+            "above the suite time (auto leaves the baseline unlimited); mutation-budget does not lift it")
+
+
+def verdict(mo, rc, text, adapter, test_globs, wall_s=None, project_dir=".", timeout_s=None):
     """R3 verdict of one run. mo: the mutants.out directory (cargo-mutants -o DIR writes DIR/mutants.out).
     rc: the exit code, "timeout" (budget killed the run), or None (tool not runnable). text: its output.
     wall_s: the runner's clock for this run, if measured. project_dir: the crate dir under the repo root.
+    timeout_s: the --timeout (seconds) the run was given, or None (auto): named in a baseline timeout's note.
     Returns (check, entries): check is {status, note[, tested, total, timing]}, entries are finalized contract entries."""
     if rc is None:
         return _check("n/a", f"cargo-mutants not runnable (env): {_first_line(text)}; check the cargo-mutants install step"), []
@@ -204,11 +220,17 @@ def verdict(mo, rc, text, adapter, test_globs, wall_s=None, project_dir="."):
             check["timing"] = timing
         return check, ents
 
+    base = _baseline(doc)
     if rc == "timeout":
         shown = f"{tested}/{total if total is not None else '?'}"
+        if base is None:  # killed before the baseline ended: no mutant ran
+            return done(_check("partial", f"{shown} tested: budget hit, baseline did not finish: no mutant run", 0, total),
+                        [])
         if missed:
             return done(_check("fail", f"{shown} tested: budget hit, {missed} missed", tested, total), entries)
         return done(_check("partial", f"{shown} tested: budget hit, no MISSED so far", tested, total), [])
+    if rc == 4 and base is not None and base.get("summary") == "Timeout":
+        return done(_check("n/a", _baseline_timeout_note(timeout_s)), [])
     if rc == 4:
         return done(_check("fail", "baseline tests fail at head: mutants not run"), [
             finalize([entry("R3", "", 0, "baseline", "agent-fixable", "fail", "baseline tests fail at head: mutants not run",
@@ -278,8 +300,27 @@ def default_runner():
     return run
 
 
+DIAG_LINES = 40  # lines of cargo-mutants' own log printed to stderr on a non-pass R3
+
+
+def _diagnose(mo, text, status):
+    """A non-pass R3: the last DIAG_LINES of cargo-mutants' log/baseline.log (its output when no log was written) to
+    stderr, so the job log shows why. stdout stays the JSON contract."""
+    try:
+        with open(os.path.join(mo, "log", "baseline.log"), encoding="utf-8", errors="replace") as f:
+            lines, src = f.read().splitlines(), "log/baseline.log"
+    except OSError:
+        lines, src = (text or "").splitlines(), "output"
+    tail = lines[-DIAG_LINES:]
+    print(f"mech-review: R3 {status}: last {len(tail)} lines of cargo-mutants {src}", file=sys.stderr)
+    for line in tail:
+        print(line, file=sys.stderr)
+
+
 class CargoMutants:
-    """R3 for rust: cargo-mutants --in-diff in the crate dir of a worktree at head; verdict from its output files."""
+    """R3 for rust: cargo-mutants --in-diff in the crate dir of a worktree at head; verdict from its output files.
+    mutant_timeout None (auto) sends no --timeout: cargo-mutants sets the per-mutant limit from the baseline, and the
+    baseline runs unlimited. A number sends --timeout N, which also caps the baseline (cargo-mutants 27.1.0)."""
     default_cmd = DEFAULT_CMD
 
     def check(self, repo, mb, head, adapter, test_globs, cmd, budget_min, shard, mutant_timeout, runner, project_dir="."):
@@ -296,8 +337,8 @@ class CargoMutants:
                 f.write(git(repo, "diff", "--no-ext-diff", "--no-textconv", "-U0", "--src-prefix=a/", "--dst-prefix=b/",
                             *relative, mb, head))
             out_parent = os.path.join(tmp, "out")
-            argv = shlex.split(cmd) + ["--in-diff", diff_path, "--timeout", str(mutant_timeout), "--colors", "never",
-                                       "--output", out_parent]
+            limit = [] if mutant_timeout is None else ["--timeout", str(mutant_timeout)]
+            argv = shlex.split(cmd) + ["--in-diff", diff_path] + limit + ["--colors", "never", "--output", out_parent]
             if shard:
                 argv += ["--shard", shard]
             with red.worktree(repo, head) as wt:
@@ -313,8 +354,11 @@ class CargoMutants:
                 t0 = time.monotonic()
                 rc, text = runner(argv, crate, budget)
                 wall = time.monotonic() - t0
-            check, ents = verdict(os.path.join(out_parent, "mutants.out"), rc, text, adapter, test_globs, wall_s=wall,
-                                  project_dir=project_dir)
+            mo = os.path.join(out_parent, "mutants.out")
+            check, ents = verdict(mo, rc, text, adapter, test_globs, wall_s=wall, project_dir=project_dir,
+                                  timeout_s=mutant_timeout)
+            if check["status"] != "pass":
+                _diagnose(mo, text, check["status"])
             return check, ents
         finally:
             shutil.rmtree(tmp, ignore_errors=True)
@@ -576,6 +620,7 @@ def _read(path):
         return ""
 
 
+STRYKER_TIMEOUT = 120  # seconds: Stryker's per-mutant timeoutMS when --mutant-timeout is auto (as it was before auto)
 STRYKER_REPORT = os.path.join("reports", "mutation", "mutation.json")  # Stryker's default JSON reporter file
 STRYKER_INSTRUMENTED = re.compile(r"Instrumented \d+ source file\(s\) with (\d+) mutant")
 STRYKER_BASELINE = "There were failed tests in the initial test run"
@@ -718,7 +763,8 @@ class Stryker:
                 os.remove(report)  # a report the repo itself committed is never read as this run's
             config = stryker_config(crate)
             argv = shlex.split(cmd) + ["run", "--mutate", ",".join(ranges), "--reporters", "json",
-                                       "--allowConsoleColors", "false", "--timeoutMS", str(mutant_timeout * 1000)]
+                                       "--allowConsoleColors", "false", "--timeoutMS",
+                                       str((STRYKER_TIMEOUT if mutant_timeout is None else mutant_timeout) * 1000)]
             if config is None:
                 if runner_name == "vitest":
                     _write_stryker_config(crate, VITEST_STRYKER_CONFIG)
@@ -801,9 +847,10 @@ TOOLS = {"rust": CargoMutants(), "python": Mutmut(), "ts": Stryker()}
 
 
 def run(repo, mb, head, adapter, test_globs, cmd=None, budget_min=None, shard=None,
-        mutant_timeout=MUTANT_TIMEOUT, runner=None, project_dir="."):
+        mutant_timeout=None, runner=None, project_dir="."):
     """R3 for mb..head. Returns (check, entries). Skipped without a production change; n/a without the tool.
-    The stack's tool runs in the crate dir of a worktree at head (the caller's checkout does not move)."""
+    mutant_timeout None is auto (see CargoMutants). The stack's tool runs in the crate dir of a worktree at head
+    (the caller's checkout does not move)."""
     runner = runner or default_runner()
     if not red.prod_changes(repo, mb, head, adapter, test_globs):
         return _check("skipped", "no production file changed"), []

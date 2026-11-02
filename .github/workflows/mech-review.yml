@@ -1,7 +1,7 @@
 name: mech-review
 
 # Reusable. Callers pin an ek tag:
-#   uses: EricleungDK/ek/.github/workflows/mech-review.yml@v0.2.0
+#   uses: EricleungDK/ek/.github/workflows/mech-review.yml@v0.2.1
 # The ek scripts run at the SAME ref the caller pinned: job.workflow_sha / job.workflow_repository
 # are the called workflow file's commit and repo, so the guard, red-first, mutants and the poster are checked out from there.
 
@@ -42,6 +42,14 @@ on:
         description: "shell command (run with bash) before the tests in red-first and mutants, after extra-apt-packages; a failure stops that job. Set it in the caller's workflow file only (trusted)"
         type: string
         default: ""
+      mutant-timeout:
+        description: "R3 per-mutant timeout in seconds (cargo-mutants --timeout), or empty for auto: no timeout flag, so cargo-mutants sets it from the baseline and the baseline runs unlimited. A set value also caps the baseline tests: a baseline timeout is n/a, not a fail"
+        type: string
+        default: ""
+      rust-toolchain:
+        description: "Rust toolchain for the rust stack in red-first and mutants (dtolnay/rust-toolchain toolchain input): stable, or a pin such as 1.96.0"
+        type: string
+        default: "stable"
 
 permissions:
   contents: read
@@ -125,7 +133,7 @@ jobs:
         if: inputs.stack == 'rust'
         uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
         with:
-          toolchain: stable
+          toolchain: ${{ inputs.rust-toolchain }}
       - name: Python toolchain
         if: inputs.stack == 'python'
         env:
@@ -299,7 +307,7 @@ jobs:
         if: inputs.stack == 'rust'
         uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
         with:
-          toolchain: stable
+          toolchain: ${{ inputs.rust-toolchain }}
       - name: Python toolchain
         if: inputs.stack == 'python'
         env:
@@ -383,6 +391,7 @@ jobs:
           STACK: ${{ inputs.stack }}
           TEST_PATHS: ${{ inputs.test-paths }}
           MUTATION_BUDGET: ${{ inputs.mutation-budget }}
+          MUTANT_TIMEOUT: ${{ inputs.mutant-timeout }}
           SHARD: ${{ matrix.shard }}
           SHARD_COUNT: ${{ needs.plan.outputs.count }}
           PROJECT_DIR: ${{ inputs.project-dir }}
@@ -391,6 +400,7 @@ jobs:
           set -uo pipefail
           args=(--repo "$GITHUB_WORKSPACE/caller" --base "$BASE_SHA" --head "$HEAD_SHA" --stack "$STACK"
                 --shard "$SHARD/$SHARD_COUNT" --mutation-budget "$MUTATION_BUDGET" --project-dir "$PROJECT_DIR")
+          if [ -n "$MUTANT_TIMEOUT" ]; then args+=(--mutant-timeout "$MUTANT_TIMEOUT"); fi
           if [ "$STACK" = "ts" ]; then args+=(--mutants-cmd "$STRYKER_BIN"); fi
           while IFS= read -r g; do
             if [ -n "$g" ]; then args+=(--test-paths "$g"); fi

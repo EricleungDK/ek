@@ -163,6 +163,13 @@ check("partial: slowest names sanitized (no raw backtick, pipe escaped)", "`+`" 
 check("partial: slowest seconds shown", "4.2s" in slow_line and "2s" in slow_line, slow_line)
 check("total unknown shows ? in the timing line", "R3 timing: 5/? mutants" in C.render(r3_env("pass", 5, None, t_pass)))
 check("R3 with no timing and no count: no timing line", "R3 timing:" not in C.render(r3_env("pass", None, None, {})))
+# nothing tested: the count is left out (no "0/0 mutants"), wall time only
+b = C.render(r3_env("pass", 0, 0, {"wall_s": 2.5}))
+check("zero tested: wall only, no 0/0 count", "R3 timing: 2.5s wall" in b and "0/0" not in b, b)
+b = C.render(r3_env("partial", 0, 15, {"wall_s": 1.2}))
+check("zero tested of 15: wall only, no 0/15 count", "R3 timing: 1.2s wall" in b and "0/15" not in b, b)
+b = C.render(r3_env("pass", 3, 3, {"wall_s": 2.5}))
+check("some tested: count kept", "R3 timing: 3/3 mutants, 2.5s wall" in b, b)
 
 # ---- crash render ----
 b = C.render_crash(SHA, "guard produced no JSON")
