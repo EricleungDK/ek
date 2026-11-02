@@ -15,7 +15,7 @@ Adopting or repairing: `/ek:ci-doctor` runs `mech-review.py doctor` and opens th
 
 ## Caller
 
-Add to your repo, pin an ek release tag (use the latest tag; `v0.2.3` shown):
+Add to your repo, pin an ek release tag (use the latest tag; `v0.2.4` shown):
 
 ```yaml
 name: mech-review
@@ -26,7 +26,7 @@ permissions:
   pull-requests: write
 jobs:
   mech-review:
-    uses: EricleungDK/ek/.github/workflows/mech-review.yml@v0.2.3
+    uses: EricleungDK/ek/.github/workflows/mech-review.yml@v0.2.4
     with:
       stack: rust
       test-paths: |
