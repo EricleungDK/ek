@@ -188,7 +188,7 @@ has "$(jq -r '.entries[0].problem' <<<"$out")" "MISSED mutant src/lib.rs:2:11: r
 has "$(jq -r '.entries[0].id' <<<"$out")" "R3-" "missed: R3 id"
 eq "$(jq -r .summary <<<"$out")" "fail $H (11 fail, 0 confirm; ran: R3; skipped: R1 R2 R4)" "missed: summary"
 has "$(cat "$MECH_STUB_LOG")" "--in-diff" "missed: cargo-mutants gets --in-diff"
-has "$(cat "$MECH_STUB_LOG")" "--timeout 120" "missed: per-mutant timeout 120s"
+lacks "$(cat "$MECH_STUB_LOG")" " --timeout" "missed: per-mutant timeout auto, no --timeout sent (was 120 s)"
 has "$(cat "$MECH_STUB_LOG")" "--colors never" "missed: no colour codes"
 lacks "$(cat "$MECH_STUB_LOG")" "--shard" "missed: no shard flag without --shard"
 lacks "$(cat "$MECH_STUB_LOG")" "$R |" "missed: runs in a worktree, not the caller checkout"
@@ -681,5 +681,161 @@ eq "$rc" 0 "merged two partial: exit 0"
 eq "$(jq -r '[.entries[] | select(.id=="'"$PID"'")] | length' <<<"$out")" 1 "merged two partial: exactly one partial confirm"
 eq "$(jq -r '.checks.R3.timing.shards | length' <<<"$out")" 2 "merged two partial: per-shard wall for both shards"
 eq "$(jq -r '.checks.R3.timing.shards[0].shard' <<<"$out")" "0/2" "merged two partial: shard label 0/2"
+
+# ---- baseline outcomes (real cargo-mutants 27.1.0 output): a baseline Timeout is n/a, a real failure stays fail,
+# a budget hit before the baseline finished is partial with 0 tested ----
+python3 -I - "$ROOT" <<'PY'
+import os
+import sys
+
+ROOT = sys.argv[1]
+sys.path.insert(0, os.path.join(ROOT, "scripts"))
+FX = os.path.join(ROOT, "tests", "fixtures", "mutants")
+FAILS = 0
+
+
+def check(name, cond, detail=""):
+    global FAILS
+    if cond:
+        print(f"  ok   {name}")
+    else:
+        FAILS += 1
+        print(f"  FAIL {name}\n       {detail}")
+
+
+from mech_review import mutants as M  # noqa: E402
+from mech_review.stack import RustAdapter  # noqa: E402
+
+A = RustAdapter()
+TG = ["tests/**"]
+
+chk, ents = M.verdict(os.path.join(FX, "baseline-timeout"), 4, "", A, TG, wall_s=1.5, timeout_s=1)
+check("baseline timeout: R3 n/a, not fail", chk["status"] == "n/a", str(chk))
+check("baseline timeout: note names the timeout, the seconds, mutant-timeout and mutation-budget",
+      all(w in chk["note"] for w in ("timed out", "1s", "mutant-timeout", "mutation-budget")), chk["note"])
+check("baseline timeout: no fail entry", ents == [], str(ents))
+check("baseline timeout: not read as baseline tests fail", "baseline tests fail" not in chk["note"], chk["note"])
+chk, ents = M.verdict(os.path.join(FX, "baseline-timeout"), 4, "", A, TG, wall_s=1.5)
+check("baseline timeout, seconds unknown: still n/a with mutant-timeout named",
+      chk["status"] == "n/a" and "mutant-timeout" in chk["note"] and ents == [], str(chk))
+
+chk, ents = M.verdict(os.path.join(FX, "baseline-failure"), 4, "", A, TG, wall_s=3.0)
+check("baseline failure (real): fail, one agent-fixable baseline entry", chk["status"] == "fail" and len(ents) == 1
+      and ents[0]["class"] == "agent-fixable" and "baseline" in ents[0]["problem"], str(chk))
+
+chk, ents = M.verdict(os.path.join(FX, "baseline-budget"), "timeout", "", A, TG, wall_s=1.2)
+check("budget in baseline: partial", chk["status"] == "partial", str(chk))
+check("budget in baseline: 0 tested of 7", chk.get("tested") == 0 and chk.get("total") == 7, str(chk))
+check("budget in baseline: note says the baseline did not finish", "baseline did not finish" in chk["note"], chk["note"])
+check("budget in baseline: no verdict entries (partial confirm is added by run)", ents == [], str(ents))
+chk, ents = M.verdict(os.path.join(FX, "no-such-dir"), "timeout", "", A, TG)
+check("budget before any output: note says the baseline did not finish", "baseline did not finish" in chk["note"], chk["note"])
+
+sys.exit(1 if FAILS else 0)
+PY
+eq "$?" 0 "baseline outcomes: timeout n/a, failure fail, budget-in-baseline partial 0 tested"
+
+# ---- CLI: baseline timeout, budget in baseline, mutant-timeout flags, stderr tail (cargo-mutants stub) ----
+mrepo basetimeout
+out=$(MUT_FIXTURE=baseline-timeout MUT_RC=4 mut --mutant-timeout 1 2>"$T/bt.err"); rc=$?
+eq "$rc" 0 "baseline timeout CLI: exit 0 (n/a is not a failure)"
+eq "$(jq -r .checks.R3.status <<<"$out")" n/a "baseline timeout CLI: R3 n/a"
+has "$(jq -r .checks.R3.note <<<"$out")" "after 1s" "baseline timeout CLI: note names the seconds"
+eq "$(jq -r '[.entries[] | select(.check=="R3")] | length' <<<"$out")" 0 "baseline timeout CLI: no R3 entry"
+eq "$(jq -r .summary <<<"$out")" "pass $H (0 fail, 0 confirm; ran: none; skipped: R1 R2 R4; n/a: R3)" "baseline timeout CLI: summary names n/a"
+
+mrepo basebudget
+out=$(MUT_FIXTURE=baseline-budget MUT_RC=0 MUT_HANG=1 mut --mutation-budget 0.02); rc=$?
+eq "$rc" 0 "budget in baseline CLI: exit 0 (does not block)"
+eq "$(jq -r .checks.R3.status <<<"$out")" partial "budget in baseline CLI: R3 partial"
+eq "$(jq -r .summary <<<"$out")" "pass $H (0 fail, 1 confirm; ran: R3; partial: R3 (0/7); skipped: R1 R2 R4)" "budget in baseline CLI: summary 0/7"
+
+mrepo mtdefault
+: > "$MECH_STUB_LOG"
+out=$(MUT_FIXTURE=missed MUT_RC=2 mut); rc=$?
+lacks "$(cat "$MECH_STUB_LOG")" " --timeout" "mutant-timeout default: no --timeout sent (baseline unlimited)"
+: > "$MECH_STUB_LOG"
+out=$(MUT_FIXTURE=missed MUT_RC=2 mut --mutant-timeout auto); rc=$?
+lacks "$(cat "$MECH_STUB_LOG")" " --timeout" "mutant-timeout auto: no --timeout sent"
+eq "$rc" 1 "mutant-timeout auto: runs normally (exit 1 on MISSED)"
+: > "$MECH_STUB_LOG"
+out=$(MUT_FIXTURE=missed MUT_RC=2 mut --mutant-timeout 30); rc=$?
+has "$(cat "$MECH_STUB_LOG")" "--timeout 30" "mutant-timeout 30: --timeout 30 sent"
+for bad in 0 abc -5; do
+  out=$(MECH_TEST_STUB="$MUT" python3 -I "$MR" mutants --repo "$R" --base "$B" --head "$H" --stack rust --mutant-timeout "$bad" 2>/dev/null); rc=$?
+  eq "$rc" 2 "mutant-timeout '$bad': usage error exit 2"
+done
+
+# stderr: last 40 lines of cargo-mutants log/baseline.log on a non-pass run; stdout stays pure JSON
+TF="$T/tailfx"; mkdir -p "$TF/baseline-long/log"
+cp "$FX/baseline-failure/mutants.json" "$FX/baseline-failure/outcomes.json" "$TF/baseline-long/"
+seq 1 100 | sed 's/^/baseline line /' > "$TF/baseline-long/log/baseline.log"
+mrepo tailfail
+out=$(MECH_FX="$TF" MUT_FIXTURE=baseline-long MUT_RC=4 mut 2>"$T/tail.err"); rc=$?
+eq "$rc" 1 "stderr tail: baseline failure exit 1"
+jq -e . <<<"$out" >/dev/null 2>&1 && ok "stderr tail: stdout is pure JSON" || fail "stderr tail: stdout is not JSON"
+has "$(cat "$T/tail.err")" "baseline line 100" "stderr tail: last line of the log is printed"
+has "$(cat "$T/tail.err")" "baseline line 61" "stderr tail: the last 40 lines are printed"
+lacks "$(cat "$T/tail.err")" "baseline line 60" "stderr tail: only the last 40 lines"
+lacks "$out" "baseline line" "stderr tail: no log text on stdout"
+mrepo tailpass
+out=$(MUT_FIXTURE=caught MUT_RC=0 mut 2>"$T/pass.err"); rc=$?
+eq "$(wc -c < "$T/pass.err" | tr -d ' ')" 0 "stderr tail: a pass prints nothing to stderr"
+
+# ---- combine: one entry per id across shards; an exact repeat collapses, a different entry keeps its place ----
+python3 -I - "$ROOT" <<'PY'
+import os
+import re
+import sys
+
+ROOT = sys.argv[1]
+sys.path.insert(0, os.path.join(ROOT, "scripts"))
+FAILS = 0
+
+
+def check(name, cond, detail=""):
+    global FAILS
+    if cond:
+        print(f"  ok   {name}")
+    else:
+        FAILS += 1
+        print(f"  FAIL {name}\n       {detail}")
+
+
+from mech_review import merge  # noqa: E402
+
+H, B = "a" * 40, "b" * 40
+
+
+def ent(eid, line=2, problem="MISSED mutant pkg/mod.py:2:11: replace + with -"):
+    return {"id": eid, "check": "R3", "class": "agent-fixable", "severity": "fail", "file": "pkg/mod.py", "line": line,
+            "problem": problem, "hint": "h", "forbidden": "f"}
+
+
+def env(entries):
+    return {"head": H, "base": B, "checks": {"R3": {"status": "fail", "note": "1 missed", "tested": 1, "total": 1}},
+            "entries": entries}
+
+
+m = merge.combine_shards(B, H, 2, {0: env([ent("R3-aaaaaaaa")]), 1: env([ent("R3-aaaaaaaa")])}, {})
+check("exact repeat from two shards: one entry", [e["id"] for e in m["entries"]] == ["R3-aaaaaaaa"],
+      str([e["id"] for e in m["entries"]]))
+
+m = merge.combine_shards(B, H, 2, {0: env([ent("R3-aaaaaaaa", 2, "p one")]), 1: env([ent("R3-aaaaaaaa", 9, "p two")])}, {})
+ids = [e["id"] for e in m["entries"]]
+check("two different entries sharing an id: both kept, ids unique", len(m["entries"]) == 2 and len(set(ids)) == 2, str(ids))
+check("two different entries: ids keep the R3-<8 hex> form", all(re.fullmatch(r"R3-[0-9a-f]{8}", i) for i in ids), str(ids))
+check("two different entries: both still fail", all(e["severity"] == "fail" for e in m["entries"]), str(m["entries"]))
+check("note lists each shard", "shard 0/2:" in m["checks"]["R3"]["note"] and "shard 1/2:" in m["checks"]["R3"]["note"],
+      m["checks"]["R3"]["note"])
+
+m = merge.combine_shards(B, H, 2, {0: env([ent("R3-aaaaaaaa"), ent("R3-bbbbbbbb", 5, "x")]),
+                                   1: env([ent("R3-aaaaaaaa")])}, {})
+check("repeat within and across shards: one entry per id", len(m["entries"]) == len({e["id"] for e in m["entries"]}) == 2,
+      str([e["id"] for e in m["entries"]]))
+
+sys.exit(1 if FAILS else 0)
+PY
+eq "$?" 0 "combine: one entry per id; exact repeats collapse; distinct entries kept"
 
 done_tests

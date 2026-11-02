@@ -50,6 +50,8 @@ The ek scripts run at the ref you pin (`job.workflow_sha` of the called file), n
 | `extra-apt-packages` | `` | apt packages (space-separated) installed before `red-first` runs its tests |
 | `project-dir` | `.` | crate dir under the repo root (`package.json` for ts). R1, R4 and R3 run there; `test-paths` and `protected-paths` stay repo-root globs; a path with `..` or a leading `/` is a usage error |
 | `setup-command` | `` | shell command (run with bash) in `red-first` and `mutants`, after `extra-apt-packages`, before the tests. A non-zero exit stops that job, which then reports a CI entry |
+| `mutant-timeout` | `` (auto) | R3 per-mutant timeout in seconds. Empty is auto: no `--timeout`, so cargo-mutants sets each mutant's limit from the baseline (5× its test time, at least 20 s) and the baseline runs unlimited. A set value also caps the baseline tests: a baseline timeout is `n/a`, not a fail. Stryker's `timeoutMS` is 120 s under auto |
+| `rust-toolchain` | `stable` | Rust toolchain for `red-first` and `mutants` (rust stack), passed to the toolchain action, e.g. `1.96.0` to pin a repo |
 
 Globs: `**` any depth, `*` one segment.
 
@@ -114,9 +116,13 @@ TypeScript toolchain (`stack: ts`), set up in `red-first` and `mutants`:
 - `avg_s_per_mutant`: (`mutant_build_s` + `mutant_test_s`) / tested.
 - `slowest`: the five slowest tested mutants, `{name, s}` (`s` = its build plus test seconds).
 
-Merged (`merge`): `wall_s` is the slowest shard, since shards run in parallel. Sums and the average are kept only when every shard reported them. `shards` lists each shard's `wall_s`, so an uneven shard shows. `slowest` is the top five across shards. A field that is missing or not a number is left out, never guessed. A budget-killed run reports what finished.
+Merged (`merge`): `wall_s` is the slowest shard, since shards run in parallel. Sums and the average are kept only when every shard reported them. `shards` lists each shard's `wall_s`, so an uneven shard shows. `slowest` is the top five across shards. A field that is missing or not a number is left out, never guessed. A budget-killed run reports what finished. Entries are one per id across shards: an identical repeat collapses; a different entry that shares an id keeps both, the later one under a new id, so no fail is lost.
 
-The comment prints one line under the headline when R3 ran, e.g. `R3 timing: 6/15 mutants, 3.07s wall, avg 0.25s per mutant (build 1.21s, test 0.3s)`. When R3 is partial it adds `R3 slowest:` with the five slowest. Mutant names come from the PR's code, so they pass through the comment's cell rules (pipes escaped, backticks replaced).
+The comment prints one line under the headline when R3 ran, e.g. `R3 timing: 6/15 mutants, 3.07s wall, avg 0.25s per mutant (build 1.21s, test 0.3s)`. When nothing was tested the count is left out and the line is wall time only, e.g. `R3 timing: 1.2s wall`. When R3 is partial it adds `R3 slowest:` with the five slowest. Mutant names come from the PR's code, so they pass through the comment's cell rules (pipes escaped, backticks replaced).
+
+Baseline (rust): cargo-mutants runs the unmutated tests first. A baseline timeout is `n/a`, with a note that names the timeout, its seconds, `mutant-timeout` and `mutation-budget`: a set `mutant-timeout` also caps the baseline (cargo-mutants 27.1.0 has no baseline-only limit), so raise it above the suite time; auto leaves the baseline unlimited, and the budget does not lift the limit. A baseline test failure is `fail`. A budget hit before the baseline finished is `partial` with 0 tested; the note says the baseline did not finish.
+
+On any non-pass R3 (rust) the job log gets the last 40 lines of cargo-mutants' `log/baseline.log` on stderr, so the cause shows without downloading the artifact. stdout stays the JSON.
 
 A partial R3 adds one `confirm` entry: class `agent-fixable`, id `R3-…` (stable across heads and counts), problem `R3 partial: <untested>/<total> mutants untested at budget` (or `total unknown` when the mutant list was never written). One entry per run, however many shards hit the budget. The check stays green and the exit code stays 0: partial never fails.
 
@@ -136,7 +142,7 @@ What to do with the numbers, in this order:
 - Results: `Killed` is caught; `Survived` and `NoCoverage` (no test reaches the mutant) are MISSED; `Timeout`, `CompileError`, `RuntimeError`, `Ignored` and `Pending` are neither. A report that is missing or unreadable is `n/a (env)`.
 - Budget: Stryker writes its report at the end of a run, so a budget hit before that is `partial` with the mutant count from its log (`tested` unknown). A partial is not blocking.
 - Timing is wall time only (`checks.R3.timing.wall_s`): Stryker's JSON has no per-phase durations.
-- `--mutant-timeout` sets Stryker's `timeoutMS`.
+- `mutant-timeout` sets Stryker's `timeoutMS`; under auto it stays at 120 s, as before.
 
 ## Limits
 
@@ -148,7 +154,7 @@ What to do with the numbers, in this order:
 - cargo-mutants is pinned to 27.1.0 through `taiki-e/install-action` (pinned to a full SHA). If the install fails the step continues and R3 reports `n/a (env)`: a missing tool is never a pass and never a code failure.
 - ts: Stryker 10.0.0 is pinned in the workflow. The vitest and jest plugins, and the install scripts of the repo's dependencies, run PR code with a read-only token, as the tests do. Yarn berry (PnP, no `node_modules`) and `node --test` are not supported: the runner is `node_modules/.bin/vitest` or `jest`.
 - python: `mutmut` 3.8.1 is pinned in the venv. A repo that already has `[tool.mutmut]` in its `pyproject.toml` gets R3 `n/a (env)`: the runner needs `only_mutate` to limit the run to the changed files, and does not override the repo's table.
-- The shard count (4) is fixed in the `plan` job, not an input. The per-mutant timeout is 120 s (`--mutant-timeout`); the budget is per shard, so the wall time of R3 is about the budget, not the budget times the shards.
+- The shard count (4) is fixed in the `plan` job, not an input. The per-mutant timeout is auto unless `mutant-timeout` is set (see Inputs); the budget is per shard, so the wall time of R3 is about the budget, not the budget times the shards.
 - R3 runs cargo-mutants in a worktree at the head, in the crate dir (`project-dir`), on `base...head` changes only (`--in-diff`; the diff is made relative to the crate dir, and result paths are mapped back to the repo root). A checkout that does not match head is not mutated.
 - The red commit is checked out as a git worktree; the caller's checkout is not moved.
 

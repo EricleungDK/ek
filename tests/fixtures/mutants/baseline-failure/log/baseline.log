@@ -1,0 +1,47 @@
+
+*** baseline
+
+*** /home/ericl/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin/cargo test --no-run --verbose --package=slowcrate@0.1.0
+   Compiling slowcrate v0.1.0 (/tmp/cargo-mutants-crate-fail-VUcXOw.tmp)
+     Running `/home/ericl/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin/rustc --crate-name slowcrate --edition=2021 src/lib.rs --error-format=json --json=diagnostic-rendered-ansi,artifacts,future-incompat --crate-type lib --emit=dep-info,metadata,link -C embed-bitcode=no -C debuginfo=2 --check-cfg 'cfg(docsrs,test)' --check-cfg 'cfg(feature, values())' -C metadata=d5fa615457a14566 -C extra-filename=-f1f6ebde1856c600 --out-dir /tmp/cargo-mutants-crate-fail-VUcXOw.tmp/target/debug/deps -C incremental=/tmp/cargo-mutants-crate-fail-VUcXOw.tmp/target/debug/incremental -L dependency=/tmp/cargo-mutants-crate-fail-VUcXOw.tmp/target/debug/deps`
+     Running `/home/ericl/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin/rustc --crate-name slowcrate --edition=2021 src/lib.rs --error-format=json --json=diagnostic-rendered-ansi,artifacts,future-incompat --emit=dep-info,link -C embed-bitcode=no -C debuginfo=2 --test --check-cfg 'cfg(docsrs,test)' --check-cfg 'cfg(feature, values())' -C metadata=fb07ffa7ee336567 -C extra-filename=-af9f7ad3f11df707 --out-dir /tmp/cargo-mutants-crate-fail-VUcXOw.tmp/target/debug/deps -C incremental=/tmp/cargo-mutants-crate-fail-VUcXOw.tmp/target/debug/incremental -L dependency=/tmp/cargo-mutants-crate-fail-VUcXOw.tmp/target/debug/deps`
+     Running `/home/ericl/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin/rustc --crate-name a --edition=2021 tests/a.rs --error-format=json --json=diagnostic-rendered-ansi,artifacts,future-incompat --emit=dep-info,link -C embed-bitcode=no -C debuginfo=2 --test --check-cfg 'cfg(docsrs,test)' --check-cfg 'cfg(feature, values())' -C metadata=8ec97f370b667c64 -C extra-filename=-bf781a7715e46f06 --out-dir /tmp/cargo-mutants-crate-fail-VUcXOw.tmp/target/debug/deps -C incremental=/tmp/cargo-mutants-crate-fail-VUcXOw.tmp/target/debug/incremental -L dependency=/tmp/cargo-mutants-crate-fail-VUcXOw.tmp/target/debug/deps --extern slowcrate=/tmp/cargo-mutants-crate-fail-VUcXOw.tmp/target/debug/deps/libslowcrate-f1f6ebde1856c600.rlib`
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.17s
+  Executable `/tmp/cargo-mutants-crate-fail-VUcXOw.tmp/target/debug/deps/slowcrate-af9f7ad3f11df707`
+  Executable `/tmp/cargo-mutants-crate-fail-VUcXOw.tmp/target/debug/deps/a-bf781a7715e46f06`
+
+*** result: Success
+
+*** /home/ericl/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin/cargo test --verbose --package=slowcrate@0.1.0
+       Fresh slowcrate v0.1.0 (/tmp/cargo-mutants-crate-fail-VUcXOw.tmp)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.00s
+     Running `/tmp/cargo-mutants-crate-fail-VUcXOw.tmp/target/debug/deps/slowcrate-af9f7ad3f11df707`
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running `/tmp/cargo-mutants-crate-fail-VUcXOw.tmp/target/debug/deps/a-bf781a7715e46f06`
+
+running 1 test
+test adds ... FAILED
+
+failures:
+
+---- adds stdout ----
+
+thread 'adds' (21191) panicked at tests/a.rs:3:5:
+assertion `left == right` failed
+  left: 3
+ right: 4
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    adds
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+error: test failed, to rerun pass `-p slowcrate --test a`
+
+*** result: Failure(101)

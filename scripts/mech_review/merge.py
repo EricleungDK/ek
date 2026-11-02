@@ -5,6 +5,7 @@ unreadable, or for another head) fails the checks it owns and adds one CI entry 
 never hides the other job's entries. A job that was not run (no production file changed) is simply absent: its
 checks stay skipped.
 """
+import hashlib
 import json
 
 from .engine import CHECKS, entry, envelope, finalize
@@ -81,13 +82,37 @@ def combine_timing(items, tested):
     return out
 
 
+def _add_unique(kept, seen, e, label):
+    """One entry per id across shards. An exact repeat (same id, same content) collapses. A different entry that shares
+    an id (two mutants with one description in one file, split across shards) gets a new id derived from its own id and
+    its shard, so neither is lost: a fail must not vanish in a merge."""
+    cur = seen.get(e["id"])
+    if cur is None:
+        seen[e["id"]] = e
+        kept.append(e)
+        return
+    if cur == e:
+        return
+    n = 0
+    while True:
+        n += 1
+        new = f"{e['check']}-" + hashlib.sha1(f"{e['id']}|{label}|{n}".encode("utf-8")).hexdigest()[:8]
+        if new not in seen:
+            break
+    e = dict(e, id=new)
+    seen[new] = e
+    kept.append(e)
+
+
 def combine_shards(base, head, n, shards, reasons):
     """The mutants job: R3 from n shard envelopes (0-based shard k of n). shards: {k: envelope or None},
     reasons: {k: why there is no envelope}. A missing shard fails R3 with a CI entry naming it; the other shards'
     entries stay. R3 status: fail > n/a > partial > skipped > pass; tested/total are summed over the shards.
-    Partial: exactly one partial confirm for the merged run, however many shards hit the budget."""
+    Partial: exactly one partial confirm for the merged run, however many shards hit the budget.
+    Entries: one per id (see _add_unique)."""
     checks = {c: {"status": "skipped", "note": "not run by mutants"} for c in CHECKS}
     kept, ci, notes, statuses, timings = [], [], [], [], []
+    seen = {}
     tested = total = 0
     counted = unknown = False
     guard_id = partial_entry({})["id"]
@@ -108,7 +133,9 @@ def combine_shards(base, head, n, shards, reasons):
         notes.append(f"shard {label}: {c['note']}")
         timings.append((label, c.get("timing")))
         # a shard's own partial confirm is replaced by the one for the merged run
-        kept += [e for e in env["entries"] if e["check"] == "R3" and e["id"] != guard_id]
+        for e in env["entries"]:
+            if e["check"] == "R3" and e["id"] != guard_id:
+                _add_unique(kept, seen, e, label)
         if c.get("tested") is not None:
             counted = True
             tested += c["tested"]

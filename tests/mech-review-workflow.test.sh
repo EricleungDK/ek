@@ -89,9 +89,13 @@ check("reusable: on is workflow_call only", child_keys(on) == {"workflow_call"},
 wc = block(on, "workflow_call") or []
 inputs = block(wc, "inputs") or []
 want_inputs = {"stack", "test-paths", "protected-paths", "agent-branch-prefix", "mutation-budget", "extra-apt-packages",
-               "project-dir", "setup-command"}
-check("reusable: exactly the 8 inputs", child_keys(inputs) == want_inputs, str(sorted(child_keys(inputs))))
+               "project-dir", "setup-command", "mutant-timeout", "rust-toolchain"}
+check("reusable: exactly the 10 inputs", child_keys(inputs) == want_inputs, str(sorted(child_keys(inputs))))
 check("reusable: stack defaults to rust", value(block(inputs, "stack") or [], "default") == "rust")
+check("reusable: mutant-timeout defaults to empty (auto: no --timeout, baseline unlimited)",
+      value(block(inputs, "mutant-timeout") or [], "default") == "", str(block(inputs, "mutant-timeout")))
+check("reusable: rust-toolchain defaults to stable", value(block(inputs, "rust-toolchain") or [], "default") == "stable",
+      str(block(inputs, "rust-toolchain")))
 
 perm = block(W, "permissions", 0) or []
 perm_map = {k: value(perm, k) for k in child_keys(perm)}
@@ -157,8 +161,8 @@ tc = [l.strip() for l in tc]
 uses_line = next((l.split("uses:", 1)[1].split("#")[0].strip() for l in tc if l.startswith("uses:")), "")
 check("red-first: rust-toolchain pinned to a full 40-hex commit SHA",
       re.fullmatch(r"dtolnay/rust-toolchain@[0-9a-f]{40}", uses_line) is not None, uses_line)
-check("red-first: rust-toolchain passes toolchain: stable (required when pinned by SHA)",
-      any(l == "toolchain: stable" for l in tc), str(tc))
+check("red-first: rust-toolchain passes toolchain from the rust-toolchain input (required when pinned by SHA)",
+      any(l == "toolchain: ${{ inputs.rust-toolchain }}" for l in tc), str(tc))
 check("red-first: honours extra-apt-packages", "inputs.extra-apt-packages" in rt and "apt-get" in rt)
 check("red-first: uploads its JSON artifact", "mech-review-red-json" in rt and "upload-artifact" in rt)
 red_perm = block(red, "permissions") or []
@@ -219,7 +223,8 @@ tcs = step(mu, "Rust toolchain")
 tc_uses = next((l.split("uses:", 1)[1].split("#")[0].strip() for l in tcs if l.startswith("uses:")), "")
 check("mutants: rust-toolchain pinned to a full 40-hex commit SHA",
       re.fullmatch(r"dtolnay/rust-toolchain@[0-9a-f]{40}", tc_uses) is not None, tc_uses)
-check("mutants: rust-toolchain passes toolchain: stable", "toolchain: stable" in tcs, str(tcs))
+check("mutants: rust-toolchain passes toolchain from the rust-toolchain input",
+      "toolchain: ${{ inputs.rust-toolchain }}" in tcs, str(tcs))
 
 ins = step(mu, "install cargo-mutants (pinned)")
 ins_uses = next((l.split("uses:", 1)[1].split("#")[0].strip() for l in ins if l.startswith("uses:")), "")
@@ -235,6 +240,9 @@ check("mutants: runs mech-review.py mutants", "mech-review.py" in rs and " mutan
 check("mutants: shard flag from the matrix and the plan count",
       "matrix.shard" in rs and "needs.plan.outputs.count" in rs, rs)
 check("mutants: budget from the mutation-budget input", "inputs.mutation-budget" in mt and "--mutation-budget" in rs, rs)
+check("mutants: mutant-timeout from the input via env, passed only when set",
+      "MUTANT_TIMEOUT: ${{ inputs.mutant-timeout }}" in rs and '--mutant-timeout "$MUTANT_TIMEOUT"' in rs
+      and 'if [ -n "$MUTANT_TIMEOUT" ]' in rs, rs)
 check("mutants: rc above 1 is no result (crash surfaces at report)", "rc -gt 1" in rs or "-gt 1" in rs, rs)
 up = step(mu, "upload mutants result")
 check("mutants: uploads its JSON artifact per shard", "mech-review-mutants-${{ matrix.shard }}" in "\n".join(up)
