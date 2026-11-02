@@ -12,6 +12,7 @@ q() { python3 -c 'import json,sys; d=json.load(sys.stdin); print(eval(sys.argv[1
 STUB="$T/stub.sh"
 cat > "$STUB" <<'SH'
 #!/bin/bash
+[[ "$*" == *--version* ]] && exit 0  # the mutation tool is healthy
 case "${MECH_STUB_RESULT:-pass}" in
   pass) printf 'test a ... ok\n\ntest result: ok. 3 passed; 0 failed; 0 ignored\n'; exit 0 ;;
   bwrap) printf 'bwrap: setting up uid map: Permission denied\ntest a ... FAILED\n\ntest result: FAILED. 2 passed; 1 failed\n'; exit 101 ;;
