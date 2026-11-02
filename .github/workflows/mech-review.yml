@@ -27,7 +27,7 @@ on:
         type: string
         default: "agent/"
       mutation-budget:
-        description: "R3 budget in minutes per mutants shard (cargo-mutants on the diff); a budget hit is partial, not a failure"
+        description: "R3 budget in minutes per mutants shard, and for the baseline step (cargo-mutants on the diff); a budget hit is partial, not a failure; a baseline that does not finish in it is n/a"
         type: string
         default: "10"
       extra-apt-packages:
@@ -43,7 +43,7 @@ on:
         type: string
         default: ""
       mutant-timeout:
-        description: "R3 per-mutant timeout in seconds (cargo-mutants --timeout), or empty for auto: no timeout flag, so cargo-mutants sets it from the baseline and the baseline runs unlimited. A set value also caps the baseline tests: a baseline timeout is n/a, not a fail"
+        description: "R3 per-mutant timeout in seconds, or empty for the timeout derived from the measured baseline (5x its test time, at least 20 s: cargo-mutants' rule). A set value is used as is. Neither caps the baseline: it runs once, in the baseline job, bounded by mutation-budget"
         type: string
         default: ""
       rust-toolchain:
@@ -229,12 +229,11 @@ jobs:
           overwrite: true
 
   plan:
-    name: mech-review plan (R3 shards)
+    name: mech-review plan (R3 runs?)
     runs-on: ubuntu-latest
+    # git only, no PR code: the write token stays here, away from the jobs that run PR code (#46)
     outputs:
       run: ${{ steps.plan.outputs.run }}
-      count: ${{ steps.plan.outputs.count }}
-      shards: ${{ steps.plan.outputs.shards }}
     steps:
       - name: caller checkout (full history, PR head)
         uses: actions/checkout@v4
@@ -250,17 +249,16 @@ jobs:
           ref: ${{ job.workflow_sha }}
           path: ek
           persist-credentials: false
-      - name: R3 plan (does the mutants job run, its shard matrix)
+      - name: R3 plan (does the mutants job run)
         id: plan
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           STACK: ${{ inputs.stack }}
           TEST_PATHS: ${{ inputs.test-paths }}
-          MUTATION_SHARDS: "4"
         run: |
           set -eu
-          args=(--repo "$GITHUB_WORKSPACE/caller" --base "$BASE_SHA" --head "$HEAD_SHA" --stack "$STACK" --shards "$MUTATION_SHARDS")
+          args=(--repo "$GITHUB_WORKSPACE/caller" --base "$BASE_SHA" --head "$HEAD_SHA" --stack "$STACK")
           while IFS= read -r g; do
             if [ -n "$g" ]; then args+=(--test-paths "$g"); fi
           done <<< "$TEST_PATHS"
@@ -272,14 +270,115 @@ jobs:
           p = json.load(open("mech-plan.json"))
           with open(sys.argv[1], "a") as out:
               out.write(f"run={str(p['run']).lower()}\n")
-              out.write(f"count={p['count']}\n")
-              out.write(f"shards={json.dumps(p['shards'])}\n")
           PY
+
+  baseline:
+    name: mech-review baseline (R3, once)
+    needs: [plan]
+    if: ${{ needs.plan.outputs.run == 'true' }}
+    runs-on: ubuntu-latest
+    # rust: runs PR code (cargo-mutants lists the mutants and runs the unmutated tests once): read-only token, as the
+    # other PR-code jobs. Sets the shard count and the per-mutant timeout the mutants shards use (#46).
+    permissions:
+      contents: read
+    outputs:
+      run: ${{ steps.baseline.outputs.run }}
+      count: ${{ steps.baseline.outputs.count }}
+      shards: ${{ steps.baseline.outputs.shards }}
+      timeout: ${{ steps.baseline.outputs.timeout }}
+    steps:
+      - name: caller checkout (full history, PR head)
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          path: caller
+          persist-credentials: false
+      - name: ek engine checkout (the ref this workflow was called at)
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          path: ek
+          persist-credentials: false
+      - name: Rust toolchain
+        if: inputs.stack == 'rust'
+        uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+        with:
+          toolchain: ${{ inputs.rust-toolchain }}
+      - name: extra apt packages
+        if: inputs.stack == 'rust' && inputs.extra-apt-packages != ''
+        env:
+          EXTRA_APT: ${{ inputs.extra-apt-packages }}
+        run: |
+          set -eu
+          read -ra pkgs <<< "$EXTRA_APT"
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq "${pkgs[@]}"
+      - name: setup command
+        if: inputs.stack == 'rust' && inputs.setup-command != ''
+        env:
+          SETUP_COMMAND: ${{ inputs.setup-command }}
+        shell: bash
+        run: bash -c "$SETUP_COMMAND"
+      - name: install cargo-mutants (pinned)
+        # a failed install is not a stop: the engine reports n/a (env) when the tool is missing
+        if: inputs.stack == 'rust'
+        continue-on-error: true
+        uses: taiki-e/install-action@68a389c788b2cd04016ce8c80ee23b80d2ab3d68 # v2
+        with:
+          tool: cargo-mutants@27.1.0
+      - name: R3 baseline (once; shard count, derived timeout)
+        # rust: cargo-mutants' unmutated baseline. python and ts: the shard count from the changed files (git only).
+        id: baseline
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          STACK: ${{ inputs.stack }}
+          TEST_PATHS: ${{ inputs.test-paths }}
+          MUTATION_BUDGET: ${{ inputs.mutation-budget }}
+          PROJECT_DIR: ${{ inputs.project-dir }}
+        run: |
+          set -uo pipefail
+          # the most shards: 4 (fewer when there are fewer mutants or files: no empty shard)
+          args=(--repo "$GITHUB_WORKSPACE/caller" --base "$BASE_SHA" --head "$HEAD_SHA" --stack "$STACK"
+                --mutation-budget "$MUTATION_BUDGET" --project-dir "$PROJECT_DIR" --shards 4)
+          while IFS= read -r g; do
+            if [ -n "$g" ]; then args+=(--test-paths "$g"); fi
+          done <<< "$TEST_PATHS"
+          rc=0
+          python3 -I "$GITHUB_WORKSPACE/ek/scripts/mech-review.py" baseline "${args[@]}" > mech-review-baseline.json 2> mech-review-baseline.err || rc=$?
+          cat mech-review-baseline.err >&2
+          # exit 0 = a result (a failed or timed-out baseline is a result too). exit 2+ = usage or git error: no result.
+          if [ "$rc" -gt 1 ]; then
+            rm -f mech-review-baseline.json
+            echo "::error::mech-review baseline exit $rc (usage or git error): no result"
+            exit "$rc"
+          fi
+          python3 -I - "$GITHUB_OUTPUT" <<'PY'
+          import json
+          import sys
+
+          b = json.load(open("mech-review-baseline.json"))
+          with open(sys.argv[1], "a") as out:
+              out.write(f"run={str(b['run']).lower()}\n")
+              out.write(f"count={b['count']}\n")
+              out.write(f"shards={json.dumps(list(range(b['count'])))}\n")
+              out.write(f"timeout={'' if b['timeout'] is None else b['timeout']}\n")
+          PY
+      - name: upload baseline result
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mech-review-baseline-json
+          path: mech-review-baseline.json
+          if-no-files-found: ignore
+          overwrite: true
 
   mutants:
     name: mech-review mutants (R3 shard ${{ matrix.shard }})
-    needs: [plan]
-    if: ${{ needs.plan.outputs.run == 'true' }}
+    needs: [plan, baseline]
+    if: ${{ needs.baseline.outputs.run == 'true' }}
     runs-on: ubuntu-latest
     # runs PR code (cargo mutants runs its tests): read-only token, same as red-first
     permissions:
@@ -287,7 +386,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: ${{ fromJSON(needs.plan.outputs.shards) }}
+        shard: ${{ fromJSON(needs.baseline.outputs.shards) }}
     steps:
       - name: caller checkout (full history, PR head)
         uses: actions/checkout@v4
@@ -391,9 +490,9 @@ jobs:
           STACK: ${{ inputs.stack }}
           TEST_PATHS: ${{ inputs.test-paths }}
           MUTATION_BUDGET: ${{ inputs.mutation-budget }}
-          MUTANT_TIMEOUT: ${{ inputs.mutant-timeout }}
+          MUTANT_TIMEOUT: ${{ inputs.mutant-timeout || needs.baseline.outputs.timeout }}
           SHARD: ${{ matrix.shard }}
-          SHARD_COUNT: ${{ needs.plan.outputs.count }}
+          SHARD_COUNT: ${{ needs.baseline.outputs.count }}
           PROJECT_DIR: ${{ inputs.project-dir }}
           STRYKER_BIN: ${{ runner.temp }}/stryker/node_modules/.bin/stryker
         run: |
@@ -425,7 +524,7 @@ jobs:
 
   report:
     name: mech-review report
-    needs: [guard, red-first, plan, mutants]
+    needs: [guard, red-first, plan, baseline, mutants]
     if: always()
     runs-on: ubuntu-latest
     steps:
@@ -448,24 +547,35 @@ jobs:
         with:
           name: mech-review-red-json
           path: red-result
+      - name: fetch baseline result
+        uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          name: mech-review-baseline-json
+          path: baseline-result
       - name: fetch mutants shard results
         uses: actions/download-artifact@v4
         continue-on-error: true
         with:
           pattern: "mech-review-mutants-*"
           path: mutants-result
-      - name: merge mutants shards (R3)
+      - name: merge mutants (R3, baseline and shards)
         if: ${{ needs.plan.outputs.run == 'true' || needs.plan.result != 'success' }}
         env:
-          COUNT: ${{ needs.plan.outputs.count }}
+          COUNT: ${{ needs.baseline.outputs.count }}
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           STACK: ${{ inputs.stack }}
         run: |
           set -u
-          # a missing shard file is a CI entry in the merge, never a silent pass
-          args=(--base "$BASE_SHA" --head "$HEAD_SHA" --stack "$STACK" --shards "${COUNT:-1}")
-          for ((k = 0; k < ${COUNT:-1}; k++)); do
+          # no baseline result (its job crashed, or never ran): R3 fails with a CI entry; a missing shard file is one too
+          args=(--base "$BASE_SHA" --head "$HEAD_SHA" --stack "$STACK" --shards "${COUNT:-0}")
+          if [ -f baseline-result/mech-review-baseline.json ]; then
+            args+=(--baseline baseline-result/mech-review-baseline.json)
+          else
+            args+=(--baseline-reason "no JSON from the baseline job (see its log)")
+          fi
+          for ((k = 0; k < ${COUNT:-0}; k++)); do
             f="mutants-result/mech-review-mutants-$k/mech-review-mutants.json"
             if [ -f "$f" ]; then args+=(--envelope "$k=$f"); fi
           done

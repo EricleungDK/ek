@@ -27,17 +27,20 @@ checks (status in envelope: pass | fail | partial | n/a | skipped):
   R4  determinism (red subcommand): each new or changed #[test] runs 5x at head; any failing run
       is a fail. n/a when the toolchain is absent.
   R3  mutation on the diff (`mutants`): cargo-mutants `--in-diff` (rust), mutmut (python), Stryker 10.0.0 (ts: changed
-      lines, `--mutate` ranges), run in a worktree at head, per-mutant timeout auto (`--mutant-timeout SEC` to set;
-      auto sends no --timeout, so the baseline runs unlimited), budget `--mutation-budget MIN` (default 10, per shard).
+      lines, `--mutate` ranges), run in a worktree at head. `baseline` (#46) runs first, once: rust measures the unmutated
+      tree and counts the mutants; the shards then skip the baseline (`--baseline skip`, `--timeout` from the baseline)
+      and run round-robin over min(shards, mutants) shards. Per-mutant timeout: --mutant-timeout SEC, else derived from the
+      measured baseline (cargo-mutants' rule). Budget `--mutation-budget MIN` (default 10, per shard and for the baseline).
       MISSED in a production file -> fail (agent-fixable), one entry per mutant; TIMEOUT and UNVIABLE ignored. Budget
-      hit with no MISSED -> partial (tested/total), not blocking. A baseline timeout -> n/a (names mutant-timeout).
-      Tool not installed -> n/a (env). No production file -> skipped.
-      `--shard K/N` runs one of N shards (K is 0-based, as cargo-mutants numbers them).
-  `r2` runs R2. `red` runs R1 and R4. `all` = R1, R2 and R4 (R3 is not in `all`: run `mutants`). `mutants` runs R3. A check a subcommand does not run
+      hit with no MISSED -> partial (tested/total), not blocking. A baseline that fails -> fail; one that times out ->
+      n/a (names mutation-budget). Tool not installed -> n/a (env). No production file -> skipped.
+      `--shard K/N` runs one of N shards (K is 0-based).
+  `r2` runs R2. `red` runs R1 and R4. `all` = R1, R2 and R4 (R3 is not in `all`: run `baseline`, then `mutants`).
+  `mutants` runs R3; `baseline` prints the R3 baseline step: {run, count, mutants, timeout, checks, entries}. A check a subcommand does not run
   is skipped with `not run by <subcommand>`.
   Test runner: the stack default (rust: `cargo test`), or --test-cmd. Env MECH_TEST_STUB=<exe>
   replaces the executable (arguments kept): the injectable runner for tests.
-  Crate dir: --project-dir DIR (repo-root relative, default .): R1, R4 and R3 run there; paths in results stay repo-root.
+  Crate dir: --project-dir DIR (repo-root relative, default .): R1, R4, R3 and the baseline run there; paths in results stay repo-root.
 
 summary (one line, text format first line and envelope `summary`):
   `all pass <head sha>`: no entries and every check passed (never while a check is skipped or n/a).
@@ -85,10 +88,10 @@ def build_parser():
     p = argparse.ArgumentParser(prog="mech-review.py", description=HELP, formatter_class=argparse.RawDescriptionHelpFormatter,
                                 epilog="example: python3 -I scripts/mech-review.py r2 --repo . --base main --head HEAD "
                                        "--stack rust --test-paths 'tests/**' --protected-paths '.github/**'")
-    p.add_argument("check", choices=["r2", "red", "all", "mutants", "merge", "plan"],
+    p.add_argument("check", choices=["r2", "red", "all", "mutants", "baseline", "merge", "plan"],
                    help="r2: test-diff guard (R2); red: red-first and determinism (R1, R4); all: R1, R2, R4; "
-                        "mutants: mutation on the diff (R3); merge: combine the mutants shard results (--shards, --envelope); "
-                        "plan: does the mutants job run, and its shard matrix (--shards)")
+                        "mutants: mutation on the diff (R3); baseline: the R3 baseline step (run, shard count, derived timeout); "
+                        "merge: combine the mutants results (--baseline, --shards, --envelope); plan: does the mutants job run")
     p.add_argument("--repo", default=".", help="git repo (default .)")
     p.add_argument("--base", required=True, help="base ref")
     p.add_argument("--head", required=True, help="head ref")
@@ -108,12 +111,17 @@ def build_parser():
     p.add_argument("--mutation-budget", type=float, default=10.0, metavar="MIN",
                    help="R3 budget in minutes for this run (default 10); a budget hit is partial, not a failure")
     p.add_argument("--mutant-timeout", type=mutant_timeout_arg, default=None, metavar="SEC|auto",
-                   help="R3 per-mutant timeout: auto (default: no --timeout, cargo-mutants sets it from the baseline and the "
-                        "baseline runs unlimited) or whole seconds (cargo-mutants --timeout, which also caps the baseline)")
+                   help="R3 per-mutant timeout: auto (default: cargo-mutants' own inline baseline sets it) or whole seconds "
+                        "(the shards then skip the baseline: it was measured by `baseline`)")
     p.add_argument("--shard", metavar="K/N", help="R3 only: run shard K of N (0-based, as cargo-mutants numbers them)")
-    p.add_argument("--shards", type=int, default=1, metavar="N", help="merge and plan: number of mutants shards")
+    p.add_argument("--shards", type=int, default=None, metavar="N",
+                   help="baseline: the most mutants shards (default 4; fewer when there are fewer mutants); merge: the number "
+                        "of shards that ran (0 only when --baseline says none ran)")
     p.add_argument("--envelope", action="append", metavar="K=FILE",
                    help="merge only: result of shard K (0-based), repeatable; a missing shard fails R3 with a CI entry")
+    p.add_argument("--baseline", metavar="FILE", help="merge only: the baseline step's result (`baseline` output)")
+    p.add_argument("--baseline-reason", metavar="WHY",
+                   help="merge only: why there is no baseline result (its job produced none): R3 fails with a CI entry")
     return p
 
 
@@ -130,15 +138,35 @@ SHARD = re.compile(r"^(\d+)/(\d+)$")
 
 
 def _plan(parser, args):
-    """Print {run, count, shards}: whether the mutants job runs and its shard matrix. Exit 0 (2 on usage or git error)."""
-    if args.shards < 1:
+    """Print {run, count, shards}: whether the mutants job runs and its shard matrix (the workflow reads run only; the
+    baseline step sets the real count, #46). Exit 0 (2 on usage or git error)."""
+    shards = 1 if args.shards is None else args.shards
+    if shards < 1:
         parser.error("--shards N: want N >= 1")
     try:
-        out = engine.plan(args.repo, args.base, args.head, args.stack, args.test_paths, args.shards)
+        out = engine.plan(args.repo, args.base, args.head, args.stack, args.test_paths, shards)
     except engine.Die as e:
         print(f"mech-review: {e}", file=sys.stderr)
         return 2
     print(json.dumps(out))
+    return 0
+
+
+def _baseline(parser, args):
+    """Print the baseline step's result (#46): run, count, mutants, timeout and the R3 check. Exit 0 (2 on usage or git
+    error). A baseline that fails or times out is a result here, not an exit code: the merge reports it."""
+    if args.mutant_timeout is not None:
+        parser.error("baseline takes no --mutant-timeout: the baseline is measured once and no per-mutant setting caps it")
+    shards = 4 if args.shards is None else args.shards
+    if shards < 1:
+        parser.error("--shards N: want N >= 1")
+    try:
+        env = engine.baseline(args.repo, args.base, args.head, args.stack, args.test_paths, args.mutants_cmd,
+                              args.mutation_budget, shards, project_dir=args.project_dir)
+    except engine.Die as e:
+        print(f"mech-review: {e}", file=sys.stderr)
+        return 2
+    print(json.dumps(env, indent=2))
     return 0
 
 
@@ -148,16 +176,27 @@ def _sha(repo, ref):
 
 
 def _merge(parser, args):
-    """Combine the mutants shard envelopes into one R3 envelope on stdout. Exit 1 on any fail entry."""
-    n = args.shards
-    if n < 1:
-        parser.error("--shards N: want N >= 1")
+    """Combine the baseline result and the mutants shard envelopes into one R3 envelope on stdout. Exit 1 on any fail entry."""
+    n = 1 if args.shards is None else args.shards
+    if n < 0:
+        parser.error("--shards N: want N >= 0")
     try:
         base = _sha(args.repo, args.base)
         head = _sha(args.repo, args.head)
     except engine.Die as e:
         print(f"mech-review: {e}", file=sys.stderr)
         return 2
+    baseline, reason = None, args.baseline_reason
+    if args.baseline:
+        baseline = merge.load_envelope(args.baseline)
+        if baseline is None:
+            baseline, reason = None, "no usable result file"
+        elif baseline["head"] != head:
+            baseline, reason = None, f"result is for an older head, not {head}"
+        elif "checks" not in baseline or "R3" not in baseline["checks"]:
+            baseline, reason = None, "result has no R3 check"
+    if baseline is not None and baseline.get("run") and n < 1:
+        parser.error("--shards N: want N >= 1 when the baseline runs the shards")
     shards, reasons = {}, {}
     for item in args.envelope or []:
         k, sep, path = item.partition("=")
@@ -174,7 +213,7 @@ def _merge(parser, args):
     for k in range(n):
         shards.setdefault(k, None)
         reasons.setdefault(k, "no result file given")
-    env = merge.combine_shards(base, head, n, shards, reasons)
+    env = merge.combine_mutants(base, head, n, shards, reasons, baseline=baseline, baseline_reason=reason)
     print(json.dumps(env, indent=2))
     return 1 if any(e["severity"] == "fail" for e in env["entries"]) else 0
 
@@ -186,6 +225,8 @@ def main(argv):
         return _merge(parser, args)
     if args.check == "plan":
         return _plan(parser, args)
+    if args.check == "baseline":
+        return _baseline(parser, args)
     if args.shard is not None:
         m = SHARD.match(args.shard)
         if args.check != "mutants":

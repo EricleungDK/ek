@@ -75,6 +75,13 @@ def _timing_lines(env):
         parts.append(seg)
     elif detail:
         parts.append(f"({', '.join(detail)})")
+    base = []  # the baseline step's seconds, once for the whole run (#46)
+    if _num(t.get("baseline_build_s")):
+        base.append(f"build {_fmt(t['baseline_build_s'])}s")
+    if _num(t.get("baseline_test_s")):
+        base.append(f"test {_fmt(t['baseline_test_s'])}s")
+    if base:
+        parts.append(f"baseline ({', '.join(base)})")
     lines = ["R3 timing: " + ", ".join(parts)] if parts else []
     slow = [x for x in (t.get("slowest") or []) if isinstance(x, dict) and _num(x.get("s"))]
     if c.get("status") == "partial" and slow:

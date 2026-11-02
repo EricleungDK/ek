@@ -4,9 +4,10 @@ Reusable workflow: `EricleungDK/ek/.github/workflows/mech-review.yml`. On each P
 
 - `guard`: R2 test-diff guard (`scripts/mech-review.py r2`), git diffs only, no toolchain.
 - `red-first`: R1 red-first and R4 determinism (`scripts/mech-review.py red`). Compiles and runs the PR's new or changed tests, so it needs the stack toolchain (rust: stable; python: a venv with pytest; ts: node 22 and the repo's installed dependencies).
-- `plan`: decides whether R3 runs (a production file changed) and its shard matrix (4 shards). Git only.
-- `mutants`: R3 mutation on the diff (`scripts/mech-review.py mutants`), one job per shard. Runs cargo-mutants 27.1.0 (`--in-diff`) on the PR's code (rust), mutmut 3.8.1 on the changed files (python), or Stryker 10.0.0 on the changed lines (ts). Skipped entirely when `plan` says no production file changed.
-- `report`: merges the two results, edits the comment, sets the check.
+- `plan`: decides whether R3 runs (a production file changed). Git only.
+- `baseline`: the R3 baseline, once per PR (`scripts/mech-review.py baseline`). Rust: runs cargo-mutants 27.1.0's unmutated baseline (the tests once) and lists the mutants; sets the shard count (`min(4, mutants)`) and the per-mutant timeout the shards use. Python and ts: the shard count from the changed production files (git only). A baseline that fails or times out is R3's result: the shards do not run. Skipped when `plan` says no production file changed.
+- `mutants`: R3 mutation on the diff (`scripts/mech-review.py mutants`), one job per shard. Runs cargo-mutants 27.1.0 (`--in-diff`, round-robin shards, baseline skipped) on the PR's code (rust), mutmut 3.8.1 on the changed files (python), or Stryker 10.0.0 on the changed lines (ts). Skipped when `baseline` says no shard runs.
+- `report`: merges the results (the baseline's R3, or the shards' R3), edits the comment, sets the check.
 
 Rules: [testing standard](testing-standard.md).
 
@@ -46,11 +47,11 @@ The ek scripts run at the ref you pin (`job.workflow_sha` of the called file), n
 | `test-paths` | `tests/**` | test file globs, one per line; `.rs` files here count every assert; a `.rs` file outside them is production code for R1 |
 | `protected-paths` | `.github/**` | globs, one per line; any change under them is a `needs-human` fail |
 | `agent-branch-prefix` | `agent/` | R1 runs only when the PR head branch starts with it (`--agent-prefix`); other branches skip R1 |
-| `mutation-budget` | `10` | R3 budget in minutes, per mutants shard. A budget hit is `partial` (no MISSED so far) or `fail` (a MISSED found), never a crash. Applies to both stacks |
+| `mutation-budget` | `10` | R3 budget in minutes, per mutants shard and for the baseline step. A budget hit is `partial` (no MISSED so far) or `fail` (a MISSED found), never a crash; a baseline that does not finish in it is `n/a`. Applies to all stacks |
 | `extra-apt-packages` | `` | apt packages (space-separated) installed before `red-first` runs its tests |
 | `project-dir` | `.` | crate dir under the repo root (`package.json` for ts). R1, R4 and R3 run there; `test-paths` and `protected-paths` stay repo-root globs; a path with `..` or a leading `/` is a usage error |
 | `setup-command` | `` | shell command (run with bash) in `red-first` and `mutants`, after `extra-apt-packages`, before the tests. A non-zero exit stops that job, which then reports a CI entry |
-| `mutant-timeout` | `` (auto) | R3 per-mutant timeout in seconds. Empty is auto: no `--timeout`, so cargo-mutants sets each mutant's limit from the baseline (5× its test time, at least 20 s) and the baseline runs unlimited. A set value also caps the baseline tests: a baseline timeout is `n/a`, not a fail. Stryker's `timeoutMS` is 120 s under auto |
+| `mutant-timeout` | `` (derived) | R3 per-mutant timeout in seconds. Empty is the timeout derived from the measured baseline: 5× its test time, at least 20 s (cargo-mutants' own rule; `timeout_multiplier` and `minimum_test_timeout` are read from the crate dir's `.cargo/mutants.toml`, not a workspace root above it). A set value is used as is. Neither caps the baseline: it runs once, in the `baseline` job, bounded by `mutation-budget`. Stryker's `timeoutMS` is 120 s when unset |
 | `rust-toolchain` | `stable` | Rust toolchain for `red-first` and `mutants` (rust stack), passed to the toolchain action, e.g. `1.96.0` to pin a repo |
 
 Globs: `**` any depth, `*` one segment.
@@ -77,7 +78,7 @@ Python toolchain (`stack: python`), set up in `red-first` and `mutants`:
 
 ## Result
 
-- Jobs: `guard` (artifact `mech-review-json`), `red-first` (artifact `mech-review-red-json`), `plan`, `mutants` (artifacts `mech-review-mutants-<shard>`), `report` (`needs` all four, runs even if one fails).
+- Jobs: `guard` (artifact `mech-review-json`), `red-first` (artifact `mech-review-red-json`), `plan`, `baseline` (artifact `mech-review-baseline-json`), `mutants` (artifacts `mech-review-mutants-<shard>`), `report` (`needs` all five, runs even if one fails).
 - `report` merges the results: each job owns its checks (R2 from `guard`; R1 and R4 from `red-first`; R3 from `mutants`). The shard results are combined by `mech-review.py merge` first. It edits the sticky comment, or creates it: a summary line, a table of entries (id, severity, file:line, problem, forbidden) and the full JSON.
 - A job with no usable result (crash, no JSON, or a result for an older head) fails its own checks and adds one `CI` entry naming the job. The other job's entries still show.
 - Check fails on any `fail` entry (`confirm` entries do not fail).
@@ -111,16 +112,18 @@ TypeScript toolchain (`stack: ts`), set up in `red-first` and `mutants`:
 `checks.R3.timing` (JSON, additive) says where the R3 time went. Per shard it comes from cargo-mutants' own `outcomes.json` phase durations (`Build`, `Test`, in seconds) and the runner's clock:
 
 - `wall_s`: wall time of the cargo-mutants run on this shard.
-- `baseline_build_s`, `baseline_test_s`: the unmutated baseline (every shard runs it again).
+- `baseline_build_s`, `baseline_test_s`: the unmutated baseline, measured once by the `baseline` job (rust) and added to the merged result once. A shard does not repeat it.
 - `mutant_build_s`, `mutant_test_s`: summed over the tested mutants. A mutant that fails to build has no `Test` phase and adds 0 to it.
 - `avg_s_per_mutant`: (`mutant_build_s` + `mutant_test_s`) / tested.
 - `slowest`: the five slowest tested mutants, `{name, s}` (`s` = its build plus test seconds).
 
-Merged (`merge`): `wall_s` is the slowest shard, since shards run in parallel. Sums and the average are kept only when every shard reported them. `shards` lists each shard's `wall_s`, so an uneven shard shows. `slowest` is the top five across shards. A field that is missing or not a number is left out, never guessed. A budget-killed run reports what finished. Entries are one per id across shards: an identical repeat collapses; a different entry that shares an id keeps both, the later one under a new id, so no fail is lost.
+Merged (`merge`): `wall_s` is the slowest shard, since shards run in parallel. Sums and the average are kept only when every shard reported them; a shard that tested nothing counts as zero, so it does not drop them. A shard that crashed does drop them. `shards` lists each shard's `wall_s`, so an uneven shard shows. `slowest` is the top five across shards. A field that is missing or not a number is left out, never guessed. A budget-killed run reports what finished. Entries are one per id across shards: an identical repeat collapses; a different entry that shares an id keeps both, the later one under a new id, so no fail is lost.
 
-The comment prints one line under the headline when R3 ran, e.g. `R3 timing: 6/15 mutants, 3.07s wall, avg 0.25s per mutant (build 1.21s, test 0.3s)`. When nothing was tested the count is left out and the line is wall time only, e.g. `R3 timing: 1.2s wall`. When R3 is partial it adds `R3 slowest:` with the five slowest. Mutant names come from the PR's code, so they pass through the comment's cell rules (pipes escaped, backticks replaced).
+The comment prints one line under the headline when R3 ran, e.g. `R3 timing: 6/15 mutants, 3.07s wall, avg 0.25s per mutant (build 1.21s, test 0.3s), baseline (build 2s, test 90s)`; the baseline part is left out when the baseline did not measure it. When nothing was tested the count is left out and the line is wall time only, e.g. `R3 timing: 1.2s wall`. When R3 is partial it adds `R3 slowest:` with the five slowest. Mutant names come from the PR's code, so they pass through the comment's cell rules (pipes escaped, backticks replaced).
 
-Baseline (rust): cargo-mutants runs the unmutated tests first. A baseline timeout is `n/a`, with a note that names the timeout, its seconds, `mutant-timeout` and `mutation-budget`: a set `mutant-timeout` also caps the baseline (cargo-mutants 27.1.0 has no baseline-only limit), so raise it above the suite time; auto leaves the baseline unlimited, and the budget does not lift the limit. A baseline test failure is `fail`. A budget hit before the baseline finished is `partial` with 0 tested; the note says the baseline did not finish.
+Baseline (rust, #46): the `baseline` job runs cargo-mutants' unmutated baseline once, before the shards. The shards run with `--baseline skip` and an explicit `--timeout` (cargo-mutants' `--baseline skip` takes no timeout of its own: without `--timeout` it falls back to 300 s with a warning). The baseline's tests are bounded by `mutation-budget` only. A baseline that does not finish in the budget is `n/a` (timed out; no shard runs; raise `mutation-budget`). A baseline test failure is `fail` (agent-fixable), with the log tail in the job log. The baseline's build and test seconds appear once in `checks.R3.timing` and in the comment line, not per shard.
+
+To measure the baseline alone, `baseline` lists the mutants (`--list --json`) and runs one of them with `--build-timeout 0`, so its build is killed at once and only the baseline runs. Shards are round-robin (`--sharding round-robin`), so their mutants are spread and no shard is empty.
 
 On any non-pass R3 (rust) the job log gets the last 40 lines of cargo-mutants' `log/baseline.log` on stderr, so the cause shows without downloading the artifact. stdout stays the JSON.
 
@@ -150,11 +153,11 @@ What to do with the numbers, in this order:
 - Permissions are `contents: read` and `pull-requests: write` only. The workflow uses `pull_request`, not `pull_request_target`, so forks get no secrets.
 - `guard` decides from git diffs only. `red-first` compiles and runs the PR's tests (the code under review) with a job-level `contents: read` token and no other secrets.
 - R1 needs the branch name: the workflow passes `github.head_ref`. A run without it skips R1 and says so.
-- `mutants` runs cargo-mutants, which builds and runs the PR's tests once per mutant, with a job-level `contents: read` token and no other secrets. Each shard also runs the unmutated baseline tests, so the cost is per shard.
+- `baseline` (rust) and `mutants` run cargo-mutants, which builds and runs the PR's tests (once for the baseline, once per mutant), with a job-level `contents: read` token and no other secrets. The unmutated baseline runs once, in `baseline` (same token), not once per shard.
 - cargo-mutants is pinned to 27.1.0 through `taiki-e/install-action` (pinned to a full SHA). If the install fails the step continues and R3 reports `n/a (env)`: a missing tool is never a pass and never a code failure.
 - ts: Stryker 10.0.0 is pinned in the workflow. The vitest and jest plugins, and the install scripts of the repo's dependencies, run PR code with a read-only token, as the tests do. Yarn berry (PnP, no `node_modules`) and `node --test` are not supported: the runner is `node_modules/.bin/vitest` or `jest`.
 - python: `mutmut` 3.8.1 is pinned in the venv. A repo that already has `[tool.mutmut]` in its `pyproject.toml` gets R3 `n/a (env)`: the runner needs `only_mutate` to limit the run to the changed files, and does not override the repo's table.
-- The shard count (4) is fixed in the `plan` job, not an input. The per-mutant timeout is auto unless `mutant-timeout` is set (see Inputs); the budget is per shard, so the wall time of R3 is about the budget, not the budget times the shards.
+- The shard count is at most 4 and at most the mutant count (rust) or changed file count (python, ts), set by the `baseline` job; a shard never runs empty. The per-mutant timeout is derived from the baseline unless `mutant-timeout` is set (see Inputs). The wall time of R3 is the baseline (once) plus about the budget per shard, not the budget times the shards.
 - R3 runs cargo-mutants in a worktree at the head, in the crate dir (`project-dir`), on `base...head` changes only (`--in-diff`; the diff is made relative to the crate dir, and result paths are mapped back to the repo root). A checkout that does not match head is not mutated.
 - The red commit is checked out as a git worktree; the caller's checkout is not moved.
 
