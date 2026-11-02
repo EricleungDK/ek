@@ -133,14 +133,18 @@ def caller_entries(callers, inputs):
 def trial(repo, head, stack, project_dir, runner):
     """Run the whole suite and the mutation tool's --version at head. Returns (trial dict, entries)."""
     adapter = ADAPTERS[stack]()
-    with red.worktree(repo, head) as wt:
-        adapter.worktree_setup(repo, wt, project_dir)
-        crate = os.path.join(wt, project_dir)
-        cmd = adapter.test_cmd_in(crate)
-        rc, out = runner(shlex.split(cmd), crate)
-        verdict = adapter.outcome(rc, out)
-        tool = MUTATION_TOOL[stack]
-        tool_rc, _ = runner(shlex.split(tool) + ["--version"], crate)
+    try:
+        with red.worktree(repo, head) as wt:
+            adapter.worktree_setup(repo, wt, project_dir)
+            crate = os.path.join(wt, project_dir)
+            cmd = adapter.test_cmd_in(crate)
+            rc, out = runner(shlex.split(cmd), crate)
+            verdict = adapter.outcome(rc, out)
+            tool = MUTATION_TOOL[stack]
+            tool_rc, _ = runner(shlex.split(tool) + ["--version"], crate)
+    except engine.Die as e:  # read-only .git (sandbox): the static findings still stand
+        return {"tests": "unavailable"}, [engine.entry("doctor", "", 0, "trial", "env", "fail", f"trial could not run: {e}",
+                                                       "rerun outside the sandbox; --no-trial reads the tree only", NOT_SKIP)]
     result = {"tests": verdict, "command": cmd, "mutation_tool": "absent" if tool_rc is None else "present"}
     if verdict in ("pass", "none"):
         return result, []

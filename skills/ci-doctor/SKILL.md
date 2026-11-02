@@ -49,4 +49,4 @@ Commit (doctor reads HEAD), then rerun `DOCTOR`. Done when it exits 0. An entry 
 
 Push and open the PR. Body: doctor's `summary` at the branch head, the `trial` verdicts, each input and why. Say the PR's own mech-review check goes red `needs-human` by design, and the owner merges.
 
-Report the PR URL via finish.
+Report the PR URL via finish. Stopped before the PR (blocked, no remote, asked to) → the final report itself carries the full caller YAML and PR body.
