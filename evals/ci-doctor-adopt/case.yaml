@@ -1,0 +1,8 @@
+schema_version: "1.1"
+name: ci-doctor-adopt
+context:
+  scaffold_script: setup.sh
+---
+max_turns: 14
+allowed_tools: [Skill, Read, Bash, Write, Edit]
+runs: 2

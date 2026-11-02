@@ -1,0 +1,1 @@
+Set up mech-review CI on this repo. This sandbox has no GitHub remote, so stop where you would open the PR: show me the caller workflow and the PR body. protected-paths: just `.github/**`. agent-branch-prefix: `claude/`.
