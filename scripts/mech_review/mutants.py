@@ -402,8 +402,8 @@ class CargoMutants:
                                         "a mutation check that did not run")])[0]])
                 if not os.path.isfile(os.path.join(crate, "Cargo.toml")):
                     return _payload(False, 0, None, None, _check("n/a", f"no Cargo.toml in {project_dir}: set project-dir"), [])
-                lrc, ltext = runner(shlex.split(cmd) + ["--list", "--json", "--in-diff", diff_path] + relative
-                                    + ["--colors", "never"], crate, PROBE_TIMEOUT)
+                lrc, ltext = runner(shlex.split(cmd) + ["--list", "--json", "--in-diff", diff_path, "--colors", "never"],
+                                    crate, PROBE_TIMEOUT)
                 if lrc != 0:
                     return _payload(False, 0, None, None, _check("n/a", f"cargo-mutants --list failed (env): "
                                                                          f"{_first_line(ltext) or f'exit {lrc}'}; see the job log"), [])
@@ -414,9 +414,8 @@ class CargoMutants:
                                                                          f"(env): {e}"), [])
                 if mutants == 0:
                     return _payload(False, 0, 0, None, _check("pass", "0 mutants in the diff", 0, 0), [])
-                argv = shlex.split(cmd) + ["--in-diff", diff_path] + relative + ["--build-timeout", "0", "--sharding",
-                                                                                 "round-robin", "--shard", f"0/{mutants}",
-                                                                                 "--colors", "never", "--output", out_parent]
+                argv = shlex.split(cmd) + ["--in-diff", diff_path, "--build-timeout", "0", "--sharding", "round-robin",
+                                           "--shard", f"0/{mutants}", "--colors", "never", "--output", out_parent]
                 t0 = time.monotonic()
                 rc, text = runner(argv, crate, budget)
                 wall = time.monotonic() - t0
