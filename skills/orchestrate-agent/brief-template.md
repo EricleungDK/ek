@@ -15,7 +15,7 @@ Known context: <recent commits that may be involved, suspects, what was ruled ou
 Environment: <how to run tests here: env vars, binaries, build step first>.
 
 Tasks:
-1. Build: `test(red)` commit first (failing test for the outcome), then the implementation, one slice at a time.
+1. Build: `test(red)` commit first (failing test for the outcome), then the implementation, one slice at a time. Tests that pin existing behaviour go in after the `test(red)` commit.
    Fix: reproduce and capture the actual error; classify it with the failure-triage skill; check new vs pre-existing on the parent commit in a temp worktree (remove it after); fix the root cause red first (test-only fix only when the test is wrong).
 2. Stay in your files; a needed change elsewhere goes in your report, not your diff.
 3. Keep guards and checks at full strength. Forbidden: delete, skip or weaken a test; change an expected value to match output; suppress a lint without reason; edit protected paths; pass a test before the fix. Full table: testing standard §3. No waivers.

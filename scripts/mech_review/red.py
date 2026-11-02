@@ -186,7 +186,8 @@ def r1(repo, mb, head, adapter, test_globs, head_branch, agent_prefix, cmd, runn
             elif verdict == "pass":
                 entries.append(entry("R1", path, line, f"red-pass:{name}", "agent-fixable", "fail",
                                      f"new test `{name}` passes at the red commit",
-                                     "write the test so it fails for the ticket's reason before the fix",
+                                     "write the test so it fails for the ticket's reason before the fix; "
+                                     "a test pinning existing behaviour goes after the `test(red)` commit",
                                      "no failing test(red) commit"))
             else:
                 extra = no_manifest_hint(adapter, wt, project_dir) if verdict == "error" else ""
