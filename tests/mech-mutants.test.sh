@@ -406,18 +406,16 @@ sys.exit(1 if FAILS else 0)
 PY
 eq "$?" 0 "job merge: mutants owns R3; absent is skipped; crashed is fail"
 
-# ---- plan: does the mutants job run, and over how many shards (matrix). Cheap: git only, no toolchain ----
+# ---- plan: does the mutants job run (git only, no toolchain). The shard count now comes from the baseline step (#46) ----
 mrepo planprod
-out=$(python3 -I "$MR" plan --repo "$R" --base "$B" --head "$H" --stack rust --test-paths 'tests/**' --shards 4); rc=$?
+out=$(python3 -I "$MR" plan --repo "$R" --base "$B" --head "$H" --stack rust --test-paths 'tests/**'); rc=$?
 eq "$rc" 0 "plan: prod change exit 0"
-eq "$(jq -c '{run,count,shards}' <<<"$out")" '{"run":true,"count":4,"shards":[0,1,2,3]}' "plan: prod change: 4 shards 0..3"
+eq "$(jq -c . <<<"$out")" '{"run":true}' "plan: prod change: run, nothing else (#46)"
 mrepo plandocs tests-only
-out=$(python3 -I "$MR" plan --repo "$R" --base "$B" --head "$H" --stack rust --test-paths 'tests/**' --shards 4)
-eq "$(jq -c '{run,count,shards}' <<<"$out")" '{"run":false,"count":1,"shards":[0]}' "plan: no prod change: not run, one placeholder shard"
 out=$(python3 -I "$MR" plan --repo "$R" --base "$B" --head "$H" --stack rust --test-paths 'tests/**')
-eq "$(jq -c '{run,count}' <<<"$out")" '{"run":false,"count":1}' "plan: default one shard"
-python3 -I "$MR" plan --repo "$R" --base "$B" --head "$H" --stack rust --shards 0 >/dev/null 2>&1; rc=$?
-eq "$rc" 2 "plan: --shards 0 is a usage error"
+eq "$(jq -c . <<<"$out")" '{"run":false}' "plan: no prod change: not run (#46: no placeholder shard)"
+python3 -I "$MR" plan --repo "$R" --base "$B" --head "$H" --stack rust --shards 4 >/dev/null 2>&1; rc=$?
+eq "$rc" 2 "plan: no --shards any more (the count comes from baseline): usage error"
 
 # merge needs no git checkout when given full SHAs (the report job has none)
 out=$(python3 -I "$MR" merge --repo /no/such/checkout --base "$B" --head "$H" --stack rust --shards 2 --envelope 0="$MG/s0.json" --envelope 1="$MG/s1.json"); rc=$?
@@ -711,13 +709,13 @@ TG = ["tests/**"]
 
 chk, ents = M.verdict(os.path.join(FX, "baseline-timeout"), 4, "", A, TG, wall_s=1.5, timeout_s=1)
 check("baseline timeout: R3 n/a, not fail", chk["status"] == "n/a", str(chk))
-check("baseline timeout: note names the timeout, the seconds, mutant-timeout and mutation-budget",
-      all(w in chk["note"] for w in ("timed out", "1s", "mutant-timeout", "mutation-budget")), chk["note"])
+check("baseline timeout: note names the timeout, the seconds and mutation-budget (#46: not mutant-timeout)",
+      all(w in chk["note"] for w in ("timed out", "1s", "mutation-budget")) and "mutant-timeout" not in chk["note"], chk["note"])
 check("baseline timeout: no fail entry", ents == [], str(ents))
 check("baseline timeout: not read as baseline tests fail", "baseline tests fail" not in chk["note"], chk["note"])
 chk, ents = M.verdict(os.path.join(FX, "baseline-timeout"), 4, "", A, TG, wall_s=1.5)
-check("baseline timeout, seconds unknown: still n/a with mutant-timeout named",
-      chk["status"] == "n/a" and "mutant-timeout" in chk["note"] and ents == [], str(chk))
+check("baseline timeout, seconds unknown: still n/a with mutation-budget named",
+      chk["status"] == "n/a" and "mutation-budget" in chk["note"] and ents == [], str(chk))
 
 chk, ents = M.verdict(os.path.join(FX, "baseline-failure"), 4, "", A, TG, wall_s=3.0)
 check("baseline failure (real): fail, one agent-fixable baseline entry", chk["status"] == "fail" and len(ents) == 1

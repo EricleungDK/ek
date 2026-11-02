@@ -1,0 +1,482 @@
+[
+  {
+    "diff": "--- src/lib.rs\n+++ replace add -> i32 with 0\n@@ -1,3 +1,3 @@\n-pub fn add(a: i32, b: i32) -> i32 { a + b }\n+pub fn add(a: i32, b: i32) -> i32 { 0 /* ~ changed by cargo-mutants ~ */ }\n pub fn sub(a: i32, b: i32) -> i32 { a - b }\n pub fn neg(a: i32) -> i32 { 0 - a }\n",
+    "file": "src/lib.rs",
+    "function": {
+      "function_name": "add",
+      "return_type": "-> i32",
+      "span": {
+        "end": {
+          "column": 44,
+          "line": 1
+        },
+        "start": {
+          "column": 1,
+          "line": 1
+        }
+      }
+    },
+    "genre": "FnValue",
+    "name": "src/lib.rs:1:37: replace add -> i32 with 0",
+    "package": "x",
+    "replacement": "0",
+    "span": {
+      "end": {
+        "column": 42,
+        "line": 1
+      },
+      "start": {
+        "column": 37,
+        "line": 1
+      }
+    }
+  },
+  {
+    "diff": "--- src/lib.rs\n+++ replace add -> i32 with 1\n@@ -1,3 +1,3 @@\n-pub fn add(a: i32, b: i32) -> i32 { a + b }\n+pub fn add(a: i32, b: i32) -> i32 { 1 /* ~ changed by cargo-mutants ~ */ }\n pub fn sub(a: i32, b: i32) -> i32 { a - b }\n pub fn neg(a: i32) -> i32 { 0 - a }\n",
+    "file": "src/lib.rs",
+    "function": {
+      "function_name": "add",
+      "return_type": "-> i32",
+      "span": {
+        "end": {
+          "column": 44,
+          "line": 1
+        },
+        "start": {
+          "column": 1,
+          "line": 1
+        }
+      }
+    },
+    "genre": "FnValue",
+    "name": "src/lib.rs:1:37: replace add -> i32 with 1",
+    "package": "x",
+    "replacement": "1",
+    "span": {
+      "end": {
+        "column": 42,
+        "line": 1
+      },
+      "start": {
+        "column": 37,
+        "line": 1
+      }
+    }
+  },
+  {
+    "diff": "--- src/lib.rs\n+++ replace add -> i32 with -1\n@@ -1,3 +1,3 @@\n-pub fn add(a: i32, b: i32) -> i32 { a + b }\n+pub fn add(a: i32, b: i32) -> i32 { -1 /* ~ changed by cargo-mutants ~ */ }\n pub fn sub(a: i32, b: i32) -> i32 { a - b }\n pub fn neg(a: i32) -> i32 { 0 - a }\n",
+    "file": "src/lib.rs",
+    "function": {
+      "function_name": "add",
+      "return_type": "-> i32",
+      "span": {
+        "end": {
+          "column": 44,
+          "line": 1
+        },
+        "start": {
+          "column": 1,
+          "line": 1
+        }
+      }
+    },
+    "genre": "FnValue",
+    "name": "src/lib.rs:1:37: replace add -> i32 with -1",
+    "package": "x",
+    "replacement": "-1",
+    "span": {
+      "end": {
+        "column": 42,
+        "line": 1
+      },
+      "start": {
+        "column": 37,
+        "line": 1
+      }
+    }
+  },
+  {
+    "diff": "--- src/lib.rs\n+++ replace + with - in add\n@@ -1,3 +1,3 @@\n-pub fn add(a: i32, b: i32) -> i32 { a + b }\n+pub fn add(a: i32, b: i32) -> i32 { a - /* ~ changed by cargo-mutants ~ */ b }\n pub fn sub(a: i32, b: i32) -> i32 { a - b }\n pub fn neg(a: i32) -> i32 { 0 - a }\n",
+    "file": "src/lib.rs",
+    "function": {
+      "function_name": "add",
+      "return_type": "-> i32",
+      "span": {
+        "end": {
+          "column": 44,
+          "line": 1
+        },
+        "start": {
+          "column": 1,
+          "line": 1
+        }
+      }
+    },
+    "genre": "BinaryOperator",
+    "name": "src/lib.rs:1:39: replace + with - in add",
+    "package": "x",
+    "replacement": "-",
+    "span": {
+      "end": {
+        "column": 40,
+        "line": 1
+      },
+      "start": {
+        "column": 39,
+        "line": 1
+      }
+    }
+  },
+  {
+    "diff": "--- src/lib.rs\n+++ replace + with * in add\n@@ -1,3 +1,3 @@\n-pub fn add(a: i32, b: i32) -> i32 { a + b }\n+pub fn add(a: i32, b: i32) -> i32 { a * /* ~ changed by cargo-mutants ~ */ b }\n pub fn sub(a: i32, b: i32) -> i32 { a - b }\n pub fn neg(a: i32) -> i32 { 0 - a }\n",
+    "file": "src/lib.rs",
+    "function": {
+      "function_name": "add",
+      "return_type": "-> i32",
+      "span": {
+        "end": {
+          "column": 44,
+          "line": 1
+        },
+        "start": {
+          "column": 1,
+          "line": 1
+        }
+      }
+    },
+    "genre": "BinaryOperator",
+    "name": "src/lib.rs:1:39: replace + with * in add",
+    "package": "x",
+    "replacement": "*",
+    "span": {
+      "end": {
+        "column": 40,
+        "line": 1
+      },
+      "start": {
+        "column": 39,
+        "line": 1
+      }
+    }
+  },
+  {
+    "diff": "--- src/lib.rs\n+++ replace sub -> i32 with 0\n@@ -1,3 +1,3 @@\n pub fn add(a: i32, b: i32) -> i32 { a + b }\n-pub fn sub(a: i32, b: i32) -> i32 { a - b }\n+pub fn sub(a: i32, b: i32) -> i32 { 0 /* ~ changed by cargo-mutants ~ */ }\n pub fn neg(a: i32) -> i32 { 0 - a }\n",
+    "file": "src/lib.rs",
+    "function": {
+      "function_name": "sub",
+      "return_type": "-> i32",
+      "span": {
+        "end": {
+          "column": 44,
+          "line": 2
+        },
+        "start": {
+          "column": 1,
+          "line": 2
+        }
+      }
+    },
+    "genre": "FnValue",
+    "name": "src/lib.rs:2:37: replace sub -> i32 with 0",
+    "package": "x",
+    "replacement": "0",
+    "span": {
+      "end": {
+        "column": 42,
+        "line": 2
+      },
+      "start": {
+        "column": 37,
+        "line": 2
+      }
+    }
+  },
+  {
+    "diff": "--- src/lib.rs\n+++ replace sub -> i32 with 1\n@@ -1,3 +1,3 @@\n pub fn add(a: i32, b: i32) -> i32 { a + b }\n-pub fn sub(a: i32, b: i32) -> i32 { a - b }\n+pub fn sub(a: i32, b: i32) -> i32 { 1 /* ~ changed by cargo-mutants ~ */ }\n pub fn neg(a: i32) -> i32 { 0 - a }\n",
+    "file": "src/lib.rs",
+    "function": {
+      "function_name": "sub",
+      "return_type": "-> i32",
+      "span": {
+        "end": {
+          "column": 44,
+          "line": 2
+        },
+        "start": {
+          "column": 1,
+          "line": 2
+        }
+      }
+    },
+    "genre": "FnValue",
+    "name": "src/lib.rs:2:37: replace sub -> i32 with 1",
+    "package": "x",
+    "replacement": "1",
+    "span": {
+      "end": {
+        "column": 42,
+        "line": 2
+      },
+      "start": {
+        "column": 37,
+        "line": 2
+      }
+    }
+  },
+  {
+    "diff": "--- src/lib.rs\n+++ replace sub -> i32 with -1\n@@ -1,3 +1,3 @@\n pub fn add(a: i32, b: i32) -> i32 { a + b }\n-pub fn sub(a: i32, b: i32) -> i32 { a - b }\n+pub fn sub(a: i32, b: i32) -> i32 { -1 /* ~ changed by cargo-mutants ~ */ }\n pub fn neg(a: i32) -> i32 { 0 - a }\n",
+    "file": "src/lib.rs",
+    "function": {
+      "function_name": "sub",
+      "return_type": "-> i32",
+      "span": {
+        "end": {
+          "column": 44,
+          "line": 2
+        },
+        "start": {
+          "column": 1,
+          "line": 2
+        }
+      }
+    },
+    "genre": "FnValue",
+    "name": "src/lib.rs:2:37: replace sub -> i32 with -1",
+    "package": "x",
+    "replacement": "-1",
+    "span": {
+      "end": {
+        "column": 42,
+        "line": 2
+      },
+      "start": {
+        "column": 37,
+        "line": 2
+      }
+    }
+  },
+  {
+    "diff": "--- src/lib.rs\n+++ replace - with + in sub\n@@ -1,3 +1,3 @@\n pub fn add(a: i32, b: i32) -> i32 { a + b }\n-pub fn sub(a: i32, b: i32) -> i32 { a - b }\n+pub fn sub(a: i32, b: i32) -> i32 { a + /* ~ changed by cargo-mutants ~ */ b }\n pub fn neg(a: i32) -> i32 { 0 - a }\n",
+    "file": "src/lib.rs",
+    "function": {
+      "function_name": "sub",
+      "return_type": "-> i32",
+      "span": {
+        "end": {
+          "column": 44,
+          "line": 2
+        },
+        "start": {
+          "column": 1,
+          "line": 2
+        }
+      }
+    },
+    "genre": "BinaryOperator",
+    "name": "src/lib.rs:2:39: replace - with + in sub",
+    "package": "x",
+    "replacement": "+",
+    "span": {
+      "end": {
+        "column": 40,
+        "line": 2
+      },
+      "start": {
+        "column": 39,
+        "line": 2
+      }
+    }
+  },
+  {
+    "diff": "--- src/lib.rs\n+++ replace - with / in sub\n@@ -1,3 +1,3 @@\n pub fn add(a: i32, b: i32) -> i32 { a + b }\n-pub fn sub(a: i32, b: i32) -> i32 { a - b }\n+pub fn sub(a: i32, b: i32) -> i32 { a / /* ~ changed by cargo-mutants ~ */ b }\n pub fn neg(a: i32) -> i32 { 0 - a }\n",
+    "file": "src/lib.rs",
+    "function": {
+      "function_name": "sub",
+      "return_type": "-> i32",
+      "span": {
+        "end": {
+          "column": 44,
+          "line": 2
+        },
+        "start": {
+          "column": 1,
+          "line": 2
+        }
+      }
+    },
+    "genre": "BinaryOperator",
+    "name": "src/lib.rs:2:39: replace - with / in sub",
+    "package": "x",
+    "replacement": "/",
+    "span": {
+      "end": {
+        "column": 40,
+        "line": 2
+      },
+      "start": {
+        "column": 39,
+        "line": 2
+      }
+    }
+  },
+  {
+    "diff": "--- src/lib.rs\n+++ replace neg -> i32 with 0\n@@ -1,3 +1,3 @@\n pub fn add(a: i32, b: i32) -> i32 { a + b }\n pub fn sub(a: i32, b: i32) -> i32 { a - b }\n-pub fn neg(a: i32) -> i32 { 0 - a }\n+pub fn neg(a: i32) -> i32 { 0 /* ~ changed by cargo-mutants ~ */ }\n",
+    "file": "src/lib.rs",
+    "function": {
+      "function_name": "neg",
+      "return_type": "-> i32",
+      "span": {
+        "end": {
+          "column": 36,
+          "line": 3
+        },
+        "start": {
+          "column": 1,
+          "line": 3
+        }
+      }
+    },
+    "genre": "FnValue",
+    "name": "src/lib.rs:3:29: replace neg -> i32 with 0",
+    "package": "x",
+    "replacement": "0",
+    "span": {
+      "end": {
+        "column": 34,
+        "line": 3
+      },
+      "start": {
+        "column": 29,
+        "line": 3
+      }
+    }
+  },
+  {
+    "diff": "--- src/lib.rs\n+++ replace neg -> i32 with 1\n@@ -1,3 +1,3 @@\n pub fn add(a: i32, b: i32) -> i32 { a + b }\n pub fn sub(a: i32, b: i32) -> i32 { a - b }\n-pub fn neg(a: i32) -> i32 { 0 - a }\n+pub fn neg(a: i32) -> i32 { 1 /* ~ changed by cargo-mutants ~ */ }\n",
+    "file": "src/lib.rs",
+    "function": {
+      "function_name": "neg",
+      "return_type": "-> i32",
+      "span": {
+        "end": {
+          "column": 36,
+          "line": 3
+        },
+        "start": {
+          "column": 1,
+          "line": 3
+        }
+      }
+    },
+    "genre": "FnValue",
+    "name": "src/lib.rs:3:29: replace neg -> i32 with 1",
+    "package": "x",
+    "replacement": "1",
+    "span": {
+      "end": {
+        "column": 34,
+        "line": 3
+      },
+      "start": {
+        "column": 29,
+        "line": 3
+      }
+    }
+  },
+  {
+    "diff": "--- src/lib.rs\n+++ replace neg -> i32 with -1\n@@ -1,3 +1,3 @@\n pub fn add(a: i32, b: i32) -> i32 { a + b }\n pub fn sub(a: i32, b: i32) -> i32 { a - b }\n-pub fn neg(a: i32) -> i32 { 0 - a }\n+pub fn neg(a: i32) -> i32 { -1 /* ~ changed by cargo-mutants ~ */ }\n",
+    "file": "src/lib.rs",
+    "function": {
+      "function_name": "neg",
+      "return_type": "-> i32",
+      "span": {
+        "end": {
+          "column": 36,
+          "line": 3
+        },
+        "start": {
+          "column": 1,
+          "line": 3
+        }
+      }
+    },
+    "genre": "FnValue",
+    "name": "src/lib.rs:3:29: replace neg -> i32 with -1",
+    "package": "x",
+    "replacement": "-1",
+    "span": {
+      "end": {
+        "column": 34,
+        "line": 3
+      },
+      "start": {
+        "column": 29,
+        "line": 3
+      }
+    }
+  },
+  {
+    "diff": "--- src/lib.rs\n+++ replace - with + in neg\n@@ -1,3 +1,3 @@\n pub fn add(a: i32, b: i32) -> i32 { a + b }\n pub fn sub(a: i32, b: i32) -> i32 { a - b }\n-pub fn neg(a: i32) -> i32 { 0 - a }\n+pub fn neg(a: i32) -> i32 { 0 + /* ~ changed by cargo-mutants ~ */ a }\n",
+    "file": "src/lib.rs",
+    "function": {
+      "function_name": "neg",
+      "return_type": "-> i32",
+      "span": {
+        "end": {
+          "column": 36,
+          "line": 3
+        },
+        "start": {
+          "column": 1,
+          "line": 3
+        }
+      }
+    },
+    "genre": "BinaryOperator",
+    "name": "src/lib.rs:3:31: replace - with + in neg",
+    "package": "x",
+    "replacement": "+",
+    "span": {
+      "end": {
+        "column": 32,
+        "line": 3
+      },
+      "start": {
+        "column": 31,
+        "line": 3
+      }
+    }
+  },
+  {
+    "diff": "--- src/lib.rs\n+++ replace - with / in neg\n@@ -1,3 +1,3 @@\n pub fn add(a: i32, b: i32) -> i32 { a + b }\n pub fn sub(a: i32, b: i32) -> i32 { a - b }\n-pub fn neg(a: i32) -> i32 { 0 - a }\n+pub fn neg(a: i32) -> i32 { 0 / /* ~ changed by cargo-mutants ~ */ a }\n",
+    "file": "src/lib.rs",
+    "function": {
+      "function_name": "neg",
+      "return_type": "-> i32",
+      "span": {
+        "end": {
+          "column": 36,
+          "line": 3
+        },
+        "start": {
+          "column": 1,
+          "line": 3
+        }
+      }
+    },
+    "genre": "BinaryOperator",
+    "name": "src/lib.rs:3:31: replace - with / in neg",
+    "package": "x",
+    "replacement": "/",
+    "span": {
+      "end": {
+        "column": 32,
+        "line": 3
+      },
+      "start": {
+        "column": 31,
+        "line": 3
+      }
+    }
+  }
+]

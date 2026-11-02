@@ -108,10 +108,11 @@ job_perm_lines = [n for n, l in enumerate(W) if re.match(r"\s+permissions:", l)]
 red_has_perm = any(l.strip() == "permissions:" for l in (block(jobs, "red-first") or []))
 mut_job = block(jobs, "mutants") or []
 mut_has_perm = any(l.strip() == "permissions:" for l in mut_job)
-check("reusable: job-level permissions only on red-first and mutants (PR code jobs; guard, plan, report inherit top-level)",
-      red_has_perm and mut_has_perm and len(job_perm_lines) == 2, f"job-level permissions lines: {job_perm_lines}")
-check("reusable: jobs are exactly guard + red-first + report + plan + mutants",
-      child_keys(jobs) == {"guard", "red-first", "report", "plan", "mutants"}, str(child_keys(jobs)))
+base_has_perm = any(l.strip() == "permissions:" for l in (block(jobs, "baseline") or []))
+check("reusable: job-level permissions only on red-first, baseline and mutants (PR code jobs; guard, plan, report inherit top-level)",
+      red_has_perm and mut_has_perm and base_has_perm and len(job_perm_lines) == 3, f"job-level permissions lines: {job_perm_lines}")
+check("reusable: jobs are exactly guard + red-first + report + plan + baseline + mutants (#46)",
+      child_keys(jobs) == {"guard", "red-first", "report", "plan", "baseline", "mutants"}, str(child_keys(jobs)))
 guard = block(jobs, "guard") or []
 red = block(jobs, "red-first") or []
 report = block(jobs, "report") or []
@@ -133,9 +134,9 @@ check("guard: uploads the JSON artifact", "upload-artifact" in gt)
 check("guard: artifact overwrites on re-run", re.search(r"overwrite:\s*true", gt) is not None)
 check("report: downloads the JSON artifact", "download-artifact" in text(report))
 check("report: posts via mech-comment.py", "mech-comment.py" in text(report))
-check("report: downloads the guard, red-first and mutants artifacts",
-      text(report).count("download-artifact@v4") == 3 and "mech-review-red-json" in text(report),
-      text(report))
+check("report: downloads the guard, red-first, baseline and mutants artifacts (#46)",
+      text(report).count("download-artifact@v4") == 4 and "mech-review-red-json" in text(report)
+      and "mech-review-baseline-json" in text(report), text(report))
 check("report: named envelopes, guard as r2 and red-first as red",
       "--envelope r2=" in text(report) and "--envelope red=" in text(report), text(report))
 
@@ -185,16 +186,44 @@ check("plan: runs mech-review.py plan", "mech-review.py" in pt and " plan" in pt
 check("plan: caller checkout at PR head with full history",
       "github.event.pull_request.head.sha" in pt and re.search(r"fetch-depth:\s*0", pt) is not None)
 check("plan: ek checkout at job.workflow_sha", re.search(r"ref:\s*\$\{\{\s*job\.workflow_sha\s*\}\}", pt) is not None)
-check("plan: exposes run, count and shards outputs",
-      all(re.search(rf"^\s+{k}:\s*\$\{{\{{\s*steps\.\w+\.outputs\.{k}\s*\}}\}}", pt, re.M) for k in ("run", "count", "shards")), pt)
+check("plan: exposes the run output only (#46: the shard count comes from baseline)",
+      re.search(rf"^\s+run:\s*\$\{{\{{\s*steps\.\w+\.outputs\.run\s*\}}\}}", pt, re.M) is not None
+      and "count:" not in pt and "shards:" not in pt, pt)
 check("plan: no language toolchain", re.search(r"setup-|toolchain|cargo|rustup", pt) is None)
-check("plan: shard count from the mutation shards setting", "--shards" in pt)
+check("plan: no --shards (no mutant count in git)", "--shards" not in pt, pt)
 
-check("mutants: needs plan", (value(mu, "needs") or "").strip("[]") == "plan", str(value(mu, "needs")))
-check("mutants: runs only when the plan says so", "needs.plan.outputs.run == 'true'" in (value(mu, "if") or ""),
+bl = block(jobs, "baseline") or []
+bt = text(bl)
+check("baseline: job present", bool(bl))
+check("baseline: needs plan", (value(bl, "needs") or "").strip("[]") == "plan", str(value(bl, "needs")))
+check("baseline: runs only when the plan says so", "needs.plan.outputs.run == 'true'" in (value(bl, "if") or ""),
+      str(value(bl, "if")))
+check("baseline: job-level permissions exactly contents read (it runs PR code for rust)",
+      {k: value(block(bl, "permissions") or [], k) for k in child_keys(block(bl, "permissions") or [])} == {"contents": "read"},
+      str(block(bl, "permissions")))
+check("baseline: caller checkout at PR head with full history",
+      "github.event.pull_request.head.sha" in bt and re.search(r"fetch-depth:\s*0", bt) is not None)
+check("baseline: ek checkout at job.workflow_sha", re.search(r"ref:\s*\$\{\{\s*job\.workflow_sha\s*\}\}", bt) is not None)
+check("baseline: runs mech-review.py baseline", "mech-review.py" in bt and " baseline" in bt, bt)
+check("baseline: shard count from the shards setting (4)", "MUTATION_SHARDS" in bt or "--shards" in bt, bt)
+check("baseline: budget from the mutation-budget input", "inputs.mutation-budget" in bt and "--mutation-budget" in bt, bt)
+check("baseline: does not read mutant-timeout (a set value never caps the baseline)", "mutant-timeout" not in bt, bt)
+check("baseline: outputs run, count, shards and timeout",
+      all(re.search(rf"^\s+{k}:\s*\$\{{\{{\s*steps\.\w+\.outputs\.{k}\s*\}}\}}", bt, re.M)
+          for k in ("run", "count", "shards", "timeout")), bt)
+check("baseline: rust toolchain pinned to a full SHA, for the rust stack",
+      "dtolnay/rust-toolchain@" in bt and "inputs.stack == 'rust'" in bt, bt)
+check("baseline: cargo-mutants pinned to 27.1.0, install failure is not a stop", "cargo-mutants@27.1.0" in bt
+      and "continue-on-error: true" in bt, bt)
+check("baseline: uploads its JSON artifact", "mech-review-baseline-json" in bt and "upload-artifact" in bt, bt)
+check("baseline: no pull_request_target", "pull_request_target" not in bt)
+
+check("mutants: needs plan and baseline", {"plan", "baseline"} <= set(re.split(r"[\s,\[\]]+", (value(mu, "needs") or ""))),
+      str(value(mu, "needs")))
+check("mutants: runs only when the baseline says shards run (#46)", "needs.baseline.outputs.run == 'true'" in (value(mu, "if") or ""),
       str(value(mu, "if")))
 strategy = block(mu, "strategy") or []
-check("mutants: shard matrix from the plan output", "fromJSON(needs.plan.outputs.shards)" in text(strategy), text(strategy))
+check("mutants: shard matrix from the baseline output", "fromJSON(needs.baseline.outputs.shards)" in text(strategy), text(strategy))
 check("mutants: fail-fast off (one shard's failure does not cancel the others)", value(strategy, "fail-fast") == "false",
       str(value(strategy, "fail-fast")))
 mperm = block(mu, "permissions") or []
@@ -237,12 +266,12 @@ check("mutants: install failure does not stop the run (engine reports n/a env)",
 run_step = step(mu, "R3 mutation on the diff (shard)")
 rs = "\n".join(run_step)
 check("mutants: runs mech-review.py mutants", "mech-review.py" in rs and " mutants" in rs, rs)
-check("mutants: shard flag from the matrix and the plan count",
-      "matrix.shard" in rs and "needs.plan.outputs.count" in rs, rs)
+check("mutants: shard flag from the matrix and the baseline's shard count",
+      "matrix.shard" in rs and "needs.baseline.outputs.count" in rs, rs)
 check("mutants: budget from the mutation-budget input", "inputs.mutation-budget" in mt and "--mutation-budget" in rs, rs)
-check("mutants: mutant-timeout from the input via env, passed only when set",
-      "MUTANT_TIMEOUT: ${{ inputs.mutant-timeout }}" in rs and '--mutant-timeout "$MUTANT_TIMEOUT"' in rs
-      and 'if [ -n "$MUTANT_TIMEOUT" ]' in rs, rs)
+check("mutants: mutant-timeout from the input, else the baseline's derived one (#46), via env, passed only when set",
+      "MUTANT_TIMEOUT: ${{ inputs.mutant-timeout || needs.baseline.outputs.timeout }}" in mt
+      and '--mutant-timeout "$MUTANT_TIMEOUT"' in rs and 'if [ -n "$MUTANT_TIMEOUT" ]' in rs, rs)
 check("mutants: rc above 1 is no result (crash surfaces at report)", "rc -gt 1" in rs or "-gt 1" in rs, rs)
 up = step(mu, "upload mutants result")
 check("mutants: uploads its JSON artifact per shard", "mech-review-mutants-${{ matrix.shard }}" in "\n".join(up)
@@ -252,8 +281,8 @@ check("mutation-budget: used by the mutants job, not UNUSED",
       "UNUSED" not in " ".join(block(inputs, "mutation-budget") or []) and value(block(inputs, "mutation-budget") or [], "default") == "10",
       str(block(inputs, "mutation-budget")))
 
-check("report: needs plan and mutants",
-      {"plan", "mutants"} <= set(re.split(r"[\s,\[\]]+", needs)), f"needs={needs!r}")
+check("report: needs plan, baseline and mutants",
+      {"plan", "baseline", "mutants"} <= set(re.split(r"[\s,\[\]]+", needs)), f"needs={needs!r}")
 check("report: downloads the mutants shard artifacts (pattern)", "mech-review-mutants-*" in text(report), text(report))
 check("report: merges the shards with the merge subcommand", "mech-review.py" in text(report) and " merge" in text(report), text(report))
 check("report: mutants envelope only when the plan ran it, a crash is still reported",
@@ -313,6 +342,12 @@ if local:
     check("self: test-paths tests/**", value(w, "test-paths") == "tests/**", str(value(w, "test-paths")))
     check("self: protected-paths .github/**", value(w, "protected-paths") == ".github/**",
           str(value(w, "protected-paths")))
+
+# ---- #46 docs: the baseline runs once; a set mutant-timeout does not cap it ----
+check("workflow text: a set mutant-timeout no longer caps the baseline", "also caps the baseline" not in text(W),
+      [l for l in W if "caps the baseline" in l])
+check("docs: the baseline job is named in the jobs list", "`baseline`" in docs_text, "")
+check("docs: a set mutant-timeout does not cap the baseline", "also caps the baseline" not in docs_text, "")
 
 print("")
 sys.exit(1 if FAILS else 0)
