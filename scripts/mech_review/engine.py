@@ -314,9 +314,19 @@ def _partial_label(check, name):
     return f"{name} ({check['tested']}/{total})"
 
 
+def _merge_base(repo, base_ref, head_ref):
+    base = resolve(repo, base_ref)
+    head = resolve(repo, head_ref)
+    try:
+        return base, head, git(repo, "merge-base", base, head).strip()
+    except Die:
+        raise Die(f"no merge base for {base_ref} and {head_ref}")
+
+
 def plan(repo, base_ref, head_ref, stack, test_globs, shards):
     """Mutants job plan (git only, no toolchain): run only when a production file changed. The matrix is
-    shards 0..N-1 when it runs, one placeholder shard otherwise (the job is skipped by its `if`)."""
+    shards 0..N-1 when it runs, one placeholder shard otherwise (the job is skipped by its `if`). The workflow reads
+    only `run`: the real shard count is the baseline step's (#46)."""
     from . import red  # lazy: red imports this module
     base = resolve(repo, base_ref)
     head = resolve(repo, head_ref)
@@ -327,6 +337,21 @@ def plan(repo, base_ref, head_ref, stack, test_globs, shards):
     run_r3 = bool(red.prod_changes(repo, mb, head, ADAPTERS[stack](), test_globs))
     count = shards if run_r3 else 1
     return {"run": run_r3, "count": count, "shards": list(range(count))}
+
+
+def baseline(repo, base_ref, head_ref, stack, test_globs, mutants_cmd=None, mutation_budget=None, shards=4, project_dir="."):
+    """The baseline step (#46): the mutants job's plan and its one baseline run. Envelope with the R3 check and the
+    run decision: run, count (shards), mutants, timeout (the derived per-mutant seconds). Git only for the file-sharded
+    stacks; rust runs cargo-mutants' unmutated baseline once."""
+    from . import mutants  # lazy: mutants imports red, which imports this module
+    base, head, mb = _merge_base(repo, base_ref, head_ref)
+    p = mutants.baseline(repo, mb, head, ADAPTERS[stack](), test_globs, mutants_cmd, mutation_budget, shards,
+                         project_dir=project_dir)
+    checks = {c: {"status": "skipped", "note": "not run by baseline"} for c in CHECKS}
+    checks["R3"] = p["check"]
+    env = envelope(base, head, p["entries"], checks)
+    env.update({"run": p["run"], "count": p["count"], "mutants": p["mutants"], "timeout": p["timeout"]})
+    return env
 
 
 def summarize(head, checks, entries):

@@ -1,0 +1,40 @@
+
+*** baseline
+
+*** /home/ericl/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin/cargo test --no-run --verbose --package=x@0.1.0
+   Compiling x v0.1.0 (/tmp/cargo-mutants-crate-KZHEY9.tmp)
+     Running `/home/ericl/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin/rustc --crate-name x --edition=2021 src/lib.rs --error-format=json --json=diagnostic-rendered-ansi,artifacts,future-incompat --crate-type lib --emit=dep-info,metadata,link -C embed-bitcode=no -C debuginfo=2 --check-cfg 'cfg(docsrs,test)' --check-cfg 'cfg(feature, values())' -C metadata=818f2b239836165c -C extra-filename=-d4d9f2ff43fa7147 --out-dir /tmp/cargo-mutants-crate-KZHEY9.tmp/target/debug/deps -C incremental=/tmp/cargo-mutants-crate-KZHEY9.tmp/target/debug/incremental -L dependency=/tmp/cargo-mutants-crate-KZHEY9.tmp/target/debug/deps`
+     Running `/home/ericl/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin/rustc --crate-name x --edition=2021 src/lib.rs --error-format=json --json=diagnostic-rendered-ansi,artifacts,future-incompat --emit=dep-info,link -C embed-bitcode=no -C debuginfo=2 --test --check-cfg 'cfg(docsrs,test)' --check-cfg 'cfg(feature, values())' -C metadata=c5f7539e68f7c244 -C extra-filename=-8f8b94cb44880911 --out-dir /tmp/cargo-mutants-crate-KZHEY9.tmp/target/debug/deps -C incremental=/tmp/cargo-mutants-crate-KZHEY9.tmp/target/debug/incremental -L dependency=/tmp/cargo-mutants-crate-KZHEY9.tmp/target/debug/deps`
+     Running `/home/ericl/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin/rustc --crate-name a --edition=2021 tests/a.rs --error-format=json --json=diagnostic-rendered-ansi,artifacts,future-incompat --emit=dep-info,link -C embed-bitcode=no -C debuginfo=2 --test --check-cfg 'cfg(docsrs,test)' --check-cfg 'cfg(feature, values())' -C metadata=35f5554485871cfd -C extra-filename=-a4a31b07cb8474ee --out-dir /tmp/cargo-mutants-crate-KZHEY9.tmp/target/debug/deps -C incremental=/tmp/cargo-mutants-crate-KZHEY9.tmp/target/debug/incremental -L dependency=/tmp/cargo-mutants-crate-KZHEY9.tmp/target/debug/deps --extern x=/tmp/cargo-mutants-crate-KZHEY9.tmp/target/debug/deps/libx-d4d9f2ff43fa7147.rlib`
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.18s
+  Executable `/tmp/cargo-mutants-crate-KZHEY9.tmp/target/debug/deps/x-8f8b94cb44880911`
+  Executable `/tmp/cargo-mutants-crate-KZHEY9.tmp/target/debug/deps/a-a4a31b07cb8474ee`
+
+*** result: Success
+
+*** /home/ericl/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin/cargo test --verbose --package=x@0.1.0
+       Fresh x v0.1.0 (/tmp/cargo-mutants-crate-KZHEY9.tmp)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.00s
+     Running `/tmp/cargo-mutants-crate-KZHEY9.tmp/target/debug/deps/x-8f8b94cb44880911`
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running `/tmp/cargo-mutants-crate-KZHEY9.tmp/target/debug/deps/a-a4a31b07cb8474ee`
+
+running 2 tests
+test adds ... ok
+test subs ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests x
+     Running `/home/ericl/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin/rustdoc --edition=2021 --crate-type lib --color auto --crate-name x --test src/lib.rs --test-run-directory /tmp/cargo-mutants-crate-KZHEY9.tmp --extern x=/tmp/cargo-mutants-crate-KZHEY9.tmp/target/debug/deps/libx-d4d9f2ff43fa7147.rlib -L dependency=/tmp/cargo-mutants-crate-KZHEY9.tmp/target/debug/deps -C embed-bitcode=no --check-cfg 'cfg(docsrs,test)' --check-cfg 'cfg(feature, values())' --error-format human`
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+*** result: Success

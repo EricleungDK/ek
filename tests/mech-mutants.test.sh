@@ -711,13 +711,13 @@ TG = ["tests/**"]
 
 chk, ents = M.verdict(os.path.join(FX, "baseline-timeout"), 4, "", A, TG, wall_s=1.5, timeout_s=1)
 check("baseline timeout: R3 n/a, not fail", chk["status"] == "n/a", str(chk))
-check("baseline timeout: note names the timeout, the seconds, mutant-timeout and mutation-budget",
-      all(w in chk["note"] for w in ("timed out", "1s", "mutant-timeout", "mutation-budget")), chk["note"])
+check("baseline timeout: note names the timeout, the seconds and mutation-budget (#46: not mutant-timeout)",
+      all(w in chk["note"] for w in ("timed out", "1s", "mutation-budget")) and "mutant-timeout" not in chk["note"], chk["note"])
 check("baseline timeout: no fail entry", ents == [], str(ents))
 check("baseline timeout: not read as baseline tests fail", "baseline tests fail" not in chk["note"], chk["note"])
 chk, ents = M.verdict(os.path.join(FX, "baseline-timeout"), 4, "", A, TG, wall_s=1.5)
-check("baseline timeout, seconds unknown: still n/a with mutant-timeout named",
-      chk["status"] == "n/a" and "mutant-timeout" in chk["note"] and ents == [], str(chk))
+check("baseline timeout, seconds unknown: still n/a with mutation-budget named",
+      chk["status"] == "n/a" and "mutation-budget" in chk["note"] and ents == [], str(chk))
 
 chk, ents = M.verdict(os.path.join(FX, "baseline-failure"), 4, "", A, TG, wall_s=3.0)
 check("baseline failure (real): fail, one agent-fixable baseline entry", chk["status"] == "fail" and len(ents) == 1

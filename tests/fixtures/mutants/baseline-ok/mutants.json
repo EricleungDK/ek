@@ -1,0 +1,34 @@
+[
+  {
+    "diff": "--- src/lib.rs\n+++ replace add -> i32 with 0\n@@ -1,3 +1,3 @@\n-pub fn add(a: i32, b: i32) -> i32 { a + b }\n+pub fn add(a: i32, b: i32) -> i32 { 0 /* ~ changed by cargo-mutants ~ */ }\n pub fn sub(a: i32, b: i32) -> i32 { a - b }\n pub fn neg(a: i32) -> i32 { 0 - a }\n",
+    "file": "src/lib.rs",
+    "function": {
+      "function_name": "add",
+      "return_type": "-> i32",
+      "span": {
+        "end": {
+          "column": 44,
+          "line": 1
+        },
+        "start": {
+          "column": 1,
+          "line": 1
+        }
+      }
+    },
+    "genre": "FnValue",
+    "name": "src/lib.rs:1:37: replace add -> i32 with 0",
+    "package": "x",
+    "replacement": "0",
+    "span": {
+      "end": {
+        "column": 42,
+        "line": 1
+      },
+      "start": {
+        "column": 37,
+        "line": 1
+      }
+    }
+  }
+]

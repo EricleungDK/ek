@@ -147,7 +147,13 @@ t_pass = {"wall_s": 53.0, "mutant_build_s": 6.0, "mutant_test_s": 3.0, "avg_s_pe
           "baseline_build_s": 2.0, "baseline_test_s": 1.0}
 e_pass = r3_env("pass", 5, 5, t_pass)
 b = C.render(e_pass)
-check("timing: one line under the headline", "R3 timing: 5/5 mutants, 53s wall, avg 1.8s per mutant (build 6s, test 3s)" in b, b)
+check("timing: one line under the headline", "R3 timing: 5/5 mutants, 53s wall, avg 1.8s per mutant (build 6s, test 3s), "
+      "baseline (build 2s, test 1s)" in b, b)
+check("timing: baseline seconds shown once in the line (#46)", b.count("baseline (build") == 1, b)
+check("timing: no baseline segment without baseline seconds",
+      "baseline (" not in C.render(r3_env("pass", 5, 5, {"wall_s": 1.0, "mutant_build_s": 1.0, "mutant_test_s": 1.0})),
+      "no baseline segment")
+
 check("timing: line sits before the head line", b.index("R3 timing:") < b.index("head `"), b)
 check("timing: json block carries the timing", json_block(b) == e_pass, str(json_block(b)))
 check("timing: no timing line when R3 is skipped", "R3 timing:" not in C.render(env([])), C.render(env([])))

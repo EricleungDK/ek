@@ -22,6 +22,7 @@ Verdict (per shard):
   no mutants in the diff -> pass.
 """
 import json
+import math
 import os
 import posixpath
 import re
@@ -32,6 +33,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import tomllib
 
 from . import red
 from .engine import added_lines, entry, finalize, git
@@ -41,6 +43,9 @@ DEFAULT_CMD = "cargo mutants"
 PROBE_TIMEOUT = 120  # seconds for `cargo mutants --version`
 KILL_GRACE = 15  # seconds between SIGTERM and SIGKILL when a run is over its budget
 REAP = 5  # seconds to wait for a killed run before giving up on it
+
+TIMEOUT_MULTIPLIER = 5.0  # cargo-mutants' test timeout multiplier when the config has none (timeouts.rs test_timeout)
+MIN_TEST_TIMEOUT = 20.0  # cargo-mutants' minimum_test_timeout when the config has none (options.rs)
 
 RE_POS = re.compile(r"^[^\s:]+:\d+:\d+: ")  # "src/lib.rs:2:11: replace + with - in add" -> "replace + with - in add"
 
@@ -177,17 +182,19 @@ def _repo_path(project_dir, path):
 
 
 def _baseline_timeout_note(timeout_s):
-    """n/a note for a baseline cargo-mutants timed out: names the timeout, its seconds and the two inputs that set it."""
+    """n/a note for a baseline that timed out: names the seconds and the budget. The baseline runs once, before the shards,
+    and no per-mutant setting caps it (#46), so the budget is the input to raise."""
     after = f" after {timeout_s:g}s" if timeout_s is not None else ""
-    return (f"baseline tests timed out{after} (mutant-timeout caps the baseline too): mutants not run; raise mutant-timeout "
-            "above the suite time (auto leaves the baseline unlimited); mutation-budget does not lift it")
+    return (f"baseline tests timed out{after}: mutants not run; raise mutation-budget (the baseline runs once, before "
+            "the shards, and is bounded by the budget)")
 
 
-def verdict(mo, rc, text, adapter, test_globs, wall_s=None, project_dir=".", timeout_s=None):
+def verdict(mo, rc, text, adapter, test_globs, wall_s=None, project_dir=".", timeout_s=None, skipped_baseline=False):
     """R3 verdict of one run. mo: the mutants.out directory (cargo-mutants -o DIR writes DIR/mutants.out).
     rc: the exit code, "timeout" (budget killed the run), or None (tool not runnable). text: its output.
     wall_s: the runner's clock for this run, if measured. project_dir: the crate dir under the repo root.
     timeout_s: the --timeout (seconds) the run was given, or None (auto): named in a baseline timeout's note.
+    skipped_baseline: the run was `--baseline skip` (shards, #46): no Baseline outcome is expected then.
     Returns (check, entries): check is {status, note[, tested, total, timing]}, entries are finalized contract entries."""
     if rc is None:
         return _check("n/a", f"cargo-mutants not runnable (env): {_first_line(text)}; check the cargo-mutants install step"), []
@@ -223,7 +230,7 @@ def verdict(mo, rc, text, adapter, test_globs, wall_s=None, project_dir=".", tim
     base = _baseline(doc)
     if rc == "timeout":
         shown = f"{tested}/{total if total is not None else '?'}"
-        if base is None:  # killed before the baseline ended: no mutant ran
+        if base is None and not skipped_baseline:  # killed before the baseline ended: no mutant ran
             return done(_check("partial", f"{shown} tested: budget hit, baseline did not finish: no mutant run", 0, total),
                         [])
         if missed:
@@ -337,10 +344,11 @@ class CargoMutants:
                 f.write(git(repo, "diff", "--no-ext-diff", "--no-textconv", "-U0", "--src-prefix=a/", "--dst-prefix=b/",
                             *relative, mb, head))
             out_parent = os.path.join(tmp, "out")
-            limit = [] if mutant_timeout is None else ["--timeout", str(mutant_timeout)]
+            # a per-mutant timeout means the baseline was measured by the baseline step: skip it here (#46)
+            limit = [] if mutant_timeout is None else ["--baseline", "skip", "--timeout", str(mutant_timeout)]
             argv = shlex.split(cmd) + ["--in-diff", diff_path] + limit + ["--colors", "never", "--output", out_parent]
             if shard:
-                argv += ["--shard", shard]
+                argv += ["--sharding", "round-robin", "--shard", shard]
             with red.worktree(repo, head) as wt:
                 crate = os.path.join(wt, project_dir)
                 if not os.path.isdir(crate):
@@ -356,12 +364,153 @@ class CargoMutants:
                 wall = time.monotonic() - t0
             mo = os.path.join(out_parent, "mutants.out")
             check, ents = verdict(mo, rc, text, adapter, test_globs, wall_s=wall, project_dir=project_dir,
-                                  timeout_s=mutant_timeout)
+                                  timeout_s=mutant_timeout, skipped_baseline=mutant_timeout is not None)
             if check["status"] != "pass":
                 _diagnose(mo, text, check["status"])
             return check, ents
         finally:
             shutil.rmtree(tmp, ignore_errors=True)
+
+    def baseline(self, repo, mb, head, adapter, test_globs, cmd, budget_min, shards, project_dir=".", runner=None):
+        """The baseline step (rust, once per PR, #46): cargo-mutants' own unmutated run, which the shards then skip. The
+        mutant list comes from `--list --json`. One mutant is run with `--build-timeout 0`, so its build is killed at once
+        and the baseline is the only work (the build limit does not reach the baseline). No --timeout: the baseline is
+        bounded by mutation-budget. Shards = min(shards, mutants): round-robin over the list, none empty."""
+        cmd = cmd or self.default_cmd
+        runner = runner or default_runner()
+        rc, text = runner(shlex.split(cmd) + ["--version"], repo, PROBE_TIMEOUT)
+        if rc != 0 or not text.startswith("cargo-mutants"):
+            return _payload(False, 0, None, None, _check("n/a", f"cargo-mutants not installed (env): `{cmd}` not runnable; "
+                                                                "check the cargo-mutants install step"), [])
+        budget = None if budget_min is None else budget_min * 60
+        tmp = tempfile.mkdtemp(prefix="mech-baseline-")
+        try:
+            diff_path = os.path.join(tmp, "in.diff")
+            relative = [] if project_dir == "." else [f"--relative={project_dir}"]
+            with open(diff_path, "w", encoding="utf-8", errors="surrogateescape") as f:
+                f.write(git(repo, "diff", "--no-ext-diff", "--no-textconv", "-U0", "--src-prefix=a/", "--dst-prefix=b/",
+                            *relative, mb, head))
+            out_parent = os.path.join(tmp, "out")
+            with red.worktree(repo, head) as wt:
+                crate = os.path.join(wt, project_dir)
+                if not os.path.isdir(crate):
+                    return _payload(False, 0, None, None, _check("fail", f"project dir {project_dir} not found at head: "
+                                                                         "mutants not run"), [
+                        finalize([entry("R3", "", 0, "project-dir", "agent-fixable", "fail",
+                                        f"project dir {project_dir} not found at head: mutants not run",
+                                        "set project-dir to the crate dir under the repo root, present at head",
+                                        "a mutation check that did not run")])[0]])
+                if not os.path.isfile(os.path.join(crate, "Cargo.toml")):
+                    return _payload(False, 0, None, None, _check("n/a", f"no Cargo.toml in {project_dir}: set project-dir"), [])
+                lrc, ltext = runner(shlex.split(cmd) + ["--list", "--json", "--in-diff", diff_path] + relative
+                                    + ["--colors", "never"], crate, PROBE_TIMEOUT)
+                if lrc != 0:
+                    return _payload(False, 0, None, None, _check("n/a", f"cargo-mutants --list failed (env): "
+                                                                         f"{_first_line(ltext) or f'exit {lrc}'}; see the job log"), [])
+                try:
+                    mutants = listed_count(ltext)
+                except ValueError as e:
+                    return _payload(False, 0, None, None, _check("n/a", f"cargo-mutants --list output is not a mutant list "
+                                                                         f"(env): {e}"), [])
+                if mutants == 0:
+                    return _payload(False, 0, 0, None, _check("pass", "0 mutants in the diff", 0, 0), [])
+                argv = shlex.split(cmd) + ["--in-diff", diff_path] + relative + ["--build-timeout", "0", "--sharding",
+                                                                                 "round-robin", "--shard", f"0/{mutants}",
+                                                                                 "--colors", "never", "--output", out_parent]
+                t0 = time.monotonic()
+                rc, text = runner(argv, crate, budget)
+                wall = time.monotonic() - t0
+                cfg = cargo_config(crate)  # read while the worktree exists
+            mo = os.path.join(out_parent, "mutants.out")
+            result = _baseline_outcome(mo, rc, text, budget_min, mutants, shards, cfg, wall)
+            if result["check"]["status"] in ("fail", "n/a"):
+                _diagnose(mo, text, result["check"]["status"])
+            return result
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
+
+
+def cargo_config(crate):
+    """(timeout_multiplier, minimum_test_timeout) from the crate's .cargo/mutants.toml (cargo-mutants' snake_case keys), or
+    its defaults. The derived per-mutant timeout uses them, so it is the value cargo-mutants would have set."""
+    mult, minimum = TIMEOUT_MULTIPLIER, MIN_TEST_TIMEOUT
+    path = os.path.join(crate, ".cargo", "mutants.toml")
+    if os.path.isfile(path):
+        with open(path, "rb") as f:
+            cfg = tomllib.load(f)
+        mult = float(cfg.get("timeout_multiplier", mult))
+        minimum = float(cfg.get("minimum_test_timeout", minimum))
+    return mult, minimum
+
+
+def derive_timeout(base_test_s, multiplier=TIMEOUT_MULTIPLIER, minimum=MIN_TEST_TIMEOUT):
+    """The per-mutant test timeout cargo-mutants sets from the baseline test time (timeouts.rs test_timeout):
+    max(minimum, ceil(baseline * multiplier)) seconds. Whole seconds come back as an int (the workflow passes them as text)."""
+    t = max(float(minimum), float(math.ceil(base_test_s * multiplier)))
+    return int(t) if t == int(t) else t
+
+
+def listed_count(text):
+    """Mutants in `cargo mutants --list --json` output. The runner merges stderr into the output, so log lines may come
+    before the array; the array starts on a line of its own (nested arrays are indented). No array at all is no mutant
+    (cargo-mutants prints nothing for an empty list). ValueError when the array does not parse."""
+    m = re.search(r"^\[", text or "", re.M)
+    if m is None:
+        return 0
+    doc, _ = json.JSONDecoder().raw_decode(text[m.start():])
+    if not isinstance(doc, list):
+        raise ValueError("not a JSON list")
+    return len(doc)
+
+
+def _payload(run, count, mutants, timeout, check, ents):
+    """The baseline step's result. run: the shards run. count: shards to run. mutants: in the diff (None when not counted by
+    the tool). timeout: per-mutant seconds derived from the measured baseline (None when not derived). check: the R3 check
+    (final when run is false, a placeholder when true). ents: its finalized entries."""
+    return {"run": run, "count": count, "mutants": mutants, "timeout": timeout, "check": check, "entries": ents}
+
+
+def _baseline_budget_note(budget_min):
+    return (f"baseline timed out: it did not finish within mutation-budget ({budget_min:g} min): mutants and shards not "
+            "run; raise mutation-budget")
+
+
+def _baseline_outcome(mo, rc, text, budget_min, mutants, shards, cfg, wall):
+    """The baseline step's payload from cargo-mutants' Baseline outcome. Fail (tests fail at head) and n/a (timed out by the
+    budget, or the tool did not write a baseline) end the R3 check here; Success derives the per-mutant timeout and lets the
+    shards run."""
+    base = _baseline(_load(os.path.join(mo, "outcomes.json")))
+    if base is None:
+        if rc == "timeout":
+            return _payload(False, 0, mutants, None, _check("n/a", _baseline_budget_note(budget_min)), [])
+        return _payload(False, 0, mutants, None, _check("n/a", f"cargo-mutants wrote no baseline (env), exit {rc}: "
+                                                              f"{_first_line(text) or 'no output'}; see the job log"), [])
+    summary = base.get("summary")
+    phases = base.get("phase_results")
+    if summary == "Failure":
+        ents = finalize([entry("R3", "", 0, "baseline", "agent-fixable", "fail", "baseline tests fail at head: mutants not run",
+                               "fix the failing tests first: mutation needs an unmutated tree that passes",
+                               "a mutation check that did not run")])
+        return _payload(False, 0, mutants, None, _check("fail", "baseline tests fail at head: mutants not run"), ents)
+    if summary == "Timeout":
+        return _payload(False, 0, mutants, None, _check("n/a", _baseline_timeout_note(None)), [])
+    if summary != "Success":
+        return _payload(False, 0, mutants, None, _check("n/a", f"baseline {summary} (env): see the job log"), [])
+    test_s = _phase(phases, "Test", absent=None)
+    if test_s is None:
+        return _payload(False, 0, mutants, None, _check("n/a", "baseline test time unreadable in outcomes.json (env): "
+                                                               "see the job log"), [])
+    mult, minimum = cfg
+    timeout = derive_timeout(test_s, mult, minimum)
+    count = min(max(1, shards), mutants)
+    timing = {"wall_s": round(wall, 2), "baseline_test_s": round(test_s, 2)}
+    build_s = _phase(phases, "Build", absent=None)
+    if build_s is not None:
+        timing["baseline_build_s"] = round(build_s, 2)
+    chk = _check("skipped", f"baseline ok: {mutants} mutants in {count} shard(s), per-mutant timeout {timeout:g}s "
+                            f"({mult:g}x the baseline test time, at least {minimum:g}s)")
+    chk["timing"] = timing
+    return _payload(True, count, mutants, timeout, chk, [])
 
 
 MUTMUT_RESULT = re.compile(r"^ {4}(\S+): (.+?)\s*$", re.M)  # "    calc.core.x_add__mutmut_1: survived"
@@ -511,12 +660,26 @@ def _crate_path(project_dir, path):
     return path if project_dir == "." else path[len(project_dir) + 1:]
 
 
+def _files_baseline(repo, mb, head, adapter, test_globs, project_dir, shards):
+    """The baseline step for the file-sharded stacks (mutmut, Stryker, #46): one shard per changed production file, at most
+    `shards`, so no shard is empty. Git only: no toolchain runs here."""
+    prod = sorted({ch.new for ch in red.prod_changes(repo, mb, head, adapter, test_globs)
+                   if ch.new and _under(ch.new, project_dir)})
+    if not prod:
+        return _payload(False, 0, None, None, _check("pass", "0 mutants in the diff (no changed production file)", 0, 0), [])
+    count = min(max(1, shards), len(prod))
+    return _payload(True, count, None, None, _check("skipped", f"{len(prod)} changed production file(s) in {count} shard(s)"), [])
+
+
 class Mutmut:
     """R3 for python: mutmut 3.8.1 on the changed production files, in the crate dir of a worktree at head. mutmut has no
     line filter, so the MISSED list is narrowed to the changed lines afterwards (the same `--in-diff` promise as
     cargo-mutants). Paths in the result are repo-root paths. Timing: wall time only (mutmut keeps no per-phase durations
     in its output); the per-mutant timeout is mutmut's own (timeout_multiplier), so --mutant-timeout is not applied."""
     default_cmd = "mutmut"
+
+    def baseline(self, repo, mb, head, adapter, test_globs, cmd, budget_min, shards, project_dir=".", runner=None):
+        return _files_baseline(repo, mb, head, adapter, test_globs, project_dir, shards)
 
     def check(self, repo, mb, head, adapter, test_globs, cmd, budget_min, shard, mutant_timeout, runner, project_dir="."):
         cmd = cmd or self.default_cmd
@@ -721,6 +884,9 @@ class Stryker:
     no report, so a budget hit is partial with the mutant count from Stryker's log and no tested count."""
     default_cmd = "node_modules/.bin/stryker"
 
+    def baseline(self, repo, mb, head, adapter, test_globs, cmd, budget_min, shards, project_dir=".", runner=None):
+        return _files_baseline(repo, mb, head, adapter, test_globs, project_dir, shards)
+
     def check(self, repo, mb, head, adapter, test_globs, cmd, budget_min, shard, mutant_timeout, runner, project_dir="."):
         cmd = cmd or self.default_cmd
         prod = sorted({ch.new for ch in red.prod_changes(repo, mb, head, adapter, test_globs)
@@ -844,6 +1010,15 @@ class Stryker:
 
 
 TOOLS = {"rust": CargoMutants(), "python": Mutmut(), "ts": Stryker()}
+
+
+def baseline(repo, mb, head, adapter, test_globs, cmd=None, budget_min=None, shards=4, project_dir=".", runner=None):
+    """The baseline step for mb..head (#46): run the shards or not, how many, the per-mutant timeout derived from the
+    measured baseline, and R3 when it ends the check (fail, n/a, or no mutant). Skipped without a production change.
+    Returns {run, count, mutants, timeout, check, entries}."""
+    if not red.prod_changes(repo, mb, head, adapter, test_globs):
+        return _payload(False, 0, 0, None, _check("skipped", "no production file changed"), [])
+    return TOOLS[adapter.name].baseline(repo, mb, head, adapter, test_globs, cmd, budget_min, shards, project_dir, runner)
 
 
 def run(repo, mb, head, adapter, test_globs, cmd=None, budget_min=None, shard=None,
