@@ -122,6 +122,14 @@ eq "$(q "d['trial']['tests']" <<<"$out")" env "absent toolchain: env"
 has "$(q "d['entries'][0]['hint']" <<<"$out")" "setup-command" "absent toolchain: names the input"
 eq "$(q "d['trial']['mutation_tool']" <<<"$out")" absent "absent mutation tool reported"
 
+# no trial worktree possible (read-only .git): a result, inputs kept, not a crash
+W="$(mkrepo ro)"; echo '[package]' | put "$W" Cargo.toml; commit "$W" base; : > "$W/.git/worktrees"
+out="$(doctor --repo "$W" 2>/dev/null)"; rc=$?
+eq "$rc" 1 "no worktree: exit 1, not 2"
+eq "$(q "d['trial']['tests']" <<<"$out")" unavailable "no worktree: trial unavailable"
+has "$(q "d['entries'][0]['hint']" <<<"$out")" "--no-trial" "no worktree: names the way on"
+eq "$(q "d['inputs']['stack']" <<<"$out")" rust "no worktree: inputs kept"
+
 # toolchain pins in the other shapes Rust CI uses; stable is the default, left out
 for pin in 'env:|  RUSTUP_TOOLCHAIN: 1.96.0' 'steps:|  - uses: dtolnay/rust-toolchain@1.96.0'; do
   R="$(mkrepo "pin$((++n))")"; echo '[package]' | put "$R" Cargo.toml
