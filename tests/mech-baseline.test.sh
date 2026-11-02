@@ -37,7 +37,7 @@ def run_check(name, fn, detail=""):
     """run one check; an exception is a failure with its text, so one missing name does not hide the rest.
     fn returns a bool, or (bool, detail); a bare value is the detail when the check fails."""
     try:
-        r = fn()
+        r = fn() if callable(fn) else fn
     except Exception as e:  # noqa: BLE001 - report, keep going
         check(name, False, f"raised {type(e).__name__}: {e}")
         return
@@ -214,6 +214,11 @@ p_none = baseline(fake(list_text=""))
 run_check("no mutants: pass with 0 mutants, no shards", p_none["check"]["status"] == "pass" and p_none["run"] is False
           and p_none["count"] == 0 and p_none["mutants"] == 0, str(p_none))
 
+# log lines on stderr come before the JSON array (the runner merges the two streams): still counted
+p_noisy = baseline(fake(list_text="INFO found 3 mutants\n" + json.dumps([{"name": "a"}] * 3, indent=2)))
+run_check("list with a log line before the JSON: the mutants are counted", p_noisy["mutants"] == 3
+          and p_noisy["check"]["status"] == "skipped" and p_noisy["run"] is True, str(p_noisy["check"]))
+
 # list failed (env): n/a, never pass
 p_lf = baseline(fake(list_rc=1, list_text="error: could not find Cargo.toml"))
 run_check("list failed: n/a (env), never pass", p_lf["check"]["status"] == "n/a" and "(env)" in p_lf["check"]["note"]
@@ -256,7 +261,7 @@ p_ts_none = M.baseline(PY_REPO, PY_HEAD, PY_HEAD, TsAdapter(), ["**/*.test.ts"],
 run_check("no production change: skipped, no shards", p_ts_none["check"]["status"] == "skipped" and p_ts_none["run"] is False,
           str(p_ts_none))
 
-# ---- merge: the baseline result decides when no shard runs; shards merge when it ran; timing once ----
+# ---- merge: the baseline envelope (what `baseline` prints) decides when no shard runs; shards merge when it ran; timing once ----
 def env(entries, r3):
     return {"ek": "x", "base": B, "head": H, "checks": {"R3": r3}, "entries": entries, "summary": "x"}
 
@@ -276,8 +281,8 @@ def mis(eid, line=2):
             "problem": f"MISSED {eid}", "hint": "h", "forbidden": "f"}
 
 
-base_fail = {"run": False, "count": 0, "mutants": 15, "timeout": None,
-             "check": r3("fail", "baseline tests fail at head: mutants not run"),
+base_fail = {"run": False, "count": 0, "mutants": 15, "timeout": None, "base": B, "head": H,
+             "checks": {"R3": r3("fail", "baseline tests fail at head: mutants not run")},
              "entries": [mis("R3-deadbeef")]}
 m = merge.combine_mutants(B, H, 0, {}, {}, baseline=base_fail)
 run_check("merge: baseline fail, no shards: R3 is the baseline's fail", m["checks"]["R3"]["status"] == "fail"
@@ -291,8 +296,8 @@ run_check("merge: no baseline result: R3 fail with a CI entry naming the baselin
           m["checks"]["R3"]["status"] == "fail" and any(e["check"] == "CI" and "baseline" in e["problem"] for e in m["entries"]),
           str(m["entries"]))
 
-base_run = {"run": True, "count": 2, "mutants": 4, "timeout": 20,
-            "check": r3("skipped", "baseline ok", timing={"wall_s": 9.0, "baseline_build_s": 2.0, "baseline_test_s": 3.0}),
+base_run = {"run": True, "count": 2, "mutants": 4, "timeout": 20, "base": B, "head": H,
+            "checks": {"R3": r3("skipped", "baseline ok", timing={"wall_s": 9.0, "baseline_build_s": 2.0, "baseline_test_s": 3.0})},
             "entries": []}
 s0 = env([mis("R3-aaaaaaaa", 2)], r3("fail", "1/2 tested", 2, 2, {"wall_s": 4.0, "mutant_build_s": 1.0, "mutant_test_s": 2.0,
                                                                   "avg_s_per_mutant": 1.5}))
@@ -406,7 +411,7 @@ has "$(cat "$MECH_STUB_LOG")" "--list --json" "baseline ok CLI: the mutant list 
 has "$(cat "$MECH_STUB_LOG")" "--build-timeout 0" "baseline ok CLI: mutant builds killed at 0 s"
 has "$(cat "$MECH_STUB_LOG")" "--shard 0/15" "baseline ok CLI: one mutant (round-robin shard 0 of 15)"
 lacks "$(cat "$MECH_STUB_LOG")" " --timeout" "baseline ok CLI: no --timeout (a set mutant-timeout never caps the baseline)"
-eq "$(jq -r .checks.R3.timing.baseline_test_s <<<"$out" | awk '{ printf "%.1f", $1 }')" "$(python3 -I -c 'import json,sys; d=json.load(open(sys.argv[1])); print(f"{next(p[\"duration\"] for o in d[\"outcomes\"] if o[\"scenario\"]==\"Baseline\" for p in o[\"phase_results\"] if p[\"phase\"]==\"Test\"):.1f}")' "$FX/baseline-ok/outcomes.json")" "baseline ok CLI: baseline test seconds from the baseline"
+eq "$(jq -r .checks.R3.timing.baseline_test_s <<<"$out")" "$(python3 -I -c 'import json,sys; d=json.load(open(sys.argv[1])); print(round(next(p["duration"] for o in d["outcomes"] if o["scenario"]=="Baseline" for p in o["phase_results"] if p["phase"]=="Test"),2))' "$FX/baseline-ok/outcomes.json")" "baseline ok CLI: baseline test seconds from the baseline"
 
 # baseline fails at head (exit 4): R3 fail, shards not run, the log tail on stderr, exit 0 (a result)
 mrepo bfail
@@ -446,15 +451,15 @@ mrepo bzero
 bl --shards 0 >/dev/null 2>&1; rc=$?
 eq "$rc" 2 "baseline --shards 0: usage error exit 2"
 
-# plan: whether R3 runs, nothing else (the shard count comes from the baseline now)
+# plan: whether R3 runs; the CLI keeps its matrix for the file-sharded stacks, the workflow reads run only (#46)
 mrepo pl
 out=$(python3 -I "$MR" plan --repo "$R" --base "$B" --head "$H" --stack rust --test-paths 'tests/**'); rc=$?
 eq "$rc" 0 "plan: exit 0"
-eq "$out" '{"run": true}' "plan: prints the run decision only"
+eq "$(jq -c '{run,count,shards}' <<<"$out")" '{"run":true,"count":1,"shards":[0]}' "plan: run true; placeholder matrix (count from baseline)"
 mrepo pldocs
 printf 'notes\n' > "$R/README.md"; git -C "$R" add -A; git -C "$R" -c user.name=t -c user.email=t@t commit -qm docs; H2=$(git -C "$R" rev-parse HEAD)
 out=$(python3 -I "$MR" plan --repo "$R" --base "$H" --head "$H2" --stack rust --test-paths 'tests/**')
-eq "$out" '{"run": false}' "plan: docs-only: run false"
+eq "$(jq -c '{run}' <<<"$out")" '{"run":false}' "plan: docs-only: run false"
 
 # merge with the baseline: shards merge when it ran; baseline timing once; a shard that never ran is a CI fail
 mrepo mrg
@@ -471,10 +476,13 @@ eq "$(jq -r .checks.R3.timing.baseline_build_s <<<"$out")" "$(jq -r .checks.R3.t
 out=$(mg --baseline "$BLF" --shards 2 --envelope 0="$T/s0.json"); rc=$?
 eq "$(jq -r '[.entries[] | select(.check=="CI")][0].problem' <<<"$out")" "mutants shard 1/2 produced no result: no result file given" "merge with baseline: a shard missing is still a CI fail"
 
-# a shard with 0 tested keeps the sums of the others (bug #46): build and test seconds still in the merged timing
-out=$(mg --baseline "$BLF" --shards 2 --envelope 0="$T/s0.json" --envelope 1="$T/s1.json")
+# a shard that tested nothing (0 mutants in its slice) keeps the sums of the others (bug #46): build and test still there
+MUT_RC=0 mut --shard 1/2 > "$T/s2.json"
+eq "$(jq -r .checks.R3.tested <<<"$(cat "$T/s2.json")")" 0 "0-tested shard: tested 0"
+out=$(mg --baseline "$BLF" --shards 2 --envelope 0="$T/s0.json" --envelope 1="$T/s2.json")
 has "$(jq -c .checks.R3.timing <<<"$out")" "mutant_build_s" "merge: a 0-tested shard keeps the build sum"
 has "$(jq -c .checks.R3.timing <<<"$out")" "mutant_test_s" "merge: a 0-tested shard keeps the test sum"
+has "$(jq -c .checks.R3.timing <<<"$out")" "avg_s_per_mutant" "merge: a 0-tested shard keeps the average"
 
 # baseline failed: its R3 is the result; no shard needed, no CI entry for the missing shards
 BLFAIL="$T/bl-fail.json"; MUT_FIXTURE=baseline-failure MUT_RC=4 bl > "$BLFAIL" 2>/dev/null

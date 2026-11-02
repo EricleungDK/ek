@@ -406,16 +406,18 @@ sys.exit(1 if FAILS else 0)
 PY
 eq "$?" 0 "job merge: mutants owns R3; absent is skipped; crashed is fail"
 
-# ---- plan: does the mutants job run (git only, no toolchain). The shard count now comes from the baseline step (#46) ----
+# ---- plan: does the mutants job run, and over how many shards (matrix). Cheap: git only, no toolchain ----
 mrepo planprod
-out=$(python3 -I "$MR" plan --repo "$R" --base "$B" --head "$H" --stack rust --test-paths 'tests/**'); rc=$?
+out=$(python3 -I "$MR" plan --repo "$R" --base "$B" --head "$H" --stack rust --test-paths 'tests/**' --shards 4); rc=$?
 eq "$rc" 0 "plan: prod change exit 0"
-eq "$(jq -c . <<<"$out")" '{"run":true}' "plan: prod change: run, nothing else (#46)"
+eq "$(jq -c '{run,count,shards}' <<<"$out")" '{"run":true,"count":4,"shards":[0,1,2,3]}' "plan: prod change: 4 shards 0..3"
 mrepo plandocs tests-only
+out=$(python3 -I "$MR" plan --repo "$R" --base "$B" --head "$H" --stack rust --test-paths 'tests/**' --shards 4)
+eq "$(jq -c '{run,count,shards}' <<<"$out")" '{"run":false,"count":1,"shards":[0]}' "plan: no prod change: not run, one placeholder shard"
 out=$(python3 -I "$MR" plan --repo "$R" --base "$B" --head "$H" --stack rust --test-paths 'tests/**')
-eq "$(jq -c . <<<"$out")" '{"run":false}' "plan: no prod change: not run (#46: no placeholder shard)"
-python3 -I "$MR" plan --repo "$R" --base "$B" --head "$H" --stack rust --shards 4 >/dev/null 2>&1; rc=$?
-eq "$rc" 2 "plan: no --shards any more (the count comes from baseline): usage error"
+eq "$(jq -c '{run,count}' <<<"$out")" '{"run":false,"count":1}' "plan: default one shard"
+python3 -I "$MR" plan --repo "$R" --base "$B" --head "$H" --stack rust --shards 0 >/dev/null 2>&1; rc=$?
+eq "$rc" 2 "plan: --shards 0 is a usage error"
 
 # merge needs no git checkout when given full SHAs (the report job has none)
 out=$(python3 -I "$MR" merge --repo /no/such/checkout --base "$B" --head "$H" --stack rust --shards 2 --envelope 0="$MG/s0.json" --envelope 1="$MG/s1.json"); rc=$?
