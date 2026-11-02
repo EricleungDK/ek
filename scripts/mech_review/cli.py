@@ -4,7 +4,7 @@ import json
 import re
 import sys
 
-from . import engine, merge
+from . import doctor, engine, merge
 from .stack import ADAPTERS
 
 
@@ -47,6 +47,11 @@ summary (one line, text format first line and envelope `summary`):
   otherwise `<pass|fail> <head sha> (<F> fail, <C> confirm; ran: <checks>[; skipped: <checks>][; n/a: <checks>])`,
   e.g. `pass <sha> (0 fail, 1 confirm; ran: R2; skipped: R1 R3 R4)`.
   `pass` = no fail entries; `fail` = at least one fail entry; `n/a` = toolchain absent, not run.
+
+doctor (`doctor [--repo .] [--stack S] [--project-dir D] [--no-trial]`, no base or head): finds the stack and project dir,
+  reads .github/workflows, trial-runs the tests and the mutation tool at HEAD in a throwaway worktree, and prints
+  {ek, head, detected, inputs, trial, entries, summary}: `inputs` is what the caller needs, each entry names one exact fix.
+  Exit 0 no problems, 1 any problem, 2 usage or git error. Writes nothing.
 
 envelope: ek (plugin version), base, head (full SHAs), checks, entries, summary.
 
@@ -218,7 +223,25 @@ def _merge(parser, args):
     return 1 if any(e["severity"] == "fail" for e in env["entries"]) else 0
 
 
+def _doctor(argv):
+    p = argparse.ArgumentParser(prog="mech-review.py doctor", description="find a repo's mech-review setup; see the main --help")
+    p.add_argument("--repo", default=".", help="git repo (default .)")
+    p.add_argument("--stack", choices=sorted(ADAPTERS), help="settles several candidate projects")
+    p.add_argument("--project-dir", type=project_dir_arg, metavar="DIR", help="settles several candidate projects")
+    p.add_argument("--no-trial", action="store_true", help="read the tree only; run nothing")
+    args = p.parse_args(argv)
+    try:
+        env = doctor.run(args.repo, stack=args.stack, project_dir=args.project_dir, run_trial=not args.no_trial)
+    except engine.Die as e:
+        print(f"mech-review: {e}", file=sys.stderr)
+        return 2
+    print(json.dumps(env, indent=2))
+    return 1 if env["entries"] else 0
+
+
 def main(argv):
+    if argv[:1] == ["doctor"]:
+        return _doctor(argv[1:])
     parser = build_parser()
     args = parser.parse_args(argv)
     if args.check == "merge":
