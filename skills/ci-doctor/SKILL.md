@@ -43,7 +43,7 @@ Ask the user for `protected-paths` beyond `.github/**` and for `agent-branch-pre
 
 Commit (doctor reads HEAD), then rerun `DOCTOR`. Done when it exits 0. An entry that survives its fix twice → stop with a Needs-you block (finish).
 
-`env` entries on this machine may be local-only: a missing tool here says nothing about the runner. Report them as verification debt unless the workflow also lacks the input.
+`env` entries on this machine may be local-only: a missing tool here says nothing about the runner, and `mutation_tool: absent` gets no entry because CI installs it. Report them as verification debt unless the workflow also lacks the input.
 
 ## 5. Open the PR
 

@@ -2,6 +2,7 @@
 import argparse
 import json
 import re
+import signal
 import sys
 
 from . import doctor, engine, merge
@@ -230,11 +231,18 @@ def _doctor(argv):
     p.add_argument("--project-dir", type=project_dir_arg, metavar="DIR", help="settles several candidate projects")
     p.add_argument("--no-trial", action="store_true", help="read the tree only; run nothing")
     args = p.parse_args(argv)
+
+    def stop(*_):  # unwinds through the trial worktree's cleanup, like Ctrl-C
+        raise SystemExit(143)
+
+    signal.signal(signal.SIGTERM, stop)
     try:
         env = doctor.run(args.repo, stack=args.stack, project_dir=args.project_dir, run_trial=not args.no_trial)
     except engine.Die as e:
         print(f"mech-review: {e}", file=sys.stderr)
         return 2
+    except KeyboardInterrupt:
+        return 130
     print(json.dumps(env, indent=2))
     return 1 if env["entries"] else 0
 

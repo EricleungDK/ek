@@ -10,6 +10,7 @@ import re
 import shlex
 
 from . import engine, red
+from .globs import any_glob
 from .mutants import DEFAULT_CMD as RUST_MUTANTS
 from .stack import ADAPTERS
 
@@ -17,8 +18,10 @@ CALLER = "EricleungDK/ek/.github/workflows/mech-review.yml@"
 WORKFLOW = re.compile(r"^\.github/workflows/[^/]+\.ya?ml$")
 SKIP_DIRS = {"node_modules", "vendor", "target", "tests", "test", "fixtures", "testdata", "examples", "third_party", "dist", "build"}
 APT = re.compile(r"\bapt(?:-get)?\s+install\s+([^\n#|&;]*)")
-SYSCTL = re.compile(r"\bsysctl\s+-w\s+([\w.\-]+=\S+)")
-TOOLCHAIN = re.compile(r"(?:^\s*(?:RUSTUP_)?toolchain:\s*['\"]?|dtolnay/rust-toolchain@)(\d[\w.\-]*)", re.M | re.I)
+EXPR = re.compile(r"\$\{\{.*?\}\}")
+PACKAGE = re.compile(r"^[a-z0-9][a-z0-9+.:=~\-]*$")
+SYSCTL = re.compile(r"\bsysctl\s+(?:-w\s+)?([\w.\-]+=\S+)")
+TOOLCHAIN = re.compile(r"(?:^\s*(?:RUSTUP_)?toolchain:\s*['\"]?|dtolnay/rust-toolchain@|rustup\s+(?:default|toolchain\s+install)\s+['\"]?)(\d[\w.\-]*)", re.M | re.I)
 CHANNEL = re.compile(r"^\s*channel\s*=\s*['\"]([\w.\-]+)", re.M)
 SANDBOX = re.compile(r"bwrap|bubblewrap|unprivileged_userns")
 KEY = re.compile(r"^(\s+)([\w-]+):\s*(.*)$")
@@ -51,8 +54,9 @@ def read_ci(texts):
     apt, sysctl, toolchain = [], [], None
     for text in texts:
         text = "\n".join(line for line in text.splitlines() if not line.lstrip().startswith("#"))
+        text = EXPR.sub(" ", text.replace("\\\n", " "))  # a workflow is not shell: keep only what is plainly a package name
         for m in APT.finditer(text):
-            apt += [p for p in shlex.split(m.group(1)) if not p.startswith("-") and "$" not in p and p not in apt]
+            apt += [p for p in m.group(1).split() if PACKAGE.match(p) and p not in apt]
         sysctl += [s for s in SYSCTL.findall(text) if s not in sysctl]
         m = TOOLCHAIN.search(text)
         toolchain = toolchain or (m.group(1) if m else None)
@@ -105,12 +109,14 @@ def wanted_inputs(stack, project_dir, ci, channel):
     return inputs
 
 
-def _missing(name, want, have):
-    """True when the caller's value does not cover `want`. Packages may be a superset; a command may be part of a longer one."""
-    if name not in have:
-        return name != "test-paths" or want != DEFAULT_TEST_PATHS
+def _missing(name, want, have, paths):
+    """True when the caller's value does not cover `want`. Packages may be a superset; a command may be part of a longer one.
+    Custom test-paths stand while they match a file; a repo with no tests at `want` has nothing better to offer."""
     if name == "test-paths":
-        return False  # the repo's own globs: a person chose them
+        globs = have.get(name, DEFAULT_TEST_PATHS).split()
+        return not any(any_glob(p, globs) for p in paths) and any(any_glob(p, [want]) for p in paths)
+    if name not in have:
+        return name != "stack" or want != "rust"  # rust is the workflow's default
     if name == "extra-apt-packages":
         return not set(want.split()) <= set(have[name].split())
     if name == "setup-command":
@@ -118,7 +124,7 @@ def _missing(name, want, have):
     return want != have[name]
 
 
-def caller_entries(callers, inputs):
+def caller_entries(callers, inputs, paths):
     if not callers:
         return [engine.entry("doctor", ".github/workflows/mech-review.yml", 0, "no-caller", "needs-human", "fail",
                              "no mech-review caller workflow",
@@ -127,7 +133,7 @@ def caller_entries(callers, inputs):
     path, have = callers[0]
     return [engine.entry("doctor", path, 0, name, "needs-human", "fail", f"caller input {name} missing or wrong",
                          f"set {name}: {want}", NOT_YOURS)
-            for name, want in inputs.items() if _missing(name, want, have)]
+            for name, want in inputs.items() if _missing(name, want, have, paths)]
 
 
 def trial(repo, head, stack, project_dir, runner):
@@ -143,22 +149,49 @@ def trial(repo, head, stack, project_dir, runner):
             tool = MUTATION_TOOL[stack]
             tool_rc, _ = runner(shlex.split(tool) + ["--version"], crate)
     except engine.Die as e:  # read-only .git (sandbox): the static findings still stand
-        return {"tests": "unavailable"}, [engine.entry("doctor", "", 0, "trial", "env", "fail", f"trial could not run: {e}",
-                                                       "rerun outside the sandbox; --no-trial reads the tree only", NOT_SKIP)]
-    result = {"tests": verdict, "command": cmd, "mutation_tool": "absent" if tool_rc is None else "present"}
+        reason = str(e).splitlines()[-1]  # git's last line is the cause
+        return {"tests": "unavailable"}, [engine.entry("doctor", "", 0, "trial", "env", "fail", f"trial could not run: {reason}",
+                                                       "fix that cause (sandbox: rerun outside it); --no-trial reads the tree only",
+                                                       NOT_SKIP)]
+    state = "absent" if tool_rc is None else "present" if tool_rc == 0 else "broken"  # absent is fine: CI installs it
+    result = {"tests": verdict, "command": cmd, "mutation_tool": state}
+    entries = []
+    if state == "broken":
+        entries.append(engine.entry("doctor", "", 0, "mutation-tool", "env", "fail", f"`{tool} --version` failed ({tool_rc})",
+                                    "repair the install; in CI, set setup-command", NOT_SKIP))
+    return result, _test_entries(verdict, cmd, out) + entries
+
+
+def _test_entries(verdict, cmd, out):
     if verdict in ("pass", "none"):
-        return result, []
+        return []
     if verdict == "env":
-        return result, [engine.entry("doctor", "", 0, "toolchain", "env", "fail", f"`{shlex.split(cmd)[0]}` not found",
-                                     "install it, or set setup-command in the caller", NOT_SKIP)]
+        return [engine.entry("doctor", "", 0, "toolchain", "env", "fail", f"`{shlex.split(cmd)[0]}` not found",
+                             "install it, or set setup-command in the caller", NOT_SKIP)]
     if SANDBOX.search(out):
-        return result, [engine.entry("doctor", "", 0, "sandbox", "env", "fail", "tests need a sandbox the runner blocks",
-                                     f"set {SANDBOX_INPUTS}", NOT_SKIP)]
-    return result, [engine.entry("doctor", "", 0, "tests", "env", "fail", f"tests fail at head ({verdict}): `{cmd}`",
-                                 "fix them, or set setup-command for what they need; rerun doctor", NOT_SKIP)]
+        return [engine.entry("doctor", "", 0, "sandbox", "env", "fail", "tests need a sandbox the runner blocks",
+                             f"set {SANDBOX_INPUTS}", NOT_SKIP)]
+    return [engine.entry("doctor", "", 0, "tests", "env", "fail", f"tests fail at head ({verdict}): `{cmd}`",
+                         "fix them, or set setup-command for what they need; rerun doctor", NOT_SKIP)]
+
+
+def _channel(repo, head, project_dir, paths):
+    """The pin in rust-toolchain.toml or a plain rust-toolchain file, repo root first."""
+    for name in ("rust-toolchain.toml", "rust-toolchain"):
+        for path in (name, f"{project_dir}/{name}"):
+            if path in paths:
+                text = engine.blob(repo, head, path)
+                m = CHANNEL.search(text) if name.endswith(".toml") else re.match(r"\s*([\w.\-]+)", text)
+                if m:
+                    return m.group(1)
+    return None
 
 
 def run(repo, head_ref="HEAD", stack=None, project_dir=None, run_trial=True, runner=None):
+    try:
+        engine.git(repo, "rev-parse", "--git-dir")
+    except engine.Die:
+        raise engine.Die(f"not a git repo: {repo}")
     head = engine.resolve(repo, head_ref)
     paths = engine.git(repo, "ls-tree", "-r", "--name-only", head).splitlines()
     found = [c for c in candidates(paths) if (not stack or c[0] == stack) and (not project_dir or c[1] == project_dir)]
@@ -171,6 +204,12 @@ def run(repo, head_ref="HEAD", stack=None, project_dir=None, run_trial=True, run
             names = ", ".join(f"{s} in {d}" for s, d in found)
             entries.append(engine.entry("doctor", "", 0, "ambiguous", "needs-human", "fail", f"several projects: {names}",
                                         "pick one with --stack and --project-dir", "guessing the project"))
+        elif stack or project_dir:
+            asked = " in ".join(x for x in (stack, project_dir) if x)
+            names = ", ".join(f"{s} in {d}" for s, d in candidates(paths)) or "none"
+            entries.append(engine.entry("doctor", "", 0, "no-match", "needs-human", "fail", f"no project found for {asked}",
+                                        f"projects here: {names}; passing both --stack and --project-dir overrides detection",
+                                        "guessing the project"))
         else:
             entries.append(engine.entry("doctor", "", 0, "no-project", "needs-human", "fail",
                                         "no project found: no " + ", ".join(m for a in ADAPTERS.values() for m in a.manifests),
@@ -182,10 +221,8 @@ def run(repo, head_ref="HEAD", stack=None, project_dir=None, run_trial=True, run
         texts = {p: engine.blob(repo, head, p) for p in flows}
         callers = [(p, caller_inputs(t)) for p, t in texts.items() if CALLER in t]
         ci = read_ci(t for p, t in texts.items() if CALLER not in t)
-        toml = next((p for p in ("rust-toolchain.toml", f"{project_dir}/rust-toolchain.toml") if p in paths), None)
-        m = CHANNEL.search(engine.blob(repo, head, toml)) if toml else None
-        inputs = wanted_inputs(stack, project_dir, ci, m.group(1) if m else None)
-        entries += caller_entries(callers, inputs)
+        inputs = wanted_inputs(stack, project_dir, ci, _channel(repo, head, project_dir, paths))
+        entries += caller_entries(callers, inputs, paths)
         if run_trial:
             tried, trial_entries = trial(repo, head, stack, project_dir, runner or red.default_runner())
             entries = trial_entries + entries
