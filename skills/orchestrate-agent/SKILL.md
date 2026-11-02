@@ -1,6 +1,6 @@
 ---
 name: orchestrate-agent
-description: Orchestrate subagents on a task (free-form or GitHub issue): divide the work, delegate, verify acceptance before completing.
+description: Orchestrate subagents on a task (free-form or GitHub issue). Divide the work, delegate, verify acceptance before completing.
 disable-model-invocation: true
 ---
 
