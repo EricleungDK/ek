@@ -11,6 +11,8 @@ Reusable workflow: `EricleungDK/ek/.github/workflows/mech-review.yml`. On each P
 
 Rules: [testing standard](testing-standard.md).
 
+Adopting or repairing: `/ek:ci-doctor` runs `mech-review.py doctor` and opens the caller PR. A person merges it.
+
 ## Caller
 
 Add to your repo, pin an ek release tag (use the latest tag; `v0.2.2` shown):
