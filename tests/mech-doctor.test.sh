@@ -116,11 +116,23 @@ eq "$rc" 0 "no-trial: nothing run"
 eq "$(q "d['trial']['tests']" <<<"$out")" skipped "no-trial: skipped"
 
 # missing tool: env, names setup-command
-out="$(env -u MECH_TEST_STUB PATH="$(dirname "$(command -v git)")" python3 -I "$MR" doctor --repo "$A" 2>&1)"; rc=$?
-if command -v cargo >/dev/null; then ok "skip: cargo present"; else
-  eq "$(q "d['trial']['tests']" <<<"$out")" env "absent toolchain: env"
-  has "$(q "d['entries'][0]['hint']" <<<"$out")" "setup-command" "absent toolchain: names the input"
-fi
+PY="$(command -v python3)"; GB="$T/gitbin"; fakebin "$GB" git
+out="$(env -u MECH_TEST_STUB PATH="$GB" "$PY" -I "$MR" doctor --repo "$A" 2>&1)"; rc=$?
+eq "$(q "d['trial']['tests']" <<<"$out")" env "absent toolchain: env"
+has "$(q "d['entries'][0]['hint']" <<<"$out")" "setup-command" "absent toolchain: names the input"
+eq "$(q "d['trial']['mutation_tool']" <<<"$out")" absent "absent mutation tool reported"
+
+# toolchain pins in the other shapes Rust CI uses; stable is the default, left out
+for pin in 'env:|  RUSTUP_TOOLCHAIN: 1.96.0' 'steps:|  - uses: dtolnay/rust-toolchain@1.96.0'; do
+  R="$(mkrepo "pin$((++n))")"; echo '[package]' | put "$R" Cargo.toml
+  printf '%s\n%s\n' "${pin%%|*}" "${pin#*|}" | put "$R" .github/workflows/ci.yml; commit "$R" base
+  out="$(doctor --repo "$R" --no-trial)"
+  eq "$(q "d['inputs'].get('rust-toolchain')" <<<"$out")" 1.96.0 "toolchain from: ${pin#*|}"
+done
+R="$(mkrepo pinstable)"; echo '[package]' | put "$R" Cargo.toml
+printf 'steps:\n  - uses: dtolnay/rust-toolchain@stable\n    with:\n      toolchain: stable\n' | put "$R" .github/workflows/ci.yml; commit "$R" base
+out="$(doctor --repo "$R" --no-trial)"
+eq "$(q "d['inputs'].get('rust-toolchain')" <<<"$out")" None "stable: default, left out"
 
 # python at the root
 P="$(mkrepo py)"
