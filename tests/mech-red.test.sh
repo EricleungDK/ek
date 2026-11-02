@@ -195,6 +195,7 @@ out=$(red "$R" "$B" "$H" --head-branch agent/x); rc=$?
 eq "$rc" 1 "new test passes at red: exit 1"
 has "$(jq -r '.entries[0].problem' <<<"$out")" "fresh" "new test passes at red: names the test"
 has "$(jq -r '.entries[0].problem' <<<"$out")" "passes at the red commit" "new test passes at red: problem"
+has "$(jq -r '.entries[0].hint' <<<"$out")" "a test pinning existing behaviour goes after the \`test(red)\` commit" "new test passes at red: hint names the guard-test route"
 has "$(jq -r '.entries[0].id' <<<"$out")" "R1-" "new test passes at red: R1 id"
 eq "$(jq -r '.entries[0].file' <<<"$out")" tests/a.rs "new test passes at red: file"
 eq "$(jq -r '.entries[0].line' <<<"$out")" 7 "new test passes at red: line of the fn at red"
