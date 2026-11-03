@@ -187,11 +187,10 @@ def r1(repo, mb, head, adapter, test_globs, head_branch, agent_prefix, cmd, runn
             if verdict == "fail":
                 red_count += 1
             elif verdict == "build":
+                # compile-red: the test files are head's, so only production code (or build files) differ. R4 builds and
+                # runs the same test at head in this job; if it passes there, the PR's change is what it needs to build.
+                # A typo fails at head too. Red, with no reviewer step.
                 compile_red += 1
-                entries.append(entry("R1", path, line, f"compile-red:{name}", "agent-fixable", "confirm",
-                                     f"compile-red: `{name}` does not build on the base's production code, counts as red",
-                                     "reviewer confirms the build failure is the ticket's reason (a new API), not a typo",
-                                     forbidden))
             elif verdict == "pass":
                 guards.append(name)
             else:
@@ -209,9 +208,9 @@ def r1(repo, mb, head, adapter, test_globs, head_branch, agent_prefix, cmd, runn
                              "add or change a test so it fails on the base's code for the ticket's reason; tests that "
                              "pin existing behaviour can stay as guards",
                              forbidden))
-    note = f"{red_count} of {len(tests)} new or changed test(s) fail on the base's production code"
+    note = f"{red_count + compile_red} of {len(tests)} new or changed test(s) fail on the base's production code"
     if compile_red:
-        note += f"; {compile_red} compile-red"
+        note += f" ({compile_red} compile-red)"
     return check("fail" if any(e["severity"] == "fail" for e in entries) else "pass", note), entries
 
 
