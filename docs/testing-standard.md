@@ -90,13 +90,8 @@ If a behaviour can be tested at unit level, test it there. Push e2e to the one p
 
 | Check | Enforces | Status |
 |---|---|---|
-<<<<<<< HEAD
 | R1 red-first | The tests base..head adds or changes run on the base's production code (a worktree at the merge base with head's test-path files on top). At least one fails there; a test that does not build there is `compile-red` and counts as red (R4 builds and runs it at head in the same job, so only this PR's production change can be what it needs); the rest are guards. R4 runs them at head. Commit order and subjects do not matter, so a later commit fixes an R1 fail. A PR whose only new tests are files of another language under `test-paths` (a python PTY smoke in a rust crate) gets an agent-fixable fail per file with the route in the hint (a stack test; smoke-only logic moved into a testable fn). Agent branches only (`--head-branch` starts with the agent prefix), when production files changed. | implemented (#16; fails-on-base) |
-| R2 test-diff guard | Cheat rows above: removed tests (a rename with the same asserts is not a removal), new skip/ignore/xfail/only, `should_panic` added to an existing test (`confirm`), fewer asserts per surviving test fn, weakened or changed expected values (`confirm`), unreasoned suppressions, protected paths. No waiver in the PR body. | implemented (#13, #26, #27, review round 1) |
-=======
-| R1 red-first | First `test(red): …` commit in base..head touches no production file. Its new or changed tests fail there (build fails: `compile-red`, confirm). They pass at head. Agent branches only (`--head-branch` starts with the agent prefix), when production files changed. Runs in a worktree at the red commit. | implemented (#16) |
 | R2 test-diff guard | Cheat rows above: removed tests (a rename with the same asserts is not a removal), new skip/ignore/xfail/only, `should_panic` added to an existing test (`confirm`), fewer asserts per surviving test fn, weakened or changed expected values (`confirm`), unreasoned suppressions, mutation skips and mutation config edits (`needs-human`), protected paths. No waiver in the PR body. | implemented (#13, #26, #27, review round 1) |
->>>>>>> origin/main
 
 R2 assert rules:
 
