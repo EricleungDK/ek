@@ -12,7 +12,7 @@ eq "inputs" "$(jq -c .inputs <<<"$out")" "$RUST_INPUTS"
 eq "trial skipped" "$(jq -r .trial.tests <<<"$out")" skipped
 eq "one entry" "$(jq -r '.entries|length' <<<"$out")" 1
 eq "entry class" "$(jq -r '.entries[0].class' <<<"$out")" needs-human
-has "entry names the caller" "$(jq -r '.entries[0].hint' <<<"$out")" "EricleungDK/ek/.github/workflows/mech-review.yml@<tag>"
+has "entry names the caller" "$(jq -r '.entries[0].hint' <<<"$out")" "EricleungDK/ek/.github/workflows/mech-review.yml@v0"
 has "entry repeats the inputs" "$(jq -r '.entries[0].hint' <<<"$out")" '"rust-toolchain": "1.96.0"'
 eq "--no-trial runs nothing" "$(wc -l < "$STUB_LOG")" 0
 
