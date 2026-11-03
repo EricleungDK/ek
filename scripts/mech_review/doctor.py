@@ -128,7 +128,7 @@ def caller_entries(callers, inputs, paths):
     if not callers:
         return [engine.entry("doctor", ".github/workflows/mech-review.yml", 0, "no-caller", "needs-human", "fail",
                              "no mech-review caller workflow",
-                             "add a caller with `uses: " + CALLER + "<tag>` and these inputs: " + json.dumps(inputs),
+                             "add a caller with `uses: " + CALLER + "v0` and these inputs: " + json.dumps(inputs),
                              NOT_YOURS)]
     path, have = callers[0]
     return [engine.entry("doctor", path, 0, name, "needs-human", "fail", f"caller input {name} missing or wrong",
