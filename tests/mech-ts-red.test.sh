@@ -199,9 +199,9 @@ eq "$(jq -r '.entries[0].class' <<<"$out")" agent-fixable "ts red-pass class age
 
 RED_OUT=build agent_repo nobuild
 out=$(red "$R" "$B" "$H" --head-branch agent/x); rc=$?
-eq "$rc" 0 "ts build failure at red is confirm, exit 0"
-eq "$(jq -r '.entries[0].severity' <<<"$out")" confirm "ts compile-red severity confirm"
-has "$(jq -r '.entries[0].problem' <<<"$out")" "compile-red" "ts compile-red named"
+eq "$rc" 0 "ts build failure on base counts as red, exit 0"
+eq "$(jq -r '.entries | length' <<<"$out")" 0 "ts compile-red: no entry, no reviewer step"
+has "$(jq -r .checks.R1.note <<<"$out")" "(1 compile-red)" "ts compile-red named in the note"
 
 RED_OUT=none agent_repo nomatch
 out=$(red "$R" "$B" "$H" --head-branch agent/x); rc=$?

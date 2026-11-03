@@ -164,9 +164,9 @@ eq "$(jq -r '.entries[0].check' <<<"$out")" R1 "python red-pass check R1"
 
 RED_OUT=build agent_repo nobuild
 out=$(red "$R" "$B" "$H" --head-branch agent/x); rc=$?
-eq "$rc" 0 "python compile-red is confirm, exit 0"
-eq "$(jq -r '.entries[0].severity' <<<"$out")" confirm "python compile-red severity confirm"
-has "$(jq -r '.entries[0].problem' <<<"$out")" "compile-red" "python compile-red named"
+eq "$rc" 0 "python compile-red counts as red, exit 0"
+eq "$(jq -r '.entries | length' <<<"$out")" 0 "python compile-red: no entry, no reviewer step"
+has "$(jq -r .checks.R1.note <<<"$out")" "(1 compile-red)" "python compile-red named in the note"
 
 RED_PROD=1 agent_repo prodred
 out=$(red "$R" "$B" "$H" --head-branch agent/x); rc=$?

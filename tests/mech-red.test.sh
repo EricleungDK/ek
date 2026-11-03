@@ -234,10 +234,18 @@ lacks "$out" "$FIRST_ID" "later fix: the R1 entry is gone"
 
 RED_OUT=build agent_repo r1build
 out=$(red "$R" "$B" "$H" --head-branch agent/x); rc=$?
-eq "$rc" 0 "compile-red: exit 0 (confirm only)"
-eq "$(jq -r '.entries[0].severity' <<<"$out")" confirm "compile-red: confirm entry"
-has "$(jq -r '.entries[0].problem' <<<"$out")" "compile-red" "compile-red: problem names it"
-eq "$(jq -r .summary <<<"$out")" "pass $H (0 fail, 1 confirm; ran: R1 R4; skipped: R2 R3)" "compile-red: summary counts the confirm"
+# a test that builds and passes at head (R4, same job) but does not build on the base's code needs this PR's production
+# change: it counts as red with no reviewer step (a typo would fail at head too)
+eq "$rc" 0 "compile-red: exit 0"
+eq "$(jq -r '.entries | length' <<<"$out")" 0 "compile-red: no entry, no reviewer step"
+eq "$(jq -r .checks.R1.note <<<"$out")" "1 of 1 new or changed test(s) fail on the base's production code (1 compile-red)" "compile-red: counted as red in the note"
+eq "$(jq -r .summary <<<"$out")" "pass $H (0 fail, 0 confirm; ran: R1 R4; skipped: R2 R3)" "compile-red: summary has no confirm"
+
+# compile-red on base, but the test does not build at head either: R4 fails it, so the PR is not green
+RED_OUT=build HEAD_OUT=build agent_repo r1buildhead
+out=$(red "$R" "$B" "$H" --head-branch agent/x); rc=$?
+eq "$rc" 1 "compile-red on base and at head: exit 1"
+eq "$(jq -r .checks.R4.status <<<"$out")" fail "compile-red on base and at head: R4 fail"
 
 RED_NOTEST=1 agent_repo r1notest
 out=$(red "$R" "$B" "$H" --head-branch agent/x); rc=$?
