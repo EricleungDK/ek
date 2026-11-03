@@ -1,52 +1,148 @@
 # ek
 
-Agent workflow kit for Claude Code: one plugin, same setup on every machine and in cloud sessions.
+Agent workflow kit: skills, hooks and CI that make a coding agent prove its work before it says "done".
 
-| Part | What |
-|---|---|
-| `skills/orchestrate-agent` | `/ek:orchestrate-agent`: divide, delegate, verify acceptance |
-| `skills/failure-triage` | classify a red result (sandbox/env, stale, flaky, unowned, real bug) before editing code; mech-review JSON: classify from entries, rounds per id (`mech.md`) |
-| `skills/taste-it` | `/ek:taste-it`: verify by using it. Black-box taster, `.ek/scenarios/` regression suite, fix/human verdicts |
-| `skills/ci-doctor` | `/ek:ci-doctor`: set up or repair the mech-review caller. Runs `mech-review.py doctor`, ends in a PR a person merges |
-| `scripts/scenarios.py` | scenario runner: `run [ID]`, `check`, `can-fail REF`, `tree-hash`; path shown in the SessionStart `[ek] Scenario runner:` line |
-| `scripts/mech-review.py` | mechanical review engine: `r2`/`red`/`all`/`mutants --repo . --base main --head HEAD --stack rust\|python\|ts --test-paths 'tests/**' --protected-paths '.github/**' [--head-branch B --agent-prefix agent/ --test-cmd 'cargo test'] [--format text]` → contract JSON, exit 0 pass / 1 fail / 2 usage. R2 test-diff guard (`r2`); R1 red-first and R4 determinism (`red`, runs tests through a worktree, `n/a` without toolchain); R3 mutation on the diff (`mutants`: cargo-mutants `--in-diff` for rust, mutmut 3.8.1 on the changed files for python, Stryker 10.0.0 on the changed lines for ts; `--shard K/N`, `--mutation-budget MIN`; `n/a (env)` without the tool); `plan` (does the mutants job run, its shards) and `merge` (shard results into one). `--help` for contract |
-| `skills/finish` | end-of-work report: done (evidence per criterion) or blocked (Needs-you block); mech per-check status with head SHA, skipped = not run |
-| [`docs/testing-standard.md`](docs/testing-standard.md) | testing standard: what a good test is, forbidden cheats, mech-review vs code review |
-| `.github/workflows/mech-review.yml` | reusable `workflow_call` mech-review: `guard` runs R2 with no toolchain, `red-first` runs R1/R4 with the stack toolchain, `plan` decides whether `mutants` runs (R3 shard matrix, only when a production file changed), `report` merges them into one `<!-- mech-review -->` PR comment and sets the check. Adopters call `@v0`, which each release moves: [`docs/mech-review-ci.md`](docs/mech-review-ci.md) |
-| `.github/workflows/mech-review-self.yml` | ek's own caller of the reusable workflow (local `uses: ./`), the demo path |
-| `scripts/mech-comment.py` | comment poster for the report job: `--envelope r2=FILE --envelope red=FILE` merged into one result, renders the JSON (summary, table, JSON block), find-or-edit via GitHub API; exit 0 pass / 1 fail / 3 API error / 4 no result. `scripts/mech_review/comment.py` is the pure render, `merge.py` the job merge |
-| `SessionStart` hook | preflight warnings + working rules into context |
-| `PostToolUseFailure` hook | known Bash failure signatures → one context line |
-| `Stop` / `SubagentStop` hook | blocks once per new change set until the finish report is given |
+- **Classify before fixing**: a red test is triaged (env, stale, flaky, real bug) before any code edit.
+- **Verify by using it**: a black-box taster runs the deliverable as a real user, backed by repeatable scenarios.
+- **Evidence-based finish**: every "done" carries a fresh result per acceptance criterion, or a Needs-you block.
+- **Mechanical review in CI**: test-diff guard, red-first, determinism and mutation checks on every PR.
+
+Works in Claude Code, Codex, GitHub Copilot, and any agent that reads [Agent Skills](https://skills.sh).
 
 ## Install
 
-Local (each PC/laptop):
+Pick **one** route per agent; installing two gives you every skill twice.
 
-```
+<details open>
+<summary><b>Claude Code</b> (skills + hooks)</summary>
+
+```bash
 claude plugin marketplace add EricleungDK/ek
 claude plugin install ek@ek --scope user
 ```
 
-Cloud (claude.ai/code): cloud sessions load no plugins, so add to the environment's setup script:
+Update: `claude plugin update ek@ek`.
 
-```
+</details>
+
+<details>
+<summary><b>Claude Code on the web</b> (claude.ai/code)</summary>
+
+Cloud sessions load no plugins. Add to the environment's setup script:
+
+```bash
 curl -fsSL https://raw.githubusercontent.com/EricleungDK/ek/main/cloud/setup.sh | bash
 ```
 
-It installs skills + hooks into each repo's `.claude/`, hidden from `git status`. If no repo is found at setup time, or to commit the kit into a repo instead: `bash ~/.ek/cloud/install.sh <repo>`.
+Installs skills + hooks into each repo's `.claude/`, hidden from `git status`, and pulls the latest on each setup. No repo found yet, or want the kit committed: `bash ~/.ek/cloud/install.sh <repo>`.
 
-Update: `claude plugin update ek@ek` locally; cloud pulls on each setup.
+</details>
 
-## Test
+<details>
+<summary><b>Codex</b></summary>
 
+```bash
+codex plugin marketplace add EricleungDK/ek
+codex plugin add ek@ek
 ```
+
+Updates at startup when `version` in `plugin.json` changes.
+
+</details>
+
+<details>
+<summary><b>GitHub Copilot</b> (CLI and VS Code)</summary>
+
+```bash
+copilot plugin marketplace add EricleungDK/ek
+copilot plugin install ek@ek
+```
+
+Auto-update, once, in `~/.copilot/settings.json`:
+
+```json
+{
+  "extraKnownMarketplaces": {
+    "ek": { "source": { "source": "github", "repo": "EricleungDK/ek" }, "autoUpdate": true }
+  }
+}
+```
+
+VS Code: **Chat: Install Plugin From Source** → `https://github.com/EricleungDK/ek`.
+
+</details>
+
+<details>
+<summary><b>Any other agent</b> (Cursor, Gemini CLI, OpenCode, Windsurf, Amp, …)</summary>
+
+```bash
+npx skills@latest add EricleungDK/ek -a <agent>   # omit -a to choose
+```
+
+Copies editable skill files. Update: `npx skills@latest update`.
+
+</details>
+
+### Hooks and scripts outside Claude Code
+
+The hooks (preflight, failure hints, finish gate) run in Claude Code. Elsewhere, skills still work: those that need the kit's scripts use `~/.ek`, cloned once:
+
+```bash
+git clone --depth 1 https://github.com/EricleungDK/ek ~/.ek
+```
+
+`orchestrate-agent` relies on Claude Code subagents (`Agent`, `SendMessage`); the other skills are harness-neutral.
+
+## Skills
+
+| Skill | Use |
+|---|---|
+| [`failure-triage`](skills/failure-triage/SKILL.md) | A test, build or CI job goes red: classify it (sandbox/env, stale, flaky, unowned, real bug) before editing code. Reads mech-review JSON directly. |
+| [`taste-it`](skills/taste-it/SKILL.md) | Verify a deliverable by using it: black-box taster, `.ek/scenarios/` regression suite, fix/human verdicts. |
+| [`finish`](skills/finish/SKILL.md) | End-of-work report: done (evidence per criterion) or blocked (Needs-you block). |
+| [`ci-doctor`](skills/ci-doctor/SKILL.md) | Set up or repair a repo's mech-review CI; ends in a PR a person merges. |
+| [`orchestrate-agent`](skills/orchestrate-agent/SKILL.md) | `/ek:orchestrate-agent`: divide a task, delegate to subagents, verify acceptance. User-invoked only. |
+
+## Hooks (Claude Code)
+
+| Hook | Does |
+|---|---|
+| `SessionStart` | Preflight warnings + working rules into context; prints the scenario runner path. |
+| `PostToolUseFailure` | Known Bash failure signatures → one context line. |
+| `Stop` / `SubagentStop` | Blocks once per new change set until the finish report is given. |
+
+## mech-review CI
+
+Reusable GitHub workflow that checks agent PRs mechanically and posts one `<!-- mech-review -->` comment:
+
+| Check | Rule |
+|---|---|
+| `guard` | R2: tests not weakened or deleted (no toolchain needed). |
+| `red-first` | R1: new tests fail before the fix. R4: results are deterministic. |
+| `mutants` | R3: mutation testing on the diff (cargo-mutants, mutmut, Stryker). Runs only when production code changed. |
+
+Stacks: Rust, Python, TypeScript. Adopt with `/ek:ci-doctor`, or by hand: [docs/mech-review-ci.md](docs/mech-review-ci.md). Testing rules behind the checks: [docs/testing-standard.md](docs/testing-standard.md).
+
+<details>
+<summary>Scripts</summary>
+
+| Script | Does |
+|---|---|
+| `scripts/mech-review.py` | Review engine: `r2`, `red`, `mutants`, `all`, `plan`, `merge`, `doctor`. Contract JSON; exit 0 pass / 1 fail / 2 usage. `--help` for flags. |
+| `scripts/scenarios.py` | Scenario runner: `run [ID]`, `check`, `can-fail REF`, `tree-hash`. |
+| `scripts/mech-comment.py` | Merges job envelopes, renders and posts the PR comment. Exit 0 pass / 1 fail / 3 API error / 4 no result. |
+
+</details>
+
+## Development
+
+```bash
 bash tests/run.sh
 ```
 
-Skill evals (kit dev only; plugin users need none of this):
+Skill evals (kit dev only):
 
-```
+```bash
 claude plugin eval . --judge-model claude-opus-5-5 --scaffold --allow-tools Bash Edit Write
 ```
 
