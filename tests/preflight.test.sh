@@ -1,6 +1,9 @@
 source "$(dirname "$0")/lib.sh"
 PF="$ROOT/scripts/preflight.sh"
 T="$(mktemp -d)"; trap 'rm -rf "$T"' EXIT
+# the host's browser must not reach preflight: GitHub's ubuntu image sets CHROME_BIN, which made the
+# "no chromium" cases see one (the release run for v0.2.5 failed on them)
+unset CHROME_BIN
 
 run() { PATH="$1" HOME="$T/home" bash "$PF" "$2" 2>&1; }
 
