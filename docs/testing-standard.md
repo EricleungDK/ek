@@ -1,6 +1,6 @@
 # Testing standard
 
-One bar for tests in every ek-adopting repo. Apps link this from their agent docs (`AGENTS.md` / `CLAUDE.md`) and add a short local doc with repo specifics ([per-app doc](#per-app-doc)). Don't fork these rules into the app.
+One bar for tests in every ekit-adopting repo. Apps link this from their agent docs (`AGENTS.md` / `CLAUDE.md`) and add a short local doc with repo specifics ([per-app doc](#per-app-doc)). Don't fork these rules into the app.
 
 Status: R1 (red-first) and R4 (determinism) implemented (#16, `mech-review.py red`). R2 implemented (#13). R3 (mutation on the diff) implemented (#17, `mech-review.py mutants`, cargo-mutants 27.1.0). Python stack (#21): R2, R1, R4 and R3 (mutmut 3.8.1); see [CI doc](mech-review-ci.md#python-r3-mutmut). TypeScript/JavaScript stack (#22): R2, R1, R4 (vitest, jest) and R3 (Stryker 10.0.0); see [CI doc](mech-review-ci.md#typescript-r3-stryker). Until a check runs, a reviewer applies its rule by hand. Never report a planned check as run.
 
@@ -150,7 +150,7 @@ Entry fields (stable; add fields, never rename):
 | `hint` | intended fix |
 | `forbidden` | shortcut not allowed |
 
-Envelope: head SHA, base SHA, ek version, per-check status (`pass|fail|partial|n/a|skipped`) with note, entries, summary.
+Envelope: head SHA, base SHA, ekit version, per-check status (`pass|fail|partial|n/a|skipped`) with note, entries, summary.
 
 Summary:
 
@@ -165,9 +165,9 @@ Each repo writes a short `docs/testing.md` (or section in `AGENTS.md`). Link the
 ```markdown
 # Testing: <app>
 
-Standard: https://github.com/EricleungDK/ek/blob/<ek-tag>/docs/testing-standard.md
+Standard: https://github.com/EricleungDK/ekit/blob/<ekit-tag>/docs/testing-standard.md
 Rules there apply here. This file holds only repo specifics.
-Link must match the ek tag pinned in the caller workflow.
+Link must match the ekit tag pinned in the caller workflow.
 
 - Stack: rust
 - Agent branch prefix: agent/

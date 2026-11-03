@@ -34,4 +34,4 @@ json.dump(cfg, open(dst, "w"), indent=2)
 EOF
 if (( tracked )); then git -C "$REPO" update-index --skip-worktree .claude/settings.json
 else hide "/.claude/settings.json"; fi
-echo "ek installed into $REPO"
+echo "ekit installed into $REPO"

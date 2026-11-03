@@ -1,6 +1,6 @@
 """Scenario runner: `scenarios.py [--repo DIR] run [ID]|tree-hash|check|can-fail REF`.
 
-Runs .ek/scenarios/<slug>/run.sh in fresh temp dirs; evidence goes to <git dir>/ek/ (or $EK_STATE/scenarios/<repo key>/).
+Runs .ekit/scenarios/<slug>/run.sh in fresh temp dirs; evidence goes to <git dir>/ekit/ (or $EKIT_STATE/scenarios/<repo key>/).
 Repo-local so the Stop hook (plugin env) and sandboxed Bash (read-only HOME) agree on one location.
 """
 import hashlib
@@ -13,7 +13,7 @@ import sys
 import tempfile
 import time
 
-LAYOUT = ".ek/scenarios/<slug>/SCENARIO.md + run.sh"
+LAYOUT = ".ekit/scenarios/<slug>/SCENARIO.md + run.sh"
 NODOC = "missing SCENARIO.md — document it (story, covers, steps, expected)"
 
 
@@ -53,16 +53,23 @@ def tree_hash(repo):
     return hashlib.sha1("\0".join(parts).encode()).hexdigest()
 
 
+def env(name):
+    """EKIT_<name>, falling back to the pre-rename EK_<name>."""
+    return os.environ.get("EKIT_" + name) or os.environ.get("EK_" + name)
+
+
 def outdir(repo):
-    if os.environ.get("EK_STATE"):
+    if env("STATE"):
         key = hashlib.sha1(os.path.realpath(repo).encode()).hexdigest()[:12]
-        return os.path.join(os.environ["EK_STATE"], "scenarios", key)
+        return os.path.join(env("STATE"), "scenarios", key)
     gd = git(repo, "rev-parse", "--absolute-git-dir").strip()
-    return os.path.join(gd or os.path.join(repo, ".git"), "ek")
+    return os.path.join(gd or os.path.join(repo, ".git"), "ekit")
 
 
 def root(repo):
-    return os.path.join(repo, ".ek", "scenarios")
+    """.ekit/scenarios; a pre-rename repo with only .ek/scenarios keeps working."""
+    new, old = os.path.join(repo, ".ekit", "scenarios"), os.path.join(repo, ".ek", "scenarios")
+    return old if not os.path.isdir(new) and os.path.isdir(old) else new
 
 
 def find(repo):
@@ -72,7 +79,7 @@ def find(repo):
 
 def timeout():
     try:
-        return float(os.environ.get("EK_SCENARIO_TIMEOUT") or 300)
+        return float(env("SCENARIO_TIMEOUT") or 300)
     except ValueError:
         return 300.0
 
@@ -86,9 +93,10 @@ def run_one(repo, sid, ids, tdir):
         cwd = ""
     else:
         parent = os.path.dirname(sid)
-        env = dict(os.environ, EK_REPO=repo, EK_SCENARIO_DIR=d,
-                   EK_PARENT_DIR=os.path.join(root(repo), parent) if parent in ids else "")
-        cwd = tempfile.mkdtemp(prefix="ek-scenario-")
+        pdir = os.path.join(root(repo), parent) if parent in ids else ""
+        env = dict(os.environ, EKIT_REPO=repo, EKIT_SCENARIO_DIR=d, EKIT_PARENT_DIR=pdir,
+                   EK_REPO=repo, EK_SCENARIO_DIR=d, EK_PARENT_DIR=pdir)  # EK_*: pre-rename scenarios
+        cwd = tempfile.mkdtemp(prefix="ekit-scenario-")
         t0 = time.time()
         limit = timeout()
         p = subprocess.Popen(["bash", os.path.join(d, "run.sh")], cwd=cwd, env=env, stdout=subprocess.PIPE,
@@ -120,7 +128,7 @@ def cmd_run(repo, only=None):
         only = only.strip("/")
         ids = [i for i in ids if i == only or i.startswith(only + "/")]
         if not ids:
-            print(f"no scenario '{only}' (or children) under .ek/scenarios/")
+            print(f"no scenario '{only}' (or children) under .ekit/scenarios/")
             return 2
     th = tree_hash(repo)
     out = outdir(repo)
@@ -148,7 +156,7 @@ def cmd_can_fail(repo, ref=None):
     if not ids:
         print(f"no scenarios found. expected layout: {LAYOUT}")
         return 2
-    tmp = tempfile.mkdtemp(prefix="ek-canfail-")
+    tmp = tempfile.mkdtemp(prefix="ekit-canfail-")
     wt = os.path.join(tmp, "wt")
     try:
         r = subprocess.run(["git", "-C", repo, "worktree", "add", "--detach", wt, ref], capture_output=True, text=True)

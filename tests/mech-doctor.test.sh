@@ -65,7 +65,7 @@ eq "$(git -C "$A" worktree list | wc -l | tr -d ' ')" 1 "trial worktree removed"
 put "$A" .github/workflows/mech-review.yml <<'Y'
 jobs:
   mech-review:
-    uses: EricleungDK/ek/.github/workflows/mech-review.yml@v0.2.2
+    uses: EricleungDK/ekit/.github/workflows/mech-review.yml@v0.2.2
     with:
       stack: rust
       test-paths: |
@@ -85,7 +85,7 @@ lacks "$hints" "stack:" "stack already right: no entry"
 put "$A" .github/workflows/mech-review.yml <<'Y'
 jobs:
   mech-review:
-    uses: EricleungDK/ek/.github/workflows/mech-review.yml@v0.2.2
+    uses: EricleungDK/ekit/.github/workflows/mech-review.yml@v0.2.2
     with:
       stack: rust
       rust-toolchain: 1.96.0

@@ -46,7 +46,7 @@ echo 'on: workflow_dispatch  # was pull_request' >> .github/workflows/mech-revie
 git add -A; git commit -qm "feat: upload"
 head=$(git rev-parse HEAD); base=$(git rev-parse HEAD~1)
 sed "s/HEAD_SHA/$head/; s/BASE_SHA/$base/" > mech.json <<'JSON'
-{"ek":"0.1.1","base":"BASE_SHA","head":"HEAD_SHA",
+{"ekit":"0.1.1","base":"BASE_SHA","head":"HEAD_SHA",
  "checks":{"R1":{"status":"skipped","note":"not implemented"},
            "R2":{"status":"fail","note":"3 entries"},
            "R3":{"status":"skipped","note":"not implemented"},

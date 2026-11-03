@@ -1,6 +1,6 @@
 # mech-review CI (adopters)
 
-Reusable workflow: `EricleungDK/ek/.github/workflows/mech-review.yml`. On each PR it runs up to five jobs and merges them into one sticky comment (marker `<!-- mech-review -->`) and one check result:
+Reusable workflow: `EricleungDK/ekit/.github/workflows/mech-review.yml`. On each PR it runs up to five jobs and merges them into one sticky comment (marker `<!-- mech-review -->`) and one check result:
 
 - `guard`: R2 test-diff guard (`scripts/mech-review.py r2`), git diffs only, no toolchain.
 - `red-first`: R1 red-first and R4 determinism (`scripts/mech-review.py red`). Compiles and runs the PR's new or changed tests, so it needs the stack toolchain (rust: stable; python: a venv with pytest; ts: node 22 and the repo's installed dependencies).
@@ -11,11 +11,11 @@ Reusable workflow: `EricleungDK/ek/.github/workflows/mech-review.yml`. On each P
 
 Rules: [testing standard](testing-standard.md).
 
-Adopting or repairing: `/ek:ci-doctor` runs `mech-review.py doctor` and opens the caller PR. A person merges it.
+Adopting or repairing: `/ekit:ci-doctor` runs `mech-review.py doctor` and opens the caller PR. A person merges it.
 
 ## Caller
 
-Add to your repo. Follow the major tag `v0`: each ek release moves it, so your repo never needs a bump PR:
+Add to your repo. Follow the major tag `v0`: each ekit release moves it, so your repo never needs a bump PR:
 
 ```yaml
 name: mech-review
@@ -26,7 +26,7 @@ permissions:
   pull-requests: write
 jobs:
   mech-review:
-    uses: EricleungDK/ek/.github/workflows/mech-review.yml@v0
+    uses: EricleungDK/ekit/.github/workflows/mech-review.yml@v0
     with:
       stack: rust
       test-paths: |
@@ -39,10 +39,10 @@ Python: the same, with `stack: python` and `test-paths: tests/**` (`tests/test_*
 
 TypeScript / JavaScript: `stack: ts` with `test-paths: src/**/*.test.ts` (or `tests/**`). `.ts .tsx .js .jsx .mjs .cjs` files are this stack; the project dir needs a `package.json`.
 
-The ek scripts run at the ref you call (`job.workflow_sha` of the called file), not at your checkout.
+The ekit scripts run at the ref you call (`job.workflow_sha` of the called file), not at your checkout.
 
 Releases: the plugin version in `.claude-plugin/plugin.json` is the source of truth. Tagging `vX.Y.Z` (it must match that
-version) runs `.github/workflows/release.yml`: ek's tests, then `scripts/move-major-tag.sh` moves `vX` to the release, forward
+version) runs `.github/workflows/release.yml`: ekit's tests, then `scripts/move-major-tag.sh` moves `vX` to the release, forward
 only. A caller on `@v0` picks it up on its next PR run. To freeze a repo on one release, pin the exact tag (`@v0.2.4`)
 instead; then upgrading is a bump in that repo again.
 

@@ -225,7 +225,7 @@ eq "$(jq -r '[.entries[] | select(.check=="R3")][0].severity' <<<"$out")" confir
 
 # no tool: n/a (env), never a pass
 mrepo notool
-out=$(MECH_TEST_STUB= python3 -I "$MR" mutants --repo "$R" --base "$B" --head "$H" --stack ts --test-paths 'tests/**' --mutants-cmd "ek-no-such-stryker"); rc=$?
+out=$(MECH_TEST_STUB= python3 -I "$MR" mutants --repo "$R" --base "$B" --head "$H" --stack ts --test-paths 'tests/**' --mutants-cmd "ekit-no-such-stryker"); rc=$?
 eq "$(jq -r .checks.R3.status <<<"$out")" n/a "ts no stryker: R3 n/a"
 has "$(jq -r .checks.R3.note <<<"$out")" "stryker not installed (env)" "ts no stryker: the note names the install"
 lacks "$(jq -r .summary <<<"$out")" "all pass" "ts no stryker: never all pass"

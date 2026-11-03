@@ -7,16 +7,16 @@ dirs="$(cd "$ROOT" && for d in skills/*/; do echo "./${d%/}"; done | sort)"
 eq "$listed" "$dirs" "plugin.json skills array = skills/*/"
 
 repo="$(python3 -I -c 'import json,sys; print(json.load(open(sys.argv[1])).get("repository",""))' "$ROOT/.claude-plugin/plugin.json")"
-eq "$repo" "https://github.com/EricleungDK/ek" "plugin.json repository"
+eq "$repo" "https://github.com/EricleungDK/ekit" "plugin.json repository"
 
-# A skill that needs kit scripts must work with no SessionStart hook (no `[ek] Scenario runner:` line).
+# A skill that needs kit scripts must work with no SessionStart hook (no `[ekit] Scenario runner:` line).
 for f in $(grep -l '<kit>' "$ROOT"/skills/*/SKILL.md); do
-  has "$(cat "$f")" '~/.ek' "$(basename "$(dirname "$f")"): <kit> falls back to ~/.ek"
+  has "$(cat "$f")" '~/.ekit' "$(basename "$(dirname "$f")"): <kit> falls back to ~/.ekit"
 done
 
 readme="$(cat "$ROOT/README.md")"
-has "$readme" "claude plugin install ek@ek" "README: Claude Code install"
-has "$readme" "codex plugin marketplace add EricleungDK/ek" "README: Codex install"
-has "$readme" "copilot plugin marketplace add EricleungDK/ek" "README: Copilot install"
-has "$readme" "npx skills@latest add EricleungDK/ek" "README: other agents install"
+has "$readme" "claude plugin install ekit@ekit" "README: Claude Code install"
+has "$readme" "codex plugin marketplace add EricleungDK/ekit" "README: Codex install"
+has "$readme" "copilot plugin marketplace add EricleungDK/ekit" "README: Copilot install"
+has "$readme" "npx skills@latest add EricleungDK/ekit" "README: other agents install"
 done_tests

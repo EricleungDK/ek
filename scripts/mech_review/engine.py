@@ -20,7 +20,7 @@ class Die(Exception):
     """usage or git error: CLI exits 2."""
 
 
-def ek_version():
+def ekit_version():
     with open(PLUGIN) as f:
         return json.load(f)["version"]
 
@@ -394,7 +394,7 @@ def summarize(head, checks, entries):
 
 
 def envelope(base, head, entries, checks):
-    return {"ek": ek_version(), "base": base, "head": head, "checks": checks, "entries": entries,
+    return {"ekit": ekit_version(), "base": base, "head": head, "checks": checks, "entries": entries,
             "summary": summarize(head, checks, entries)}
 
 

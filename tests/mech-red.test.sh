@@ -272,12 +272,12 @@ eq "$(jq -r .checks.R1.note <<<"$out")" "1 of 2 new or changed test(s) fail on t
 
 # ---- R1 env: no toolchain → n/a, never pass ----
 agent_repo r1env
-out=$(red_nostub "$R" "$B" "$H" --head-branch agent/x --test-cmd "ek-no-such-toolchain test"); rc=$?
+out=$(red_nostub "$R" "$B" "$H" --head-branch agent/x --test-cmd "ekit-no-such-toolchain test"); rc=$?
 eq "$rc" 0 "toolchain absent: no entries, exit 0"
 eq "$(jq -r .checks.R1.status <<<"$out")" n/a "toolchain absent: R1 n/a"
 has "$(jq -r .checks.R1.note <<<"$out")" "toolchain absent" "toolchain absent: R1 note"
 eq "$(jq -r .checks.R4.status <<<"$out")" n/a "toolchain absent: R4 n/a"
-has "$(jq -r .checks.R1.note <<<"$out")" "\`ek-no-such-toolchain\` not found" "toolchain absent: R1 note names the tool"
+has "$(jq -r .checks.R1.note <<<"$out")" "\`ekit-no-such-toolchain\` not found" "toolchain absent: R1 note names the tool"
 has "$(jq -r .checks.R1.note <<<"$out")" "setup-command" "toolchain absent: R1 note names setup-command"
 has "$(jq -r .checks.R4.note <<<"$out")" "setup-command" "toolchain absent: R4 note names setup-command"
 eq "$(jq -r .summary <<<"$out")" "pass $H (0 fail, 0 confirm; ran: none; skipped: R2 R3; n/a: R1 R4)" "toolchain absent: summary names n/a"
@@ -389,7 +389,7 @@ def check(name, cond, detail=""):
 
 def env(checks, entries):
     fails = sum(1 for e in entries if e["severity"] == "fail")
-    return {"ek": "0.1.1", "base": BASE, "head": H, "checks": checks, "entries": entries,
+    return {"ekit": "0.1.1", "base": BASE, "head": H, "checks": checks, "entries": entries,
             "summary": f"{'fail' if fails else 'pass'} {H}"}
 
 

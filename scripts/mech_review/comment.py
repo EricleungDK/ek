@@ -220,7 +220,7 @@ def http_call(token):
             "Accept": "application/vnd.github+json",
             "X-GitHub-Api-Version": "2022-11-28",
             "Content-Type": "application/json",
-            "User-Agent": "ek-mech-review",
+            "User-Agent": "ekit-mech-review",
         })
         try:
             with urllib.request.urlopen(req, timeout=30) as resp:

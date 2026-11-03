@@ -50,7 +50,7 @@ def env(entries=(), summary=None):
     if summary is None:
         status = "fail" if fails else "pass"
         summary = f"{status} {SHA} ({fails} fail, {confirms} confirm; ran: R2; skipped: R1 R3 R4)"
-    return {"ek": "0.1.1", "base": BASE, "head": SHA,
+    return {"ekit": "0.1.1", "base": BASE, "head": SHA,
             "checks": {"R2": {"status": "fail" if fails else "pass", "note": ""}},
             "entries": list(entries), "summary": summary}
 
@@ -362,7 +362,7 @@ check("cli: API unreachable exits 3", p.returncode == 3, f"rc={p.returncode} {p.
 
 # ---- named envelopes: one comment merges the r2 guard and the red-first job ----
 def job_env(checks, entries, head=SHA):
-    return {"ek": "0.1.1", "base": BASE, "head": head, "checks": checks, "entries": list(entries), "summary": "x"}
+    return {"ekit": "0.1.1", "base": BASE, "head": head, "checks": checks, "entries": list(entries), "summary": "x"}
 
 
 R2_ENV = os.path.join(tmp, "r2.json")

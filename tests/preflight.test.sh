@@ -74,7 +74,7 @@ out="$(run "$B" "$T/p1")"
 has "$out" "loopback: bind 127.0.0.1 blocked (sandbox) → server/e2e tests need unsandboxed run" "loopback blocked"
 
 # scenarios marker: missing driver tools warn
-P="$T/p11"; mkdir -p "$P/.ek/scenarios/a"
+P="$T/p11"; mkdir -p "$P/.ekit/scenarios/a"
 out="$(run "$T/b2" "$P")"
 for t in tmux expect curl; do
   has "$out" "$t: missing → scenarios needing $t can't run here → human verdict / verification debt" "scenarios + no $t"
@@ -94,7 +94,7 @@ has "$out" "ok tmux" "driver present → ok line"
 
 # playwright check also applies when scenarios exist (no playwright dep)
 rm -rf "$T/home/.cache"
-P="$T/p12"; mkdir -p "$P/.ek/scenarios/a"
+P="$T/p12"; mkdir -p "$P/.ekit/scenarios/a"
 out="$(run "$T/b2" "$P")"
 has "$out" "playwright: no chromium" "scenarios trigger playwright check"
 P="$T/p13"; mkdir -p "$P"

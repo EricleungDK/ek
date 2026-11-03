@@ -192,7 +192,7 @@ eq "$(jq -r '[.entries[] | select(.severity=="confirm")][0].problem' <<<"$out")"
 
 # not installed: n/a (env), never a pass
 mrepo nocmd
-out=$(env -u MECH_TEST_STUB python3 -I "$MR" mutants --repo "$R" --base "$B" --head "$H" --stack python --test-paths 'tests/**' --mutants-cmd "ek-no-such-mutmut"); rc=$?
+out=$(env -u MECH_TEST_STUB python3 -I "$MR" mutants --repo "$R" --base "$B" --head "$H" --stack python --test-paths 'tests/**' --mutants-cmd "ekit-no-such-mutmut"); rc=$?
 eq "$rc" 0 "python not installed: exit 0 (n/a is not a failure)"
 eq "$(jq -r .checks.R3.status <<<"$out")" n/a "python not installed: R3 n/a"
 has "$(jq -r .checks.R3.note <<<"$out")" "(env)" "python not installed: note says env"
@@ -274,7 +274,7 @@ out=$(python3 -I "$MR" plan --repo "$R" --base "$B" --head "$H" --stack python -
 eq "$(jq -c '{run,count,shards}' <<<"$out")" '{"run":true,"count":4,"shards":[0,1,2,3]}' "python plan: production change runs 4 shards"
 mrepo planrust
 out=$(python3 -I "$MR" plan --repo "$R" --base "$B" --head "$H" --stack rust --test-paths 'tests/**' --shards 4)
-eq "$(jq -c '{run,count}' <<<"$out")" '{"run":false,"count":1}' "rust stack on .py files: not run (ek itself stays on rust)"
+eq "$(jq -c '{run,count}' <<<"$out")" '{"run":false,"count":1}' "rust stack on .py files: not run (ekit itself stays on rust)"
 
 
 # ---- project-dir on python: mutmut runs in the crate dir, config there, file names repo-root ----

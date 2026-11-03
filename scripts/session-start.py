@@ -6,12 +6,12 @@ import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 
-RULES = """[ek] Working rules:
+RULES = """[ekit] Working rules:
 - A test or check goes red → classify it with the failure-triage skill before editing code.
 - Same blocker 3× (missing tool, auth, approval denied, quota) → stop retrying; tell the user exactly what's needed.
 - A denied or blocked command stays blocked: ask the user, keeping the exact command. Usage limit hit → stop."""
 
-RUNNER = f"[ek] Scenario runner: python3 {os.path.join(HERE, 'scenarios.py')}"
+RUNNER = f"[ekit] Scenario runner: python3 {os.path.join(HERE, 'scenarios.py')}"
 
 
 def main():
@@ -20,7 +20,7 @@ def main():
     cwd = data.get("cwd") or os.getcwd()
     subprocess.run([sys.executable, "-I", os.path.join(HERE, "finish-gate.py"), "--baseline"], input=raw, text=True)
     pf = subprocess.run(["bash", os.path.join(HERE, "preflight.sh"), "--quiet", cwd], capture_output=True, text=True).stdout.strip()
-    ctx = RULES + "\n" + RUNNER + (f"\n[ek] Preflight (this env):\n{pf}" if pf else "")
+    ctx = RULES + "\n" + RUNNER + (f"\n[ekit] Preflight (this env):\n{pf}" if pf else "")
     print(json.dumps({"hookSpecificOutput": {"hookEventName": "SessionStart", "additionalContext": ctx}}))
 
 

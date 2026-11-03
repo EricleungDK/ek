@@ -30,16 +30,16 @@ def classify(cmd, err):
         port = m and m.group(1)
         owner = port and listeners(port)
         held = f"port {port} held by pid {owner[0]} ({owner[1]})" if owner else f"port {port or '?'} in use"
-        return f"[ek] stale: {held}. If it's a dev server you started, kill that exact PID only; otherwise use another port."
+        return f"[ekit] stale: {held}. If it's a dev server you started, kill that exact PID only; otherwise use another port."
     if ENV.search(err):
-        return ("[ek] sandbox/env failure, not a code bug. Leave code as is; rerun once unsandboxed/escalated "
+        return ("[ekit] sandbox/env failure, not a code bug. Leave code as is; rerun once unsandboxed/escalated "
                 "and record 'passed only unsandboxed', or log it as verification debt.")
     m = NOT_FOUND.search(err)
     if m:
         tool = m.group(1)
-        return f"[ek] {tool} missing → {FALLBACK.get(tool, 'find an installed alternative or log as verification debt')}."
+        return f"[ekit] {tool} missing → {FALLBACK.get(tool, 'find an installed alternative or log as verification debt')}."
     if TEST_CMD.search(cmd):
-        return "[ek] test red. Before editing code, classify it with the failure-triage skill."
+        return "[ekit] test red. Before editing code, classify it with the failure-triage skill."
     return None
 
 

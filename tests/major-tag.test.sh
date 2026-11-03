@@ -1,6 +1,6 @@
 #!/bin/bash
 # scripts/move-major-tag.sh and the release workflow that runs it: a release tag vX.Y.Z moves
-# the floating major tag vX, forward only, after ek's tests pass. Callers pin @v0 and never bump.
+# the floating major tag vX, forward only, after ekit's tests pass. Callers pin @v0 and never bump.
 source "$(dirname "$0")/lib.sh"
 SCRIPT="$ROOT/scripts/move-major-tag.sh"
 T="$(mktemp -d)"; trap 'rm -rf "$T"' EXIT
