@@ -12,10 +12,10 @@ import subprocess
 import tempfile
 
 from .engine import changes, blob, entry, git
+from .globs import any_glob
 
 TEST_RUNS = 5  # R4: each new or changed test, this many times at head
 TEST_TIMEOUT = 900  # seconds per run; a timeout is a verdict, not a crash
-RED_PREFIX = "test(red)"
 
 
 def default_runner():
@@ -92,15 +92,6 @@ def unparseable(repo, a, b, adapter, test_globs):
     return out
 
 
-def first_red(repo, mb, head):
-    """sha of the first test(red) commit in mb..head (oldest first), or None."""
-    for line in git(repo, "log", "--reverse", "--format=%H%x00%s", f"{mb}..{head}").splitlines():
-        sha, _, subject = line.partition("\0")
-        if subject.startswith(RED_PREFIX):
-            return sha
-    return None
-
-
 def run_named(runner, adapter, cmd, cwd, path, name):
     """(verdict, first line of output): the line says why a run had no test result."""
     rc, out = runner(adapter.test_argv(cmd, path, name), cwd)
@@ -140,63 +131,86 @@ def absent(cmd, what, first=""):
     return f"toolchain absent: `{shlex.split(cmd)[0]}` not found (env): install it, or set setup-command ({what})"
 
 
+def overlay_tests(repo, wt, mb, head, test_globs):
+    """In a worktree at mb, put head's version of every file under test_globs the PR changed (deleted ones go), so the
+    PR's tests meet the base's production code. Returns the changed test-path files at head."""
+    out = []
+    for ch in changes(repo, mb, head):
+        if ch.old and any_glob(ch.old, test_globs) and ch.old != ch.new:
+            git(wt, "rm", "-q", "--ignore-unmatch", "--", ch.old)
+        if ch.new and any_glob(ch.new, test_globs):
+            git(wt, "checkout", head, "--", ch.new)
+            out.append(ch.new)
+    return out
+
+
 def r1(repo, mb, head, adapter, test_globs, head_branch, agent_prefix, cmd, runner, project_dir="."):
-    """R1 red-first. Returns (check, entries)."""
+    """R1 red-first: the tests this PR adds or changes, run against the base's production code (a worktree at the merge
+    base with head's test-path files on top), must catch the change: at least one fails there. Tests that pass there
+    pin existing behaviour (guards) and are fine. Commit order does not matter, so a later commit can fix an R1 fail.
+    R4 runs the same tests at head. Returns (check, entries)."""
     if head_branch is None:
         return check("skipped", "no --head-branch: cannot tell an agent branch"), []
     if not head_branch.startswith(agent_prefix):
         return check("skipped", f"branch {head_branch} does not match the agent prefix {agent_prefix}"), []
     if not prod_changes(repo, mb, head, adapter, test_globs):
         return check("skipped", "no production file changed"), []
-    red = first_red(repo, mb, head)
-    hint = "commit the failing tests first as `test(red): ...`, touching test paths only"
-    if red is None:
-        return check("fail", "no test(red) commit in base..head"), [
-            entry("R1", "", 0, "no-red", "agent-fixable", "fail", "no test(red) commit in base..head",
-                  hint, "no failing test(red) commit")]
-    parent = f"{red}^"
-    prod = prod_changes(repo, parent, red, adapter, test_globs)
-    if prod:
-        entries = [entry("R1", ch.new or ch.old, 0, f"prod:{ch.new or ch.old}", "agent-fixable", "fail",
-                         f"red commit touches production path {ch.new or ch.old}",
-                         "move the production change out of the red commit; red is test paths only",
-                         "no failing test(red) commit") for ch in prod]
-        return check("fail", "red commit touches production"), entries
-    tests = touched(repo, parent, red, adapter, test_globs)
+    forbidden = "a production change no test catches"
+    tests = touched(repo, mb, head, adapter, test_globs)
     if not tests:
-        return check("fail", "red commit adds no new test"), [
-            entry("R1", "", 0, "no-tests", "agent-fixable", "fail", "test(red) commit adds no new test",
-                  "add the failing test in the red commit", "no failing test(red) commit")]
-    entries, red_count, compile_red = [], 0, 0
-    with worktree(repo, red) as wt:
+        # test-path files of another language (a python PTY smoke in a rust crate): R1 runs only this stack's tests and
+        # cannot prove them red. A fail the agent can fix alone, with the route in the hint; not "no new test"
+        other = sorted({ch.new for ch in changes(repo, mb, head)
+                        if ch.new and any_glob(ch.new, test_globs) and adapter.classify(ch.new, test_globs) is None})
+        if other:
+            entries = [entry("R1", path, 0, f"other-stack:{path}", "agent-fixable", "fail",
+                             f"test `{path}` does not count: R1 runs only {adapter.name} tests, so it cannot "
+                             "prove this one fails without the change",
+                             f"add a {adapter.name} test that fails without this PR's production change, for the "
+                             "ticket's reason (keep the smoke too). Logic only a smoke reaches (a run loop, key "
+                             "handling): move the decision into a pure fn and test that fn; R3 needs that test as well",
+                             forbidden) for path in other]
+            return check("fail", f"0 {adapter.name} tests changed; {len(other)} test file{'s' if len(other) > 1 else ''} "
+                                 f"R1 cannot run ({adapter.name} stack)"), entries
+        return check("fail", "no new or changed test"), [
+            entry("R1", "", 0, "no-tests", "agent-fixable", "fail", "the PR adds or changes no test",
+                  "add a test that fails without this PR's production change, for the ticket's reason", forbidden)]
+    entries, red_count, compile_red, guards = [], 0, 0, []
+    with worktree(repo, mb) as wt:
+        overlay_tests(repo, wt, mb, head, test_globs)
         adapter.worktree_setup(repo, wt, project_dir)
         cmd = cmd or adapter.test_cmd_in(os.path.join(wt, project_dir))
         for path, name, line in tests:
             verdict, first = run_in(runner, adapter, cmd, wt, project_dir, path, name)
             if verdict == "env":
-                return check("n/a", absent(cmd, "tests at the red commit", first)), []
+                return check("n/a", absent(cmd, "tests on the base's production code", first)), []
             if verdict == "fail":
                 red_count += 1
             elif verdict == "build":
+                # compile-red: the test files are head's, so only production code (or build files) differ. R4 builds and
+                # runs the same test at head in this job; if it passes there, the PR's change is what it needs to build.
+                # A typo fails at head too. Red, with no reviewer step.
                 compile_red += 1
-                entries.append(entry("R1", path, line, f"compile-red:{name}", "agent-fixable", "confirm",
-                                     f"compile-red: red commit does not build, `{name}` counts as red",
-                                     "reviewer confirms the build failure is the ticket's reason, not a typo",
-                                     "no failing test(red) commit"))
             elif verdict == "pass":
-                entries.append(entry("R1", path, line, f"red-pass:{name}", "agent-fixable", "fail",
-                                     f"new test `{name}` passes at the red commit",
-                                     "write the test so it fails for the ticket's reason before the fix; "
-                                     "a test pinning existing behaviour goes after the `test(red)` commit",
-                                     "no failing test(red) commit"))
+                guards.append(name)
             else:
                 extra = no_manifest_hint(adapter, wt, project_dir) if verdict == "error" else ""
                 entries.append(entry("R1", path, line, f"red-unproven:{name}", "agent-fixable", "fail",
-                                     f"`{name}` cannot be proven red at the red commit ({verdict}: {first})",
-                                     hint + extra, "no failing test(red) commit"))
-    note = f"{red_count} red test(s) fail at the red commit"
+                                     f"`{name}` cannot be proven red on the base's production code ({verdict}: {first})",
+                                     "fix the test so it runs on the base's code too (setup, fixtures, names)" + extra,
+                                     forbidden))
+    if red_count + compile_red == 0 and not any(e["severity"] == "fail" for e in entries):
+        shown = ", ".join(f"`{n}`" for n in guards[:5]) + (f" and {len(guards) - 5} more" if len(guards) > 5 else "")
+        path, _, line = tests[0]
+        entries.append(entry("R1", path, line, "no-red", "agent-fixable", "fail",
+                             f"no new or changed test fails without this PR's production change: {shown} pass on "
+                             "the base's code too",
+                             "add or change a test so it fails on the base's code for the ticket's reason; tests that "
+                             "pin existing behaviour can stay as guards",
+                             forbidden))
+    note = f"{red_count + compile_red} of {len(tests)} new or changed test(s) fail on the base's production code"
     if compile_red:
-        note += f"; {compile_red} compile-red"
+        note += f" ({compile_red} compile-red)"
     return check("fail" if any(e["severity"] == "fail" for e in entries) else "pass", note), entries
 
 

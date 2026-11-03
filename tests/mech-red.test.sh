@@ -1,6 +1,8 @@
 #!/bin/bash
 # R1 red-first and R4 determinism: `mech-review.py red` on temp git repos, test runner stubbed (MECH_TEST_STUB, like SS_STUB).
-# The stub reads ./outcomes in its cwd (the checkout under test): "<test> pass|fail|build|none|flaky" per line.
+# The stub reads ./outcomes in its cwd (the checkout under test): "<test> pass|fail|build|none|flaky" per line. R1 runs on the
+# base's production code with the PR's test files on top: there ./outcomes is absent (base has none) and the stub reads
+# tests/outcomes.base, a test-path file the fixtures write with the outcomes the tests get on the base's code.
 source "$(dirname "$0")/lib.sh"
 MR="$ROOT/scripts/mech-review.py"
 T="$(mktemp -d)"; trap 'rm -rf "$T"' EXIT
@@ -18,9 +20,10 @@ STUB="$T/stub.sh"
 cat > "$STUB" <<'SH'
 #!/bin/bash
 name="${*: -1}"
-echo "$(pwd -P) | $*" >> "$MECH_STUB_LOG"
+echo "$(pwd -P) | $* [prod-fixed=$(grep -c fixed src/lib.rs 2>/dev/null)]" >> "$MECH_STUB_LOG"
 if [[ -n "${MECH_STUB_MANIFEST-}" && ! -f Cargo.toml ]]; then printf 'error: could not find `Cargo.toml` in `%s` or any parent directory\n' "$(pwd -P)"; exit 101; fi
-o=$(awk -v n="$name" '$1 == n { print $2 }' outcomes 2>/dev/null)
+f=outcomes; [[ -f $f ]] || f=tests/outcomes.base
+o=$(awk -v n="$name" '$1 == n { print $2 }' "$f" 2>/dev/null)
 case "${o:-pass}" in
   pass)  printf 'running 1 test\ntest %s ... ok\n\ntest result: ok. 1 passed; 0 failed; 0 ignored\n' "$name"; exit 0 ;;
   fail)  printf 'running 1 test\ntest %s ... FAILED\n\ntest result: FAILED. 0 passed; 1 failed; 0 ignored\n' "$name"; exit 101 ;;
@@ -39,7 +42,7 @@ red() { local r="$1" b="$2" h="$3"; shift 3; MECH_TEST_STUB="$STUB" python3 -I "
 # red_nostub: same, no stub: the default runner (cargo) decides
 red_nostub() { local r="$1" b="$2" h="$3"; shift 3; env -u MECH_TEST_STUB python3 -I "$MR" red --repo "$r" --base "$b" --head "$h" --stack rust --test-paths 'tests/**' "$@"; }
 
-# agent_repo <name>: base (adds); red commit adds `fresh` (outcome RED_OUT, default fail); head fixes prod.
+# agent_repo <name>: base (adds); red commit adds `fresh` (outcome RED_OUT on the base's code, default fail); head fixes prod.
 # env: RED_SUBJECT (default test(red): fresh), RED_OUT, RED_PROD=1 (red also edits src), RED_NOTEST=1 (red edits README only),
 #      RED2=1 (second test(red) commit adds `other`), HEAD_OUT (outcome of fresh at head, default pass).
 # sets R (repo), B (base), RED (first red commit), H (head)
@@ -57,6 +60,8 @@ EOF
   B=$(commit "$R" base)
   if [[ -n "${RED_NOTEST-}" ]]; then
     echo docs > "$R/README.md"
+  elif [[ -n "${RED_SMOKE-}" ]]; then
+    printf 'assert False, "dispatch row missing"\n' > "$R/tests/smoke.py"
   else
     put "$R" tests/a.rs <<'EOF'
 #[test]
@@ -70,6 +75,7 @@ fn fresh() {
 }
 EOF
     printf 'fresh %s\n' "$red_out" > "$R/outcomes"
+    cp "$R/outcomes" "$R/tests/outcomes.base"
   fi
   if [[ -n "${RED_PROD-}" ]]; then printf '// red\n' >> "$R/src/lib.rs"; fi
   RED=$(commit "$R" "${RED_SUBJECT:-test(red): fresh}")
@@ -91,6 +97,7 @@ fn other() {
 }
 EOF
     printf 'fresh %s\nother pass\n' "$red_out" > "$R/outcomes"
+    cp "$R/outcomes" "$R/tests/outcomes.base"
     commit "$R" "test(red): other" >/dev/null
   fi
   printf '// fixed\n' >> "$R/src/lib.rs"
@@ -175,54 +182,93 @@ eq "$(jq -r .checks.R1.status <<<"$out")" skipped "docs-only agent branch: R1 sk
 has "$(jq -r .checks.R1.note <<<"$out")" "no production file changed" "docs-only: note says no production file changed"
 eq "$(jq -r .checks.R4.note <<<"$out")" "0 new or changed tests" "docs-only: R4 ran, no tests touched"
 
-# ---- R1 fails ----
-RED_SUBJECT="test: fresh" agent_repo r1nored
+# ---- R1: the PR's tests on the base's production code ----
+agent_repo r1ok
+rm -f "$MECH_STUB_LOG"
 out=$(red "$R" "$B" "$H" --head-branch agent/x); rc=$?
-eq "$rc" 1 "no red commit: exit 1"
-eq "$(jq -r .checks.R1.status <<<"$out")" fail "no red commit: R1 fail"
-eq "$(jq -r '.entries[0].check' <<<"$out")" R1 "no red commit: entry check R1"
-eq "$(jq -r '.entries[0].class' <<<"$out")" agent-fixable "no red commit: agent-fixable"
-has "$(jq -r '.entries[0].problem' <<<"$out")" "no test(red) commit" "no red commit: problem"
+eq "$rc" 0 "a new test fails on base, passes at head: exit 0"
+eq "$(jq -r .checks.R1.status <<<"$out")" pass "fails on base: R1 pass"
+eq "$(jq -r .summary <<<"$out")" "pass $H (0 fail, 0 confirm; ran: R1 R4; skipped: R2 R3)" "fails on base: summary"
+eq "$(jq -r .checks.R1.note <<<"$out")" "1 of 1 new or changed test(s) fail on the base's production code" "fails on base: note counts"
+has "$(head -1 "$MECH_STUB_LOG")" "--exact fresh [prod-fixed=0]" "R1 runs the PR's test on the base's production code"
+has "$(sed -n 2p "$MECH_STUB_LOG")" "--exact fresh [prod-fixed=1]" "R4 runs it at head"
 
-RED_PROD=1 agent_repo r1prod
+RED_SUBJECT="test: fresh" agent_repo r1subject
 out=$(red "$R" "$B" "$H" --head-branch agent/x); rc=$?
-eq "$rc" 1 "red touches production: exit 1"
-eq "$(jq -r '.entries[0].file' <<<"$out")" src/lib.rs "red touches production: entry names the file"
-has "$(jq -r '.entries[0].problem' <<<"$out")" "touches production" "red touches production: problem"
+eq "$rc" 0 "commit subjects do not matter (no test(red) prefix): exit 0"
+eq "$(jq -r .checks.R1.status <<<"$out")" pass "no test(red) prefix: R1 pass"
+
+RED_PROD=1 agent_repo r1order
+out=$(red "$R" "$B" "$H" --head-branch agent/x); rc=$?
+eq "$rc" 0 "tests and production in one commit: exit 0 (order does not matter)"
+eq "$(jq -r .checks.R1.status <<<"$out")" pass "tests with production: R1 pass"
 
 RED_OUT=pass agent_repo r1pass
 out=$(red "$R" "$B" "$H" --head-branch agent/x); rc=$?
-eq "$rc" 1 "new test passes at red: exit 1"
-has "$(jq -r '.entries[0].problem' <<<"$out")" "fresh" "new test passes at red: names the test"
-has "$(jq -r '.entries[0].problem' <<<"$out")" "passes at the red commit" "new test passes at red: problem"
-has "$(jq -r '.entries[0].hint' <<<"$out")" "a test pinning existing behaviour goes after the \`test(red)\` commit" "new test passes at red: hint names the guard-test route"
-has "$(jq -r '.entries[0].id' <<<"$out")" "R1-" "new test passes at red: R1 id"
-eq "$(jq -r '.entries[0].file' <<<"$out")" tests/a.rs "new test passes at red: file"
-eq "$(jq -r '.entries[0].line' <<<"$out")" 7 "new test passes at red: line of the fn at red"
+eq "$rc" 1 "no new test fails on base: exit 1"
+eq "$(jq -r .checks.R1.status <<<"$out")" fail "no new test fails on base: R1 fail"
+has "$(jq -r '.entries[0].problem' <<<"$out")" "no new or changed test fails without this PR's production change" "no red: problem"
+has "$(jq -r '.entries[0].problem' <<<"$out")" "\`fresh\`" "no red: names the tests that pass on base"
+has "$(jq -r '.entries[0].hint' <<<"$out")" "guards" "no red: hint says guard tests may stay"
+eq "$(jq -r '.entries[0].class' <<<"$out")" agent-fixable "no red: agent-fixable"
+eq "$(jq -r '.entries[0].file' <<<"$out")" tests/a.rs "no red: file"
+eq "$(jq -r '.entries[0].line' <<<"$out")" 7 "no red: line of the first new test at head"
+FIRST_ID=$(jq -r '.entries[0].id' <<<"$out")
 
-agent_repo r1ok
-out=$(red "$R" "$B" "$H" --head-branch agent/x); rc=$?
-eq "$rc" 0 "red fails, head passes: exit 0"
-eq "$(jq -r .checks.R1.status <<<"$out")" pass "red fails: R1 pass"
-eq "$(jq -r .summary <<<"$out")" "pass $H (0 fail, 0 confirm; ran: R1 R4; skipped: R2 R3)" "red ok summary"
-eq "$(jq -r .checks.R1.note <<<"$out")" "1 red test(s) fail at the red commit" "red ok: note counts red tests"
+# the agent fixes it with a later commit: no history rewrite
+cat >> "$R/tests/a.rs" <<'EOF2'
+
+#[test]
+fn catches() {
+    assert_eq!(add(2, 3), 5);
+}
+EOF2
+printf 'fresh pass\ncatches fail\n' > "$R/tests/outcomes.base"
+printf 'fresh pass\ncatches pass\nadds pass\n' > "$R/outcomes"
+H2=$(commit "$R" "test: catches the change")
+out=$(red "$R" "$B" "$H2" --head-branch agent/x); rc=$?
+eq "$rc" 0 "a later commit adds a test that fails on base: exit 0"
+eq "$(jq -r .checks.R1.status <<<"$out")" pass "later fix: R1 pass"
+eq "$(jq -r .checks.R1.note <<<"$out")" "1 of 2 new or changed test(s) fail on the base's production code" "later fix: the guard counts, does not fail"
+lacks "$out" "$FIRST_ID" "later fix: the R1 entry is gone"
 
 RED_OUT=build agent_repo r1build
 out=$(red "$R" "$B" "$H" --head-branch agent/x); rc=$?
-eq "$rc" 0 "compile-red: exit 0 (confirm only)"
-eq "$(jq -r '.entries[0].severity' <<<"$out")" confirm "compile-red: confirm entry"
-has "$(jq -r '.entries[0].problem' <<<"$out")" "compile-red" "compile-red: problem names it"
-eq "$(jq -r .summary <<<"$out")" "pass $H (0 fail, 1 confirm; ran: R1 R4; skipped: R2 R3)" "compile-red: summary counts the confirm"
+# a test that builds and passes at head (R4, same job) but does not build on the base's code needs this PR's production
+# change: it counts as red with no reviewer step (a typo would fail at head too)
+eq "$rc" 0 "compile-red: exit 0"
+eq "$(jq -r '.entries | length' <<<"$out")" 0 "compile-red: no entry, no reviewer step"
+eq "$(jq -r .checks.R1.note <<<"$out")" "1 of 1 new or changed test(s) fail on the base's production code (1 compile-red)" "compile-red: counted as red in the note"
+eq "$(jq -r .summary <<<"$out")" "pass $H (0 fail, 0 confirm; ran: R1 R4; skipped: R2 R3)" "compile-red: summary has no confirm"
+
+# compile-red on base, but the test does not build at head either: R4 fails it, so the PR is not green
+RED_OUT=build HEAD_OUT=build agent_repo r1buildhead
+out=$(red "$R" "$B" "$H" --head-branch agent/x); rc=$?
+eq "$rc" 1 "compile-red on base and at head: exit 1"
+eq "$(jq -r .checks.R4.status <<<"$out")" fail "compile-red on base and at head: R4 fail"
 
 RED_NOTEST=1 agent_repo r1notest
 out=$(red "$R" "$B" "$H" --head-branch agent/x); rc=$?
-eq "$rc" 1 "red commit adds no test: exit 1"
-has "$(jq -r '.entries[0].problem' <<<"$out")" "adds no new test" "red adds no test: problem"
+eq "$rc" 1 "PR adds no test: exit 1"
+has "$(jq -r '.entries[0].problem' <<<"$out")" "adds or changes no test" "no test: problem"
 
-RED2=1 agent_repo r1first
+# a PR whose only test is another language's (a python PTY smoke under a rust crate's tests/): a fail the agent can fix
+# alone. It names the file, says R1 runs only rust tests, and the hint gives the route (#605)
+RED_SMOKE=1 agent_repo r1smoke
 out=$(red "$R" "$B" "$H" --head-branch agent/x); rc=$?
-eq "$rc" 0 "first test(red) commit is the one checked (second one would pass)"
-eq "$(jq -r .checks.R1.status <<<"$out")" pass "first test(red) used"
+eq "$rc" 1 "only a non-rust test: exit 1"
+eq "$(jq -r '.entries[0].severity' <<<"$out")" fail "only a non-rust test: fail entry"
+eq "$(jq -r '.entries[0].class' <<<"$out")" agent-fixable "only a non-rust test: agent-fixable"
+eq "$(jq -r '.entries[0].file' <<<"$out")" tests/smoke.py "only a non-rust test: names the file"
+has "$(jq -r '.entries[0].problem' <<<"$out")" "R1 runs only rust tests" "only a non-rust test: says why it does not count"
+has "$(jq -r '.entries[0].hint' <<<"$out")" "add a rust test" "only a non-rust test: hint names the test to add"
+has "$(jq -r '.entries[0].hint' <<<"$out")" "pure fn" "only a non-rust test: hint covers logic only a smoke reaches"
+has "$(jq -r '.entries[0].hint' <<<"$out")" "keep the smoke" "only a non-rust test: the smoke stays"
+
+RED2=1 agent_repo r1guard
+out=$(red "$R" "$B" "$H" --head-branch agent/x); rc=$?
+eq "$rc" 0 "one red test and one guard test: exit 0"
+eq "$(jq -r .checks.R1.note <<<"$out")" "1 of 2 new or changed test(s) fail on the base's production code" "guard: counted, not a fail"
 
 # ---- R1 env: no toolchain → n/a, never pass ----
 agent_repo r1env
@@ -410,6 +456,7 @@ fn fresh() {
 }
 EOF
   printf 'fresh %s\n' "${RED_OUT-fail}" > "$R/sub/outcomes"
+  cp "$R/sub/outcomes" "$R/sub/tests/outcomes.base"
   RED=$(commit "$R" "test(red): fresh")
   printf '// fixed\n' >> "$R/sub/src/lib.rs"
   printf 'fresh %s\nadds pass\n' "${HEAD_OUT-pass}" > "$R/sub/outcomes"
@@ -438,7 +485,7 @@ RED_OUT=pass subrepo subpass
 out=$(red_sub "$R" "$B" "$H" --project-dir sub --head-branch agent/x); rc=$?
 eq "$rc" 1 "project dir: new test passes at red: exit 1"
 eq "$(jq -r '.entries[0].file' <<<"$out")" sub/tests/a.rs "project dir: entry file is the repo-root path"
-has "$(jq -r '.entries[0].problem' <<<"$out")" "passes at the red commit" "project dir: problem names red pass"
+has "$(jq -r '.entries[0].problem' <<<"$out")" "pass on the base's code too" "project dir: problem names the tests that pass on base"
 
 subrepo submiss
 out=$(red_sub "$R" "$B" "$H" --project-dir nosuch --head-branch agent/x 2>"$T/err"); rc=$?
