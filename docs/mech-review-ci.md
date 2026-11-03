@@ -15,7 +15,7 @@ Adopting or repairing: `/ek:ci-doctor` runs `mech-review.py doctor` and opens th
 
 ## Caller
 
-Add to your repo, pin an ek release tag (use the latest tag; `v0.2.4` shown):
+Add to your repo. Follow the major tag `v0`: each ek release moves it, so your repo never needs a bump PR:
 
 ```yaml
 name: mech-review
@@ -26,7 +26,7 @@ permissions:
   pull-requests: write
 jobs:
   mech-review:
-    uses: EricleungDK/ek/.github/workflows/mech-review.yml@v0.2.4
+    uses: EricleungDK/ek/.github/workflows/mech-review.yml@v0
     with:
       stack: rust
       test-paths: |
@@ -39,7 +39,12 @@ Python: the same, with `stack: python` and `test-paths: tests/**` (`tests/test_*
 
 TypeScript / JavaScript: `stack: ts` with `test-paths: src/**/*.test.ts` (or `tests/**`). `.ts .tsx .js .jsx .mjs .cjs` files are this stack; the project dir needs a `package.json`.
 
-The ek scripts run at the ref you pin (`job.workflow_sha` of the called file), not at your checkout. Bump the tag to upgrade.
+The ek scripts run at the ref you call (`job.workflow_sha` of the called file), not at your checkout.
+
+Releases: the plugin version in `.claude-plugin/plugin.json` is the source of truth. Tagging `vX.Y.Z` (it must match that
+version) runs `.github/workflows/release.yml`: ek's tests, then `scripts/move-major-tag.sh` moves `vX` to the release, forward
+only. A caller on `@v0` picks it up on its next PR run. To freeze a repo on one release, pin the exact tag (`@v0.2.4`)
+instead; then upgrading is a bump in that repo again.
 
 ## Inputs
 
