@@ -21,7 +21,7 @@ Taster writes or updates scenarios and reports each finding with the scenario id
 
 ## 2. Scenarios
 
-Runner: use the `[ek] Scenario runner:` line from session context (absolute path, same in plugin and cloud installs). Absent: `python3 <kit>/scripts/scenarios.py`. Below, `RUN` = that command.
+Runner: use the `[ek] Scenario runner:` line from session context (absolute path, same in plugin and cloud installs). Absent (harness without hooks): `python3 ~/.ek/scripts/scenarios.py`, after `git clone --depth 1 https://github.com/EricleungDK/ek ~/.ek` if missing; `<kit>` below = `~/.ek`. Below, `RUN` = that command.
 
 Layout, committed in the repo:
 

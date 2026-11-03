@@ -1,4 +1,4 @@
-"""SessionStart hook: record tree baseline, inject preflight warnings and the kit's always-on rules."""
+"""SessionStart hook: record tree baseline, inject preflight warnings and the kit's always-on rules (finish/taste-it are orchestrate-only)."""
 import json
 import os
 import subprocess
@@ -8,10 +8,8 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 
 RULES = """[ek] Working rules:
 - A test or check goes red → classify it with the failure-triage skill before editing code.
-- Before the final report, or when stopping blocked → follow the finish skill.
-- Same blocker 3× (missing tool, auth, approval denied, quota) → stop retrying; hand the user a Needs-you block (finish skill).
-- A denied or blocked command stays blocked: ask the user, keeping the exact command. Usage limit hit → stop.
-- Verifying a deliverable by using it (repo has `.ek/scenarios/`, or acceptance criteria need a user run) → taste-it skill."""
+- Same blocker 3× (missing tool, auth, approval denied, quota) → stop retrying; tell the user exactly what's needed.
+- A denied or blocked command stays blocked: ask the user, keeping the exact command. Usage limit hit → stop."""
 
 RUNNER = f"[ek] Scenario runner: python3 {os.path.join(HERE, 'scenarios.py')}"
 

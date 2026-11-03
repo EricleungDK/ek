@@ -53,7 +53,7 @@ Done when: every unit has a running agent.
 Review stays inside the subagent's own implement flow; only the dispatch moves to you.
 
 1. At its review step, the subagent commits its work and stops with a **review request** as its report: branch, base and head SHAs, checklist items covered, files changed, what to focus on. It stays alive, context intact.
-2. Run the mech checks first: `python3 -I <kit>/scripts/mech-review.py all --repo <worktree> --base <base> --head <head> --stack <stack> --head-branch <branch>` plus the repo's `--test-paths`/`--protected-paths`/`--agent-prefix` (or its `<!-- mech-review -->` PR comment). Then run `mp-code-review` (or `code-review`) scoped to base..head, reviewers on the model the user picked, with the mech JSON. The review is yours to run, never skip it because the agent's tests are green.
+2. Run the mech checks first (`<kit>` = the `scripts/` parent named by the `[ek] Scenario runner:` session line, else `~/.ek`, cloned once from `https://github.com/EricleungDK/ek`): `python3 -I <kit>/scripts/mech-review.py all --repo <worktree> --base <base> --head <head> --stack <stack> --head-branch <branch>` plus the repo's `--test-paths`/`--protected-paths`/`--agent-prefix` (or its `<!-- mech-review -->` PR comment). Then run `mp-code-review` (or `code-review`) scoped to base..head, reviewers on the model the user picked, with the mech JSON. The review is yours to run, never skip it because the agent's tests are green.
 3. Send the findings back to that same agent with SendMessage (its ID, not a new agent): each finding with file, line, and failure scenario, plus which ones you judge real. Filter out findings you verified as false, and say why. `fail` entries go back verbatim. Each `confirm` (changed expected value): confirm only if the spec sets the new value, else reject with reason. Legit test removal: `needs-human`, the owner decides, never self-declared.
 4. The agent fixes, re-verifies, and either finishes its flow or sends a new review request. Each review-fix cycle counts as one of its 3 rounds.
 
@@ -67,7 +67,7 @@ Subagents cannot spawn, so the orchestrator owns taste-it. After the review rela
 2. **fix** verdict: SendMessage the implementer with the failing scenario id and its transcript as repro. After its fix, full `RUN run` again.
 3. **human** verdict: Needs-you block (human gates, step 7).
 4. Each taste-fix cycle counts toward the same 3 rounds as review-fix.
-5. Done when `RUN check` exits 0. The Stop gate only judges; the orchestrator drives the loop.
+5. Done when `RUN check` exits 0. The Stop gate only judges (armed only in sessions started with this skill); the orchestrator drives the loop.
 
 ## 5. Coordinate
 

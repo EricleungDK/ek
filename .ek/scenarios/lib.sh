@@ -25,3 +25,6 @@ hook_cmd() { jq -er --arg e "$1" '.hooks[$e][0].hooks[0].command' "$SAMPLE/.clau
 # run installed hook: hook <event> <session> [stop_hook_active]
 hook() { local p; p=$(jq -nc --arg s "$2" --arg c "$SAMPLE" --argjson a "${3:-false}" '{session_id:$s,cwd:$c,hook_event_name:"x",stop_hook_active:$a}')
   (cd "$SAMPLE" && printf '%s' "$p" | bash -c "$(hook_cmd "$1")"); }
+# user types /orchestrate-agent (cloud install name): arm <session>
+arm() { local p; p=$(jq -nc --arg s "$1" --arg c "$SAMPLE" '{session_id:$s,cwd:$c,hook_event_name:"UserPromptSubmit",prompt:"/orchestrate-agent do x"}')
+  (cd "$SAMPLE" && printf '%s' "$p" | bash -c "$(hook_cmd UserPromptSubmit)"); }
