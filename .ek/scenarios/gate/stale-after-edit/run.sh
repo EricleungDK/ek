@@ -2,7 +2,7 @@
 source "$EK_REPO/.ek/scenarios/lib.sh"
 [[ -f $EK_PARENT_DIR/SCENARIO.md ]] || fail "no EK_PARENT_DIR"
 mk_repo; install_kit; add_scn ok 0; commit_all s
-hook SessionStart s2 >/dev/null
+hook SessionStart s2 >/dev/null; arm s2
 echo "a=1" >> "$SAMPLE/app.py"
 python3 "$RUNNER" --repo "$SAMPLE" run >/dev/null || fail "not green"
 eq "fresh -> allow" "$(hook Stop s2)" ""

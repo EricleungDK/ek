@@ -1,4 +1,5 @@
-"""Stop/SubagentStop hook: block until the finish report is given.
+"""Stop/SubagentStop hook: block until the finish report is given. Orchestrate-only:
+silent unless the session was armed by a prompt starting with /ek:orchestrate-agent (or /orchestrate-agent).
 
 Plain repo: block once per new uncommitted change set.
 Repo with .ek/scenarios/: block while scenarios.py `check` isn't a fresh PASS for the current tree
@@ -7,10 +8,12 @@ Allowed when the runner tree-hash is unchanged since session start (no work done
 Runner errors fail closed (block). Test seam: EK_SCENARIOS_PY overrides the runner path.
 
 `finish-gate.py --baseline` (stdin: hook payload) records the tree state at session start instead.
+`finish-gate.py --arm` (UserPromptSubmit payload) arms the session when the prompt invokes orchestrate-agent.
 """
 import hashlib
 import json
 import os
+import re
 import subprocess
 import sys
 
@@ -94,9 +97,18 @@ def scenario_gate(data, session, top):
     return True
 
 
+ARM = re.compile(r"(?:\A\s*|<command-name>)/(?:ek:)?orchestrate-agent(?![\w-])")
+
+
 def main():
     data = json.load(sys.stdin)
     session, cwd = data.get("session_id", "none"), data.get("cwd") or os.getcwd()
+    if "--arm" in sys.argv:
+        if ARM.search(data.get("prompt") or ""):
+            write(path(session, "armed"), "1")
+        return
+    if "--baseline" not in sys.argv and read(path(session, "armed")) is None:
+        return
     top = (git(cwd, "rev-parse", "--show-toplevel") or "").strip()
     if scenario_gate(data, session, top):
         return

@@ -6,7 +6,8 @@ R="$T/repo"; mkdir -p "$R"; git -C "$R" init -q
 out="$(echo "{\"cwd\":\"$R\"}" | python3 -I "$ROOT/scripts/session-start.py")"
 ctx="$(jq -r .hookSpecificOutput.additionalContext <<<"$out")"
 has "$ctx" "[ek] Scenario runner: python3 $ROOT/scripts/scenarios.py" "runner line, absolute path"
-has "$ctx" "taste-it" "rules mention taste-it"
+lacks "$ctx" "taste-it" "no always-on taste-it rule (orchestrate-only)"
+has "$ctx" "failure-triage" "triage rule stays always-on"
 
 # cloud install: hook command from settings.json yields the kit's absolute runner path
 bash "$ROOT/cloud/install.sh" "$R" >/dev/null

@@ -107,9 +107,10 @@ git clone --depth 1 https://github.com/EricleungDK/ek ~/.ek
 
 | Hook | Does |
 |---|---|
-| `SessionStart` | Preflight warnings + working rules into context; prints the scenario runner path. |
+| `SessionStart` | Preflight warnings + working rules (failure-triage, blockers) into context; prints the scenario runner path. |
+| `UserPromptSubmit` | Prompt starts with `/ek:orchestrate-agent` → arms the finish gate for the session. |
 | `PostToolUseFailure` | Known Bash failure signatures → one context line. |
-| `Stop` / `SubagentStop` | Blocks once per new change set until the finish report is given. |
+| `Stop` / `SubagentStop` | Orchestrate sessions only: blocks once per new change set until the finish report is given; in repos with `.ek/scenarios/`, until a fresh scenario PASS (taste-it). |
 
 ## mech-review CI
 

@@ -67,7 +67,7 @@ Subagents cannot spawn, so the orchestrator owns taste-it. After the review rela
 2. **fix** verdict: SendMessage the implementer with the failing scenario id and its transcript as repro. After its fix, full `RUN run` again.
 3. **human** verdict: Needs-you block (human gates, step 7).
 4. Each taste-fix cycle counts toward the same 3 rounds as review-fix.
-5. Done when `RUN check` exits 0. The Stop gate only judges; the orchestrator drives the loop.
+5. Done when `RUN check` exits 0. The Stop gate only judges (armed only in sessions started with this skill); the orchestrator drives the loop.
 
 ## 5. Coordinate
 

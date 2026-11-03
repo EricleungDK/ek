@@ -5,15 +5,33 @@ export EK_STATE="$T/state"
 
 R="$T/repo"; mkdir -p "$R"; git -C "$R" init -q; git -C "$R" -c user.email=t@t -c user.name=t commit -q --allow-empty -m init
 start() { jq -nc --arg c "$1" --arg s "$2" '{hook_event_name:"SessionStart",session_id:$s,cwd:$c,source:"startup"}' | python3 -I "$SS"; }
+arm()   { jq -nc --arg c "$1" --arg s "$2" --arg p "${3:-/ek:orchestrate-agent do x}" '{hook_event_name:"UserPromptSubmit",session_id:$s,cwd:$c,prompt:$p}' | python3 -I "$FG" --arm; }
 stop()  { jq -nc --arg c "$1" --arg s "$2" --argjson a "${3:-false}" --arg e "${4:-Stop}" '{hook_event_name:$e,session_id:$s,cwd:$c,stop_hook_active:$a}' | python3 -I "$FG"; }
 
-# session start: pointers + guardrails injected
-out="$(start "$R" s1)"
+# session start: pointers + guardrails injected; finish/taste-it are orchestrate-only
+out="$(start "$R" s1)"; arm "$R" s1 >/dev/null
 c="$(jq -r .hookSpecificOutput.additionalContext <<<"$out")"
 has "$c" "failure-triage" "start → triage pointer"
-has "$c" "finish" "start → finish pointer"
+lacks "$c" "finish skill" "start → no always-on finish rule"
+lacks "$c" "taste-it" "start → no always-on taste-it rule"
 has "$c" "Same blocker 3×" "start → blocker guardrail"
 has "$c" "exact command" "start → rephrase guardrail"
+
+# not armed (no /ek:orchestrate-agent) → gate silent even with changes
+start "$R" n1 >/dev/null; echo n > "$R/n.txt"
+eq "$(stop "$R" n1)" "" "unarmed + change → allow"
+eq "$(stop "$R" n1 false SubagentStop)" "" "unarmed SubagentStop → allow"
+arm "$R" n1 "why does /ek:orchestrate-agent run?" >/dev/null
+eq "$(stop "$R" n1)" "" "mention mid-prompt doesn't arm"
+arm "$R" n1 "/ek:taste-it" >/dev/null
+eq "$(stop "$R" n1)" "" "other skill doesn't arm"
+eq "$(arm "$R" n1 "/ek:orchestrate-agent fix #3")" "" "arm prints nothing"
+eq "$(jq -r .decision <<<"$(stop "$R" n1)")" "block" "armed (/ek:orchestrate-agent) → block"
+start "$R" n2 >/dev/null; arm "$R" n2 "  /orchestrate-agent x" >/dev/null; echo m >> "$R/n.txt"
+eq "$(jq -r .decision <<<"$(stop "$R" n2)")" "block" "armed (cloud /orchestrate-agent) → block"
+start "$R" n3 >/dev/null; arm "$R" n3 "<command-name>/ek:orchestrate-agent</command-name>" >/dev/null; echo k >> "$R/n.txt"
+eq "$(jq -r .decision <<<"$(stop "$R" n3)")" "block" "armed (command-name tag) → block"
+rm -f "$R/n.txt"
 
 # clean tree → allow stop
 eq "$(stop "$R" s1)" "" "clean tree → allow"
@@ -33,7 +51,7 @@ echo z >> "$R/a.txt"
 eq "$(stop "$R" s1 true)" "" "stop_hook_active → allow"
 
 # pre-existing dirt at session start → not gated
-start "$R" s2 >/dev/null
+start "$R" s2 >/dev/null; arm "$R" s2 >/dev/null
 eq "$(stop "$R" s2)" "" "dirt present at session start → allow"
 
 # SubagentStop gated the same way
@@ -63,7 +81,7 @@ P="$T/pass"; mkrepo "$P" 0
 F="$T/fail"; mkrepo "$F" 1
 
 # PASS current tree -> allow
-start "$P" p1 >/dev/null; echo a > "$P/a.txt"; runsc "$P"
+start "$P" p1 >/dev/null; arm "$P" p1 >/dev/null; echo a > "$P/a.txt"; runsc "$P"
 eq "$(stop "$P" p1)" "" "scenarios PASS fresh → allow"
 # PASS then edit -> stale block, keeps blocking
 echo b >> "$P/a.txt"
@@ -77,7 +95,7 @@ eq "$(stop "$P" p1 true)" "" "scenarios + stop_hook_active → allow"
 eq "$(dec "$(stop "$P" p1 false SubagentStop)")" "block" "scenarios SubagentStop → block"
 
 # no results -> block; failing results -> block
-start "$F" f1 >/dev/null; echo a > "$F/a.txt"
+start "$F" f1 >/dev/null; arm "$F" f1 >/dev/null; echo a > "$F/a.txt"
 out="$(stop "$F" f1)"; eq "$(dec "$out")" "block" "no results → block"
 has "$(jq -r .reason <<<"$out")" "no results" "no-results reason"
 runsc "$F"
@@ -86,7 +104,7 @@ has "$(jq -r .reason <<<"$out")" "FAIL" "fail reason"
 
 # untouched since start -> allow (even with no results)
 U="$T/untouched"; mkrepo "$U" 0
-start "$U" u1 >/dev/null
+start "$U" u1 >/dev/null; arm "$U" u1 >/dev/null
 eq "$(stop "$U" u1)" "" "scenario repo untouched → allow"
 
 # commit after start without run -> block
@@ -98,7 +116,7 @@ eq "$(stop "$U" u1)" "" "commit then run PASS → allow"
 # runner broken -> fail closed (stop_hook_active still allows)
 printf 'import sys\nsys.stderr.write("boom\\n")\nsys.exit(3)\n' > "$T/badrunner"
 E="$T/err"; mkrepo "$E" 0
-EK_SCENARIOS_PY="$T/badrunner" start "$E" e1 >/dev/null
+EK_SCENARIOS_PY="$T/badrunner" start "$E" e1 >/dev/null; arm "$E" e1 >/dev/null
 out="$(EK_SCENARIOS_PY="$T/badrunner" stop "$E" e1)"
 eq "$(dec "$out")" "block" "runner error → block"
 has "$(jq -r .reason <<<"$out")" "scenario runner error" "runner error reason"
@@ -107,7 +125,7 @@ eq "$(EK_SCENARIOS_PY="$T/badrunner" stop "$E" e1 true)" "" "runner error + stop
 
 # baseline is per repo within one session
 A2="$T/a2"; B2="$T/b2"; mkrepo "$A2" 0; mkrepo "$B2" 0; echo b > "$B2/b.txt"
-start "$A2" m1 >/dev/null; start "$B2" m1 >/dev/null
+start "$A2" m1 >/dev/null; arm "$A2" m1 >/dev/null; start "$B2" m1 >/dev/null; arm "$B2" m1 >/dev/null
 eq "$(stop "$B2" m1)" "" "second repo own baseline → allow"
 eq "$(stop "$A2" m1)" "" "first repo own baseline → allow"
 

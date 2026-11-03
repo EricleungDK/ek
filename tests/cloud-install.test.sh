@@ -17,6 +17,7 @@ has "$(jq -c '.hooks.Stop' "$S")" "$ROOT/scripts/finish-gate.py" "kit Stop hook 
 has "$(jq -c '.hooks.SessionStart' "$S")" "session-start.py" "SessionStart added"
 has "$(jq -c '.hooks.PostToolUseFailure' "$S")" "failure-match.py" "PostToolUseFailure added"
 has "$(jq -c '.hooks.SubagentStop' "$S")" "finish-gate.py" "SubagentStop added"
+has "$(jq -c '.hooks.UserPromptSubmit' "$S")" "finish-gate.py\\\" --arm" "UserPromptSubmit arm added"
 [[ -f $R/.claude/skills/taste-it/drivers.md ]] && ok "taste-it sibling copied" || fail "taste-it sibling copied"
 lacks "$(cat "$S")" "CLAUDE_PLUGIN_ROOT" "no unresolved plugin var"
 
