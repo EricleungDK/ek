@@ -214,11 +214,11 @@ eq "$(jq -r '[.checks[] | select(.status=="pass")] | length' <<<"$out")" 0 "part
 
 # tool not installed: n/a (env), named in the summary, never pass for R3
 mrepo nocmd
-out=$(env -u MECH_TEST_STUB python3 -I "$MR" mutants --repo "$R" --base "$B" --head "$H" --stack rust --test-paths 'tests/**' --mutants-cmd "ek-no-such-cargo mutants"); rc=$?
+out=$(env -u MECH_TEST_STUB python3 -I "$MR" mutants --repo "$R" --base "$B" --head "$H" --stack rust --test-paths 'tests/**' --mutants-cmd "ekit-no-such-cargo mutants"); rc=$?
 eq "$rc" 0 "not installed: exit 0 (n/a is not a failure)"
 eq "$(jq -r .checks.R3.status <<<"$out")" n/a "not installed: R3 n/a"
 has "$(jq -r .checks.R3.note <<<"$out")" "(env)" "not installed: note says env"
-has "$(jq -r .checks.R3.note <<<"$out")" "\`ek-no-such-cargo mutants\` not runnable" "not installed: note names the tool"
+has "$(jq -r .checks.R3.note <<<"$out")" "\`ekit-no-such-cargo mutants\` not runnable" "not installed: note names the tool"
 has "$(jq -r .checks.R3.note <<<"$out")" "install step" "not installed: note says check the install step"
 eq "$(jq -r .summary <<<"$out")" "pass $H (0 fail, 0 confirm; ran: none; skipped: R1 R2 R4; n/a: R3)" "not installed: summary names n/a"
 
@@ -367,7 +367,7 @@ def check(name, cond, detail=""):
 
 def env(checks, entries):
     fails = sum(1 for e in entries if e["severity"] == "fail")
-    return {"ek": "0.1.1", "base": BASE, "head": H, "checks": checks, "entries": entries,
+    return {"ekit": "0.1.1", "base": BASE, "head": H, "checks": checks, "entries": entries,
             "summary": f"{'fail' if fails else 'pass'} {H}"}
 
 
@@ -490,7 +490,7 @@ eq "$?" 0 "runner stop: bounded over budget, SIGTERM honoured, normal exit kept"
 
 # ---- all: R3 is not in all; its note says where it runs; --help says so ----
 mrepo allnote
-out=$(env -u MECH_TEST_STUB python3 -I "$MR" all --repo "$R" --base "$B" --head "$H" --stack rust --test-paths 'tests/**' --test-cmd "ek-no-such-toolchain test")
+out=$(env -u MECH_TEST_STUB python3 -I "$MR" all --repo "$R" --base "$B" --head "$H" --stack rust --test-paths 'tests/**' --test-cmd "ekit-no-such-toolchain test")
 has "$(jq -r .checks.R3.note <<<"$out")" "not run by all" "all: R3 note says not run by all"
 has "$(jq -r .checks.R3.note <<<"$out")" "mutants" "all: R3 note names the mutants subcommand"
 has "$(python3 -I "$MR" --help)" "all" "help: all named"

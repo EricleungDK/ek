@@ -14,16 +14,16 @@ args = [a for a in sys.argv[1:] if not a.startswith("-")]
 names = sorted(os.listdir(args[0] if args else "."))
 print(json.dumps(names) if "--json" in sys.argv else "\n".join(names))
 PY
-mkdir -p .ek/scenarios/json-output
-cat > .ek/scenarios/json-output/SCENARIO.md <<'MD'
+mkdir -p .ekit/scenarios/json-output
+cat > .ekit/scenarios/json-output/SCENARIO.md <<'MD'
 - story: user gets machine-readable listing
 - covers: "`lsx --json` prints a valid JSON array"
 - steps: run `python3 lsx.py --json` in a dir with files
 - expected: JSON array output
 MD
-cat > .ek/scenarios/json-output/run.sh <<'SH'
+cat > .ekit/scenarios/json-output/run.sh <<'SH'
 touch a b
-python3 "$EK_REPO/lsx.py" --json . > out.txt
+python3 "$EKIT_REPO/lsx.py" --json . > out.txt
 test -s out.txt
 SH
 git add -A; git commit -qm "lsx --json + scenario"

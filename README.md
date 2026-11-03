@@ -1,4 +1,4 @@
-# ek
+# ekit
 
 Agent workflow kit: skills, hooks and CI that make a coding agent prove its work before it says "done".
 
@@ -17,11 +17,11 @@ Pick **one** route per agent; installing two gives you every skill twice.
 <summary><b>Claude Code</b> (skills + hooks)</summary>
 
 ```bash
-claude plugin marketplace add EricleungDK/ek
-claude plugin install ek@ek --scope user
+claude plugin marketplace add EricleungDK/ekit
+claude plugin install ekit@ekit --scope user
 ```
 
-Update: `claude plugin update ek@ek`.
+Update: `claude plugin update ekit@ekit`.
 
 </details>
 
@@ -31,10 +31,10 @@ Update: `claude plugin update ek@ek`.
 Cloud sessions load no plugins. Add to the environment's setup script:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/EricleungDK/ek/main/cloud/setup.sh | bash
+curl -fsSL https://raw.githubusercontent.com/EricleungDK/ekit/main/cloud/setup.sh | bash
 ```
 
-Installs skills + hooks into each repo's `.claude/`, hidden from `git status`, and pulls the latest on each setup. No repo found yet, or want the kit committed: `bash ~/.ek/cloud/install.sh <repo>`.
+Installs skills + hooks into each repo's `.claude/`, hidden from `git status`, and pulls the latest on each setup. No repo found yet, or want the kit committed: `bash ~/.ekit/cloud/install.sh <repo>`.
 
 </details>
 
@@ -42,8 +42,8 @@ Installs skills + hooks into each repo's `.claude/`, hidden from `git status`, a
 <summary><b>Codex</b></summary>
 
 ```bash
-codex plugin marketplace add EricleungDK/ek
-codex plugin add ek@ek
+codex plugin marketplace add EricleungDK/ekit
+codex plugin add ekit@ekit
 ```
 
 Updates at startup when `version` in `plugin.json` changes.
@@ -54,8 +54,8 @@ Updates at startup when `version` in `plugin.json` changes.
 <summary><b>GitHub Copilot</b> (CLI and VS Code)</summary>
 
 ```bash
-copilot plugin marketplace add EricleungDK/ek
-copilot plugin install ek@ek
+copilot plugin marketplace add EricleungDK/ekit
+copilot plugin install ekit@ekit
 ```
 
 Auto-update, once, in `~/.copilot/settings.json`:
@@ -63,12 +63,12 @@ Auto-update, once, in `~/.copilot/settings.json`:
 ```json
 {
   "extraKnownMarketplaces": {
-    "ek": { "source": { "source": "github", "repo": "EricleungDK/ek" }, "autoUpdate": true }
+    "ekit": { "source": { "source": "github", "repo": "EricleungDK/ekit" }, "autoUpdate": true }
   }
 }
 ```
 
-VS Code: **Chat: Install Plugin From Source** → `https://github.com/EricleungDK/ek`.
+VS Code: **Chat: Install Plugin From Source** → `https://github.com/EricleungDK/ekit`.
 
 </details>
 
@@ -76,7 +76,7 @@ VS Code: **Chat: Install Plugin From Source** → `https://github.com/EricleungD
 <summary><b>Any other agent</b> (Cursor, Gemini CLI, OpenCode, Windsurf, Amp, …)</summary>
 
 ```bash
-npx skills@latest add EricleungDK/ek -a <agent>   # omit -a to choose
+npx skills@latest add EricleungDK/ekit -a <agent>   # omit -a to choose
 ```
 
 Copies editable skill files. Update: `npx skills@latest update`.
@@ -85,10 +85,10 @@ Copies editable skill files. Update: `npx skills@latest update`.
 
 ### Hooks and scripts outside Claude Code
 
-The hooks (preflight, failure hints, finish gate) run in Claude Code. Elsewhere, skills still work: those that need the kit's scripts use `~/.ek`, cloned once:
+The hooks (preflight, failure hints, finish gate) run in Claude Code. Elsewhere, skills still work: those that need the kit's scripts use `~/.ekit`, cloned once:
 
 ```bash
-git clone --depth 1 https://github.com/EricleungDK/ek ~/.ek
+git clone --depth 1 https://github.com/EricleungDK/ekit ~/.ekit
 ```
 
 `orchestrate-agent` relies on Claude Code subagents (`Agent`, `SendMessage`); the other skills are harness-neutral.
@@ -98,19 +98,19 @@ git clone --depth 1 https://github.com/EricleungDK/ek ~/.ek
 | Skill | Use |
 |---|---|
 | [`failure-triage`](skills/failure-triage/SKILL.md) | A test, build or CI job goes red: classify it (sandbox/env, stale, flaky, unowned, real bug) before editing code. Reads mech-review JSON directly. |
-| [`taste-it`](skills/taste-it/SKILL.md) | Verify a deliverable by using it: black-box taster, `.ek/scenarios/` regression suite, fix/human verdicts. |
+| [`taste-it`](skills/taste-it/SKILL.md) | Verify a deliverable by using it: black-box taster, `.ekit/scenarios/` regression suite, fix/human verdicts. |
 | [`finish`](skills/finish/SKILL.md) | End-of-work report: done (evidence per criterion) or blocked (Needs-you block). |
 | [`ci-doctor`](skills/ci-doctor/SKILL.md) | Set up or repair a repo's mech-review CI; ends in a PR a person merges. |
-| [`orchestrate-agent`](skills/orchestrate-agent/SKILL.md) | `/ek:orchestrate-agent`: divide a task, delegate to subagents, verify acceptance. User-invoked only. |
+| [`orchestrate-agent`](skills/orchestrate-agent/SKILL.md) | `/ekit:orchestrate-agent`: divide a task, delegate to subagents, verify acceptance. User-invoked only. |
 
 ## Hooks (Claude Code)
 
 | Hook | Does |
 |---|---|
 | `SessionStart` | Preflight warnings + working rules (failure-triage, blockers) into context; prints the scenario runner path. |
-| `UserPromptSubmit` | Prompt starts with `/ek:orchestrate-agent` → arms the finish gate for the session. |
+| `UserPromptSubmit` | Prompt starts with `/ekit:orchestrate-agent` → arms the finish gate for the session. |
 | `PostToolUseFailure` | Known Bash failure signatures → one context line. |
-| `Stop` / `SubagentStop` | Orchestrate sessions only: blocks once per new change set until the finish report is given; in repos with `.ek/scenarios/`, until a fresh scenario PASS (taste-it). |
+| `Stop` / `SubagentStop` | Orchestrate sessions only: blocks once per new change set until the finish report is given; in repos with `.ekit/scenarios/`, until a fresh scenario PASS (taste-it). |
 
 ## mech-review CI
 
@@ -122,7 +122,7 @@ Reusable GitHub workflow that checks agent PRs mechanically and posts one `<!-- 
 | `red-first` | R1: new tests fail before the fix. R4: results are deterministic. |
 | `mutants` | R3: mutation testing on the diff (cargo-mutants, mutmut, Stryker). Runs only when production code changed. |
 
-Stacks: Rust, Python, TypeScript. Adopt with `/ek:ci-doctor`, or by hand: [docs/mech-review-ci.md](docs/mech-review-ci.md). Testing rules behind the checks: [docs/testing-standard.md](docs/testing-standard.md).
+Stacks: Rust, Python, TypeScript. Adopt with `/ekit:ci-doctor`, or by hand: [docs/mech-review-ci.md](docs/mech-review-ci.md). Testing rules behind the checks: [docs/testing-standard.md](docs/testing-standard.md).
 
 <details>
 <summary>Scripts</summary>

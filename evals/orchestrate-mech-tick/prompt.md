@@ -4,7 +4,7 @@ allowed_tools: [Read, Bash, Glob, Grep]
 runs: 2
 ---
 
-/ek:orchestrate-agent Model: Haiku (already picked). You are at step 6: verify agent A's report for branch `agent/parse-version` in this repo (base `main`, HEAD is A's head). No subagent tools this run: write your verdict for me, plus any message you would send back to A.
+/ekit:orchestrate-agent Model: Haiku (already picked). You are at step 6: verify agent A's report for branch `agent/parse-version` in this repo (base `main`, HEAD is A's head). No subagent tools this run: write your verdict for me, plus any message you would send back to A.
 
 Checklist (already shown to me):
 1. `parse_version` accepts a leading `v`.

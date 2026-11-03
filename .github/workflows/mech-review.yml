@@ -1,8 +1,8 @@
 name: mech-review
 
 # Reusable. Callers follow the major tag, which each release moves (release.yml):
-#   uses: EricleungDK/ek/.github/workflows/mech-review.yml@v0
-# The ek scripts run at the SAME ref the caller called: job.workflow_sha / job.workflow_repository
+#   uses: EricleungDK/ekit/.github/workflows/mech-review.yml@v0
+# The ekit scripts run at the SAME ref the caller called: job.workflow_sha / job.workflow_repository
 # are the called workflow file's commit and repo, so the guard, red-first, mutants and the poster are checked out from there.
 
 on:
@@ -67,12 +67,12 @@ jobs:
           fetch-depth: 0
           path: caller
           persist-credentials: false
-      - name: ek engine checkout (the ref this workflow was called at)
+      - name: ekit engine checkout (the ref this workflow was called at)
         uses: actions/checkout@v4
         with:
           repository: ${{ job.workflow_repository }}
           ref: ${{ job.workflow_sha }}
-          path: ek
+          path: ekit
           persist-credentials: false
       - name: R2 guard
         env:
@@ -91,7 +91,7 @@ jobs:
             if [ -n "$g" ]; then args+=(--protected-paths "$g"); fi
           done <<< "$PROTECTED_PATHS"
           rc=0
-          python3 -I "$GITHUB_WORKSPACE/ek/scripts/mech-review.py" r2 "${args[@]}" > mech-review.json 2> mech-review.err || rc=$?
+          python3 -I "$GITHUB_WORKSPACE/ekit/scripts/mech-review.py" r2 "${args[@]}" > mech-review.json 2> mech-review.err || rc=$?
           cat mech-review.err >&2
           # exit 1 = fail entries: a result, saved and reported. exit 2+ = usage or git error: no result.
           if [ "$rc" -gt 1 ]; then
@@ -122,12 +122,12 @@ jobs:
           fetch-depth: 0
           path: caller
           persist-credentials: false
-      - name: ek engine checkout (the ref this workflow was called at)
+      - name: ekit engine checkout (the ref this workflow was called at)
         uses: actions/checkout@v4
         with:
           repository: ${{ job.workflow_repository }}
           ref: ${{ job.workflow_sha }}
-          path: ek
+          path: ekit
           persist-credentials: false
       - name: Rust toolchain
         if: inputs.stack == 'rust'
@@ -211,7 +211,7 @@ jobs:
             if [ -n "$g" ]; then args+=(--test-paths "$g"); fi
           done <<< "$TEST_PATHS"
           rc=0
-          python3 -I "$GITHUB_WORKSPACE/ek/scripts/mech-review.py" red "${args[@]}" > mech-review-red.json 2> mech-review-red.err || rc=$?
+          python3 -I "$GITHUB_WORKSPACE/ekit/scripts/mech-review.py" red "${args[@]}" > mech-review-red.json 2> mech-review-red.err || rc=$?
           cat mech-review-red.err >&2
           # exit 1 = fail entries: a result, saved and reported. exit 2+ = usage or git error: no result.
           if [ "$rc" -gt 1 ]; then
@@ -242,12 +242,12 @@ jobs:
           fetch-depth: 0
           path: caller
           persist-credentials: false
-      - name: ek engine checkout (the ref this workflow was called at)
+      - name: ekit engine checkout (the ref this workflow was called at)
         uses: actions/checkout@v4
         with:
           repository: ${{ job.workflow_repository }}
           ref: ${{ job.workflow_sha }}
-          path: ek
+          path: ekit
           persist-credentials: false
       - name: R3 plan (does the mutants job run)
         id: plan
@@ -262,7 +262,7 @@ jobs:
           while IFS= read -r g; do
             if [ -n "$g" ]; then args+=(--test-paths "$g"); fi
           done <<< "$TEST_PATHS"
-          python3 -I "$GITHUB_WORKSPACE/ek/scripts/mech-review.py" plan "${args[@]}" > mech-plan.json
+          python3 -I "$GITHUB_WORKSPACE/ekit/scripts/mech-review.py" plan "${args[@]}" > mech-plan.json
           python3 -I - "$GITHUB_OUTPUT" <<'PY'
           import json
           import sys
@@ -294,12 +294,12 @@ jobs:
           fetch-depth: 0
           path: caller
           persist-credentials: false
-      - name: ek engine checkout (the ref this workflow was called at)
+      - name: ekit engine checkout (the ref this workflow was called at)
         uses: actions/checkout@v4
         with:
           repository: ${{ job.workflow_repository }}
           ref: ${{ job.workflow_sha }}
-          path: ek
+          path: ekit
           persist-credentials: false
       - name: Rust toolchain
         if: inputs.stack == 'rust'
@@ -353,7 +353,7 @@ jobs:
             if [ -n "$g" ]; then args+=(--test-paths "$g"); fi
           done <<< "$TEST_PATHS"
           rc=0
-          python3 -I "$GITHUB_WORKSPACE/ek/scripts/mech-review.py" baseline "${args[@]}" > mech-review-baseline.json 2> mech-review-baseline.err || rc=$?
+          python3 -I "$GITHUB_WORKSPACE/ekit/scripts/mech-review.py" baseline "${args[@]}" > mech-review-baseline.json 2> mech-review-baseline.err || rc=$?
           cat mech-review-baseline.err >&2
           # exit 0 = a result (a failed or timed-out baseline is a result too). exit 2+ = usage or git error: no result.
           if [ "$rc" -gt 1 ]; then
@@ -401,12 +401,12 @@ jobs:
           fetch-depth: 0
           path: caller
           persist-credentials: false
-      - name: ek engine checkout (the ref this workflow was called at)
+      - name: ekit engine checkout (the ref this workflow was called at)
         uses: actions/checkout@v4
         with:
           repository: ${{ job.workflow_repository }}
           ref: ${{ job.workflow_sha }}
-          path: ek
+          path: ekit
           persist-credentials: false
       - name: Rust toolchain
         if: inputs.stack == 'rust'
@@ -517,7 +517,7 @@ jobs:
             if [ -n "$g" ]; then args+=(--test-paths "$g"); fi
           done <<< "$TEST_PATHS"
           rc=0
-          python3 -I "$GITHUB_WORKSPACE/ek/scripts/mech-review.py" mutants "${args[@]}" > mech-review-mutants.json 2> mech-review-mutants.err || rc=$?
+          python3 -I "$GITHUB_WORKSPACE/ekit/scripts/mech-review.py" mutants "${args[@]}" > mech-review-mutants.json 2> mech-review-mutants.err || rc=$?
           cat mech-review-mutants.err >&2
           # exit 1 = fail entries: a result, saved and reported. exit 2+ = usage or git error: no result.
           if [ "$rc" -gt 1 ]; then
@@ -540,12 +540,12 @@ jobs:
     if: always()
     runs-on: ubuntu-latest
     steps:
-      - name: ek comment poster checkout (the ref this workflow was called at)
+      - name: ekit comment poster checkout (the ref this workflow was called at)
         uses: actions/checkout@v4
         with:
           repository: ${{ job.workflow_repository }}
           ref: ${{ job.workflow_sha }}
-          path: ek
+          path: ekit
           persist-credentials: false
       - name: fetch guard result
         uses: actions/download-artifact@v4
@@ -592,7 +592,7 @@ jobs:
             if [ -f "$f" ]; then args+=(--envelope "$k=$f"); fi
           done
           rc=0
-          python3 -I ek/scripts/mech-review.py merge "${args[@]}" > mutants-merged.json 2> mutants-merged.err || rc=$?
+          python3 -I ekit/scripts/mech-review.py merge "${args[@]}" > mutants-merged.json 2> mutants-merged.err || rc=$?
           cat mutants-merged.err >&2
           if [ "$rc" -gt 1 ]; then
             rm -f mutants-merged.json
@@ -610,7 +610,7 @@ jobs:
           if [ "$RUN" = "true" ] || [ "$PLAN_RESULT" != "success" ]; then
             extra+=(--envelope mutants=mutants-merged.json)
           fi
-          python3 -I ek/scripts/mech-comment.py --pr "$PR_NUMBER" --head "$HEAD_SHA" \
+          python3 -I ekit/scripts/mech-comment.py --pr "$PR_NUMBER" --head "$HEAD_SHA" \
             --envelope r2=r2-result/mech-review.json \
             --envelope red=red-result/mech-review-red.json \
             "${extra[@]}" \

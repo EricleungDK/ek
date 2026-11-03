@@ -1,5 +1,5 @@
 #!/bin/bash
-# Structural test of the mech-review reusable workflow and ek's self caller.
+# Structural test of the mech-review reusable workflow and ekit's self caller.
 # Stdlib line-based parse (no PyYAML): top-level blocks, child keys, scalar values.
 source "$(dirname "$0")/lib.sh"
 python3 -I - "$ROOT" <<'PY'
@@ -124,9 +124,9 @@ check("reusable: report runs even if guard fails", "always()" in (value(report, 
       f"if={value(report, 'if')!r}")
 
 gt = text(guard)
-check("guard: checks out ek at job.workflow_sha",
+check("guard: checks out ekit at job.workflow_sha",
       re.search(r"ref:\s*\$\{\{\s*job\.workflow_sha\s*\}\}", gt) is not None)
-check("guard: ek repo from job.workflow_repository", "job.workflow_repository" in gt)
+check("guard: ekit repo from job.workflow_repository", "job.workflow_repository" in gt)
 check("guard: no language toolchain (no setup-*, toolchain, cargo, rustup)",
       re.search(r"setup-|toolchain|cargo|rustup", gt) is None)
 check("guard: runs mech-review.py r2", "mech-review.py" in gt and " r2" in gt)
@@ -141,9 +141,9 @@ check("report: named envelopes, guard as r2 and red-first as red",
       "--envelope r2=" in text(report) and "--envelope red=" in text(report), text(report))
 
 rt = text(red)
-check("red-first: checks out ek at job.workflow_sha",
+check("red-first: checks out ekit at job.workflow_sha",
       re.search(r"ref:\s*\$\{\{\s*job\.workflow_sha\s*\}\}", rt) is not None)
-check("red-first: ek repo from job.workflow_repository", "job.workflow_repository" in rt)
+check("red-first: ekit repo from job.workflow_repository", "job.workflow_repository" in rt)
 check("red-first: caller checkout with full history (base..head needs it)",
       re.search(r"fetch-depth:\s*0", rt) is not None)
 check("red-first: runs mech-review.py red", "mech-review.py" in rt and " red" in rt)
@@ -185,7 +185,7 @@ check("plan: job present", bool(pl))
 check("plan: runs mech-review.py plan", "mech-review.py" in pt and " plan" in pt, pt)
 check("plan: caller checkout at PR head with full history",
       "github.event.pull_request.head.sha" in pt and re.search(r"fetch-depth:\s*0", pt) is not None)
-check("plan: ek checkout at job.workflow_sha", re.search(r"ref:\s*\$\{\{\s*job\.workflow_sha\s*\}\}", pt) is not None)
+check("plan: ekit checkout at job.workflow_sha", re.search(r"ref:\s*\$\{\{\s*job\.workflow_sha\s*\}\}", pt) is not None)
 check("plan: exposes the run output only (#46: the shard count comes from baseline)",
       re.search(rf"^\s+run:\s*\$\{{\{{\s*steps\.\w+\.outputs\.run\s*\}}\}}", pt, re.M) is not None
       and "count:" not in pt and "shards:" not in pt, pt)
@@ -203,7 +203,7 @@ check("baseline: job-level permissions exactly contents read (it runs PR code fo
       str(block(bl, "permissions")))
 check("baseline: caller checkout at PR head with full history",
       "github.event.pull_request.head.sha" in bt and re.search(r"fetch-depth:\s*0", bt) is not None)
-check("baseline: ek checkout at job.workflow_sha", re.search(r"ref:\s*\$\{\{\s*job\.workflow_sha\s*\}\}", bt) is not None)
+check("baseline: ekit checkout at job.workflow_sha", re.search(r"ref:\s*\$\{\{\s*job\.workflow_sha\s*\}\}", bt) is not None)
 check("baseline: runs mech-review.py baseline", "mech-review.py" in bt and " baseline" in bt, bt)
 check("baseline: shard count from the shards setting (4)", "MUTATION_SHARDS" in bt or "--shards" in bt, bt)
 check("baseline: budget from the mutation-budget input", "inputs.mutation-budget" in bt and "--mutation-budget" in bt, bt)
@@ -232,7 +232,7 @@ check("mutants: job-level permissions exactly contents read (runs PR code)",
 check("mutants: no pull_request_target", "pull_request_target" not in mt)
 check("mutants: caller checkout at PR head with full history",
       "github.event.pull_request.head.sha" in mt and re.search(r"fetch-depth:\s*0", mt) is not None)
-check("mutants: ek checkout at job.workflow_sha", re.search(r"ref:\s*\$\{\{\s*job\.workflow_sha\s*\}\}", mt) is not None)
+check("mutants: ekit checkout at job.workflow_sha", re.search(r"ref:\s*\$\{\{\s*job\.workflow_sha\s*\}\}", mt) is not None)
 
 
 def step(lines, name):
@@ -321,7 +321,7 @@ for job_name, run_name in (("red-first", "R1 red-first, R4 determinism"), ("muta
     check(f"{job_name}: setup-command after extra apt packages, before the tests",
           order == ["extra apt packages", "setup command", run_name], str(names))
 
-# ---- ek's own caller ----
+# ---- ekit's own caller ----
 SW = ".github/workflows/mech-review-self.yml"
 S = read(SW)
 check("self: file exists", S is not None, SW)

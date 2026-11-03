@@ -38,7 +38,7 @@ if compgen -G "$dir/Dockerfile" >/dev/null || compgen -G "$dir/*compose*.y*ml" >
   fi
 fi
 
-scenarios=0; [[ -d $dir/.ek/scenarios ]] && scenarios=1
+scenarios=0; [[ -d $dir/.ekit/scenarios || -d $dir/.ek/scenarios ]] && scenarios=1
 
 if (( scenarios )); then
   for t in tmux expect curl; do

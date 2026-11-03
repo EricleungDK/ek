@@ -15,7 +15,7 @@ At report time, rerun the decisive commands: tests, typecheck, build. Counts and
 - State the env each command ran in: sandboxed or unsandboxed.
 
 - Mech-review envelope (PR comment or CLI): per check, `<check> <status> <head sha>` copied from it. `skipped`/`n/a`/`partial` = not fully run: a ⚠️ row, with its note as debt. Quote `summary` only when every check ran in full; never write "all pass" yourself. Envelope `head` ≠ HEAD → stale: rerun mech-review at HEAD first.
-- Repo with `.ek/scenarios/` (taste-it skill): a scenario-backed criterion is verified by the runner, never the taster's say-so. Run `RUN run`, then `RUN check`. Evidence: the `PASS`/`FAIL` line, the results.json or transcript path, tree hash fresh (`check` exit 0). Any `FAIL`, stale or partial `check` (exit 1) = not done: no ✅ row, no plain "done"; a fix-class FAIL stays an agent job (fix, full `RUN run`, `RUN check`), listed under Open, never handed to the user as a question or check.
+- Repo with `.ekit/scenarios/` (taste-it skill): a scenario-backed criterion is verified by the runner, never the taster's say-so. Run `RUN run`, then `RUN check`. Evidence: the `PASS`/`FAIL` line, the results.json or transcript path, tree hash fresh (`check` exit 0). Any `FAIL`, stale or partial `check` (exit 1) = not done: no ✅ row, no plain "done"; a fix-class FAIL stays an agent job (fix, full `RUN run`, `RUN check`), listed under Open, never handed to the user as a question or check.
 
 Done when: every criterion has a fresh result or a reason it can't run here.
 

@@ -1,7 +1,7 @@
 name: release
 
-# A release tag vX.Y.Z moves the floating major tag vX (v0 now) after ek's tests pass.
-# Callers pin `EricleungDK/ek/.github/workflows/mech-review.yml@v0`, so they get each release
+# A release tag vX.Y.Z moves the floating major tag vX (v0 now) after ekit's tests pass.
+# Callers pin `EricleungDK/ekit/.github/workflows/mech-review.yml@v0`, so they get each release
 # without a bump PR in their repo. The plugin's own version (.claude-plugin/plugin.json) is the
 # source of truth: the tag must match it. See docs/mech-review-ci.md.
 
@@ -28,7 +28,7 @@ jobs:
         run: |
           version=$(python3 -c "import json; print(json.load(open('.claude-plugin/plugin.json'))['version'])")
           test "v$version" = "$GITHUB_REF_NAME" || { echo "::error::tag $GITHUB_REF_NAME != plugin.json v$version"; exit 1; }
-      - name: ek tests
+      - name: ekit tests
         run: bash tests/run.sh
       - name: move the major tag
         run: |

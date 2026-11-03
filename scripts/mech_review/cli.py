@@ -53,10 +53,10 @@ summary (one line, text format first line and envelope `summary`):
 
 doctor (`doctor [--repo .] [--stack S] [--project-dir D] [--no-trial]`, no base or head): finds the stack and project dir,
   reads .github/workflows, trial-runs the tests and the mutation tool at HEAD in a throwaway worktree, and prints
-  {ek, head, detected, inputs, trial, entries, summary}: `inputs` is what the caller needs, each entry names one exact fix.
+  {ekit, head, detected, inputs, trial, entries, summary}: `inputs` is what the caller needs, each entry names one exact fix.
   Exit 0 no problems, 1 any problem, 2 usage or git error. Writes nothing.
 
-envelope: ek (plugin version), base, head (full SHAs), checks, entries, summary.
+envelope: ekit (plugin version), base, head (full SHAs), checks, entries, summary.
 
 exit: 0 no fail entries (confirm entries allowed), 1 any fail entry, 2 usage or git error.
 

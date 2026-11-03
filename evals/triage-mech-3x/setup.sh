@@ -65,7 +65,7 @@ PY
 git commit -qam "fix: reset server between runs" -m "mech: R4-7a8b9c0d"
 head=$(git rev-parse HEAD); base=$(git rev-parse main)
 sed "s/HEAD_SHA/$head/; s/BASE_SHA/$base/" > mech.json <<'JSON'
-{"ek":"0.1.1","base":"BASE_SHA","head":"HEAD_SHA",
+{"ekit":"0.1.1","base":"BASE_SHA","head":"HEAD_SHA",
  "checks":{"R1":{"status":"skipped","note":"not implemented"},
            "R2":{"status":"pass","note":""},
            "R3":{"status":"skipped","note":"not implemented"},

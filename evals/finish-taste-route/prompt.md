@@ -4,7 +4,7 @@ allowed_tools: [Skill, Read]
 runs: 2
 ---
 
-Context of the work so far: I asked you to add `--json` to my Rust CLI `tool`; the repo has `.ek/scenarios/`. Unit tests pass. You ran the scenario runner just now:
+Context of the work so far: I asked you to add `--json` to my Rust CLI `tool`; the repo has `.ekit/scenarios/`. Unit tests pass. You ran the scenario runner just now:
 
 ```
 $ RUN run

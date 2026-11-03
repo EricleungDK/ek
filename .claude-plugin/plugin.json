@@ -1,9 +1,9 @@
 {
-  "name": "ek",
+  "name": "ekit",
   "version": "0.2.6",
   "description": "Agent workflow kit: orchestrate-agent, failure-triage, taste-it, finish, ci-doctor, plus preflight/failure/finish-gate hooks.",
   "author": { "name": "EricleungDK" },
-  "repository": "https://github.com/EricleungDK/ek",
+  "repository": "https://github.com/EricleungDK/ekit",
   "keywords": ["agents", "skills", "testing", "ci", "mutation-testing"],
   "skills": [
     "./skills/ci-doctor",

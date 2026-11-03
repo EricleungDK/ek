@@ -263,7 +263,7 @@ run_check("no production change: skipped, no shards", p_ts_none["check"]["status
 
 # ---- merge: the baseline envelope (what `baseline` prints) decides when no shard runs; shards merge when it ran; timing once ----
 def env(entries, r3):
-    return {"ek": "x", "base": B, "head": H, "checks": {"R3": r3}, "entries": entries, "summary": "x"}
+    return {"ekit": "x", "base": B, "head": H, "checks": {"R3": r3}, "entries": entries, "summary": "x"}
 
 
 def r3(status, note="x", tested=None, total=None, timing=None):

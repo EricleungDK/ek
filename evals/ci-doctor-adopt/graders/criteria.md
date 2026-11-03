@@ -4,7 +4,7 @@ weight: 1
 ---
 
 Pass only if all hold:
-1. The caller shown uses `EricleungDK/ek/.github/workflows/mech-review.yml@` with a pinned tag, and has `stack: rust`, `project-dir: app-tui`, `rust-toolchain: 1.96.0`.
+1. The caller shown uses `EricleungDK/ekit/.github/workflows/mech-review.yml@` with a pinned tag, and has `stack: rust`, `project-dir: app-tui`, `rust-toolchain: 1.96.0`.
 2. `test-paths` is under `app-tui/`.
 3. `extra-apt-packages` has `bubblewrap` and `setup-command` has `sysctl -w kernel.apparmor_restrict_unprivileged_userns=0`.
 4. `protected-paths` has `.github/**` and `agent-branch-prefix` is `claude/`.

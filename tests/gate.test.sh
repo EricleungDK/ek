@@ -1,11 +1,11 @@
 source "$(dirname "$0")/lib.sh"
 SS="$ROOT/scripts/session-start.py"; FG="$ROOT/scripts/finish-gate.py"
 T="$(mktemp -d)"; trap 'rm -rf "$T"' EXIT
-export EK_STATE="$T/state"
+export EKIT_STATE="$T/state"
 
 R="$T/repo"; mkdir -p "$R"; git -C "$R" init -q; git -C "$R" -c user.email=t@t -c user.name=t commit -q --allow-empty -m init
 start() { jq -nc --arg c "$1" --arg s "$2" '{hook_event_name:"SessionStart",session_id:$s,cwd:$c,source:"startup"}' | python3 -I "$SS"; }
-arm()   { jq -nc --arg c "$1" --arg s "$2" --arg p "${3:-/ek:orchestrate-agent do x}" '{hook_event_name:"UserPromptSubmit",session_id:$s,cwd:$c,prompt:$p}' | python3 -I "$FG" --arm; }
+arm()   { jq -nc --arg c "$1" --arg s "$2" --arg p "${3:-/ekit:orchestrate-agent do x}" '{hook_event_name:"UserPromptSubmit",session_id:$s,cwd:$c,prompt:$p}' | python3 -I "$FG" --arm; }
 stop()  { jq -nc --arg c "$1" --arg s "$2" --argjson a "${3:-false}" --arg e "${4:-Stop}" '{hook_event_name:$e,session_id:$s,cwd:$c,stop_hook_active:$a}' | python3 -I "$FG"; }
 
 # session start: pointers + guardrails injected; finish/taste-it are orchestrate-only
@@ -17,19 +17,19 @@ lacks "$c" "taste-it" "start → no always-on taste-it rule"
 has "$c" "Same blocker 3×" "start → blocker guardrail"
 has "$c" "exact command" "start → rephrase guardrail"
 
-# not armed (no /ek:orchestrate-agent) → gate silent even with changes
+# not armed (no /ekit:orchestrate-agent) → gate silent even with changes
 start "$R" n1 >/dev/null; echo n > "$R/n.txt"
 eq "$(stop "$R" n1)" "" "unarmed + change → allow"
 eq "$(stop "$R" n1 false SubagentStop)" "" "unarmed SubagentStop → allow"
-arm "$R" n1 "why does /ek:orchestrate-agent run?" >/dev/null
+arm "$R" n1 "why does /ekit:orchestrate-agent run?" >/dev/null
 eq "$(stop "$R" n1)" "" "mention mid-prompt doesn't arm"
-arm "$R" n1 "/ek:taste-it" >/dev/null
+arm "$R" n1 "/ekit:taste-it" >/dev/null
 eq "$(stop "$R" n1)" "" "other skill doesn't arm"
-eq "$(arm "$R" n1 "/ek:orchestrate-agent fix #3")" "" "arm prints nothing"
-eq "$(jq -r .decision <<<"$(stop "$R" n1)")" "block" "armed (/ek:orchestrate-agent) → block"
+eq "$(arm "$R" n1 "/ekit:orchestrate-agent fix #3")" "" "arm prints nothing"
+eq "$(jq -r .decision <<<"$(stop "$R" n1)")" "block" "armed (/ekit:orchestrate-agent) → block"
 start "$R" n2 >/dev/null; arm "$R" n2 "  /orchestrate-agent x" >/dev/null; echo m >> "$R/n.txt"
 eq "$(jq -r .decision <<<"$(stop "$R" n2)")" "block" "armed (cloud /orchestrate-agent) → block"
-start "$R" n3 >/dev/null; arm "$R" n3 "<command-name>/ek:orchestrate-agent</command-name>" >/dev/null; echo k >> "$R/n.txt"
+start "$R" n3 >/dev/null; arm "$R" n3 "<command-name>/ekit:orchestrate-agent</command-name>" >/dev/null; echo k >> "$R/n.txt"
 eq "$(jq -r .decision <<<"$(stop "$R" n3)")" "block" "armed (command-name tag) → block"
 rm -f "$R/n.txt"
 
@@ -70,8 +70,8 @@ has "$c" "cargo: missing" "start → preflight warnings"
 # --- scenario repos: gate on fresh runner PASS ---
 SC="$ROOT/scripts/scenarios.py"
 mkrepo() { # mkrepo <dir> <run.sh exit code>
-  mkdir -p "$1/.ek/scenarios/x"; git -C "$1" init -q
-  echo s > "$1/.ek/scenarios/x/SCENARIO.md"; printf '#!/bin/bash\nexit %s\n' "$2" > "$1/.ek/scenarios/x/run.sh"
+  mkdir -p "$1/.ekit/scenarios/x"; git -C "$1" init -q
+  echo s > "$1/.ekit/scenarios/x/SCENARIO.md"; printf '#!/bin/bash\nexit %s\n' "$2" > "$1/.ekit/scenarios/x/run.sh"
   git -C "$1" add -A; git -C "$1" -c user.email=t@t -c user.name=t commit -q -m init
 }
 runsc() { python3 -I "$SC" --repo "$1" run >/dev/null; }
@@ -88,7 +88,7 @@ echo b >> "$P/a.txt"
 out="$(stop "$P" p1)"; eq "$(dec "$out")" "block" "PASS then edit → block"
 has "$(jq -r .reason <<<"$out")" "stale" "block reason has check reason"
 has "$(jq -r .reason <<<"$out")" "scenarios.py" "block reason points to runner"
-has "$(jq -r .reason <<<"$out")" "ek:taste-it" "block reason points to taste-it"
+has "$(jq -r .reason <<<"$out")" "ekit:taste-it" "block reason points to taste-it"
 has "$(jq -r .reason <<<"$out")" "finish" "block reason asks finish report"
 eq "$(dec "$(stop "$P" p1)")" "block" "stale keeps blocking (no once-only)"
 eq "$(stop "$P" p1 true)" "" "scenarios + stop_hook_active → allow"
@@ -116,12 +116,12 @@ eq "$(stop "$U" u1)" "" "commit then run PASS → allow"
 # runner broken -> fail closed (stop_hook_active still allows)
 printf 'import sys\nsys.stderr.write("boom\\n")\nsys.exit(3)\n' > "$T/badrunner"
 E="$T/err"; mkrepo "$E" 0
-EK_SCENARIOS_PY="$T/badrunner" start "$E" e1 >/dev/null; arm "$E" e1 >/dev/null
-out="$(EK_SCENARIOS_PY="$T/badrunner" stop "$E" e1)"
+EKIT_SCENARIOS_PY="$T/badrunner" start "$E" e1 >/dev/null; arm "$E" e1 >/dev/null
+out="$(EKIT_SCENARIOS_PY="$T/badrunner" stop "$E" e1)"
 eq "$(dec "$out")" "block" "runner error → block"
 has "$(jq -r .reason <<<"$out")" "scenario runner error" "runner error reason"
 has "$(jq -r .reason <<<"$out")" "boom" "runner error shows output"
-eq "$(EK_SCENARIOS_PY="$T/badrunner" stop "$E" e1 true)" "" "runner error + stop_hook_active → allow"
+eq "$(EKIT_SCENARIOS_PY="$T/badrunner" stop "$E" e1 true)" "" "runner error + stop_hook_active → allow"
 
 # baseline is per repo within one session
 A2="$T/a2"; B2="$T/b2"; mkrepo "$A2" 0; mkrepo "$B2" 0; echo b > "$B2/b.txt"

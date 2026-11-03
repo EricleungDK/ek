@@ -1,6 +1,6 @@
 name: tests
 
-# ek's own suite (the same gate release.yml runs) on every PR, so a test that only fails on GitHub's runner shows up here and
+# ekit's own suite (the same gate release.yml runs) on every PR, so a test that only fails on GitHub's runner shows up here and
 # not first in release.yml (v0.2.5's release run was the suite's first run on a runner).
 
 on:

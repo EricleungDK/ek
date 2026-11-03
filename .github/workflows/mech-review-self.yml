@@ -1,6 +1,6 @@
-name: mech-review (ek self)
+name: mech-review (ekit self)
 
-# ek's own caller. Uses the LOCAL reusable workflow, so on a PR it runs the PR's engine (the demo path).
+# ekit's own caller. Uses the LOCAL reusable workflow, so on a PR it runs the PR's engine (the demo path).
 # Adopters call @v0 instead (each release moves it): see docs/mech-review-ci.md.
 
 on:

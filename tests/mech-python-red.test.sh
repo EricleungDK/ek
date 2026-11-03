@@ -193,7 +193,7 @@ eq "$(jq -r .checks.R1.status <<<"$out")" skipped "python R1 skipped on a non-ag
 
 # ---- R1 and R4 n/a without the toolchain: never a pass ----
 agent_repo noexe
-out=$(env -u MECH_TEST_STUB python3 -I "$MR" red --repo "$R" --base "$B" --head "$H" --stack python --test-paths 'tests/**' --head-branch agent/x --test-cmd "ek-no-such-python -m pytest"); rc=$?
+out=$(env -u MECH_TEST_STUB python3 -I "$MR" red --repo "$R" --base "$B" --head "$H" --stack python --test-paths 'tests/**' --head-branch agent/x --test-cmd "ekit-no-such-python -m pytest"); rc=$?
 eq "$(jq -r .checks.R1.status <<<"$out")" n/a "python missing toolchain: R1 n/a"
 eq "$(jq -r .checks.R4.status <<<"$out")" n/a "python missing toolchain: R4 n/a"
 has "$(jq -r .summary <<<"$out")" "n/a: R1 R4" "python missing toolchain: summary names n/a"

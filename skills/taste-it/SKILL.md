@@ -1,6 +1,6 @@
 ---
 name: taste-it
-description: Verify a deliverable by using it as a real user, via black-box scenarios in .ek/scenarios/. Use when acceptance criteria need a user run, when adding or changing scenarios, when a scenario fails, or before calling a feature done in a repo with .ek/scenarios/. Not /code-review (that reads code; this uses the result).
+description: Verify a deliverable by using it as a real user, via black-box scenarios in .ekit/scenarios/. Use when acceptance criteria need a user run, when adding or changing scenarios, when a scenario fails, or before calling a feature done in a repo with .ekit/scenarios/. Not /code-review (that reads code; this uses the result).
 ---
 
 Tests green is not "works". A **taster** (a subagent, never the implementer) acts as a real user; the project's **scenarios** keep that user run repeatable. Separate gate from /code-review: review asks "is the code right", taste asks "does it work in use".
@@ -21,15 +21,15 @@ Taster writes or updates scenarios and reports each finding with the scenario id
 
 ## 2. Scenarios
 
-Runner: use the `[ek] Scenario runner:` line from session context (absolute path, same in plugin and cloud installs). Absent (harness without hooks): `python3 ~/.ek/scripts/scenarios.py`, after `git clone --depth 1 https://github.com/EricleungDK/ek ~/.ek` if missing; `<kit>` below = `~/.ek`. Below, `RUN` = that command.
+Runner: use the `[ekit] Scenario runner:` line from session context (absolute path, same in plugin and cloud installs). Absent (harness without hooks): `python3 ~/.ekit/scripts/scenarios.py`, after `git clone --depth 1 https://github.com/EricleungDK/ekit ~/.ekit` if missing; `<kit>` below = `~/.ekit`. Below, `RUN` = that command.
 
 Layout, committed in the repo:
 
 ```
-.ek/scenarios/<use-case>/SCENARIO.md
+.ekit/scenarios/<use-case>/SCENARIO.md
                         /run.sh        # real install + drive + assert; exit 0 = pass
                         /fixtures/
-.ek/scenarios/<use-case>/<child>/...   # branch
+.ekit/scenarios/<use-case>/<child>/...   # branch
 ```
 
 `SCENARIO.md` fields:
@@ -38,7 +38,7 @@ Layout, committed in the repo:
 - **steps**: what the user does
 - **expected**: observable result
 
-No `SCENARIO.md` → FAIL. `run.sh` gets `EK_REPO`, `EK_SCENARIO_DIR`, `EK_PARENT_DIR` in a fresh temp cwd; a child reuses its parent's setup and fixtures via `EK_PARENT_DIR`. Scenarios write to their temp cwd only; writing into `EK_REPO` fails the run.
+No `SCENARIO.md` → FAIL. `run.sh` gets `EKIT_REPO`, `EKIT_SCENARIO_DIR`, `EKIT_PARENT_DIR` in a fresh temp cwd; a child reuses its parent's setup and fixtures via `EKIT_PARENT_DIR`. Scenarios write to their temp cwd only; writing into `EKIT_REPO` fails the run.
 
 ### Reuse before write
 
@@ -60,7 +60,7 @@ Name the scenarios read and the files created or edited before writing any.
 | `RUN can-fail <baseline-ref>` | `CAN-FAIL ✓ <id>` or `CANNOT FAIL <id>`: passes at baseline |
 | `RUN tree-hash` | current tree hash |
 
-Evidence is the runner's `PASS`/`FAIL` lines and results.json (`<git dir>/ek/`, transcripts beside it), never the taster's say-so. Any edit makes the PASS stale; the Stop gate wants a **fresh PASS**. Missing driver tool (preflight warns) → scenario unrunnable: verification debt (finish skill), not skipped.
+Evidence is the runner's `PASS`/`FAIL` lines and results.json (`<git dir>/ekit/`, transcripts beside it), never the taster's say-so. Any edit makes the PASS stale; the Stop gate wants a **fresh PASS**. Missing driver tool (preflight warns) → scenario unrunnable: verification debt (finish skill), not skipped.
 
 ## 4. Quality bar
 

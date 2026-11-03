@@ -14,7 +14,12 @@ from .globs import any_glob
 from .mutants import DEFAULT_CMD as RUST_MUTANTS
 from .stack import ADAPTERS
 
-CALLER = "EricleungDK/ek/.github/workflows/mech-review.yml@"
+CALLER = "EricleungDK/ekit/.github/workflows/mech-review.yml@"
+CALLERS = (CALLER, "EricleungDK/ek/.github/workflows/mech-review.yml@")  # + pre-rename callers
+
+
+def is_caller(text):
+    return any(c in text for c in CALLERS)
 WORKFLOW = re.compile(r"^\.github/workflows/[^/]+\.ya?ml$")
 SKIP_DIRS = {"node_modules", "vendor", "target", "tests", "test", "fixtures", "testdata", "examples", "third_party", "dist", "build"}
 APT = re.compile(r"\bapt(?:-get)?\s+install\s+([^\n#|&;]*)")
@@ -66,7 +71,7 @@ def read_ci(texts):
 def caller_inputs(text):
     """{input: value} of the `with:` block under the mech-review `uses:` line. A block scalar joins its lines with newlines."""
     lines = text.splitlines()
-    start = next(i for i, line in enumerate(lines) if CALLER in line)
+    start = next(i for i, line in enumerate(lines) if is_caller(line))
     inputs, indent, key = {}, None, None
     for line in lines[start + 1:]:
         if not line.strip() or line.lstrip().startswith("#"):
@@ -219,8 +224,8 @@ def run(repo, head_ref="HEAD", stack=None, project_dir=None, run_trial=True, run
         detected = {"stack": stack, "project_dir": project_dir}
         flows = sorted(p for p in paths if WORKFLOW.match(p))
         texts = {p: engine.blob(repo, head, p) for p in flows}
-        callers = [(p, caller_inputs(t)) for p, t in texts.items() if CALLER in t]
-        ci = read_ci(t for p, t in texts.items() if CALLER not in t)
+        callers = [(p, caller_inputs(t)) for p, t in texts.items() if is_caller(t)]
+        ci = read_ci(t for p, t in texts.items() if not is_caller(t))
         inputs = wanted_inputs(stack, project_dir, ci, _channel(repo, head, project_dir, paths))
         entries += caller_entries(callers, inputs, paths)
         if run_trial:
@@ -228,5 +233,5 @@ def run(repo, head_ref="HEAD", stack=None, project_dir=None, run_trial=True, run
             entries = trial_entries + entries
     entries = engine.finalize(entries)
     summary = f"fail {head} ({len(entries)} problems)" if entries else f"ok {head}"
-    return {"ek": engine.ek_version(), "head": head, "detected": detected, "inputs": inputs, "trial": tried,
+    return {"ekit": engine.ekit_version(), "head": head, "detected": detected, "inputs": inputs, "trial": tried,
             "entries": entries, "summary": summary}
