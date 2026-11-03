@@ -21,10 +21,12 @@ checks (status in envelope: pass | fail | partial | n/a | skipped):
       paths (needs-human).
       Test fns are keyed by mod-qualified name (m1::works). A test that loses asserts is exempt
       only up to the asserts gained by a helper it calls by name (call-site, each gain used once).
-  R1  red-first (red subcommand): the first test(red) commit in base..head touches no production
-      file; its new tests fail there (build failure = compile-red, confirm); they pass at head.
-      Skipped unless --head-branch starts with --agent-prefix and a production file changed.
-      Runs in a git worktree at the red commit; n/a when the toolchain is absent.
+  R1  red-first (red subcommand): the tests base..head adds or changes, run on the base's production
+      code (a worktree at the merge base with head's test-path files on top), must catch the change:
+      at least one fails there (build failure = compile-red, confirm). Tests that pass there are
+      guards. Commit order and subjects do not matter: a later commit can fix an R1 fail. R4 runs
+      the same tests at head. Skipped unless --head-branch starts with --agent-prefix and a
+      production file changed; n/a when the toolchain is absent.
   R4  determinism (red subcommand): each new or changed #[test] runs 5x at head; any failing run
       is a fail. n/a when the toolchain is absent.
   R3  mutation on the diff (`mutants`): cargo-mutants `--in-diff` (rust), mutmut (python), Stryker 10.0.0 (ts: changed

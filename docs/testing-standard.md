@@ -80,7 +80,7 @@ If a behaviour can be tested at unit level, test it there. Push e2e to the one p
 | Change expected value to match output | R2 (`confirm`) | editing an expected value to match the code's current output | Check the spec or ticket. The spec sets the value; fix the code. Intended change: reviewer confirms the `confirm` entry. |
 | Lint/type suppression without reason: `#[allow]`, `# noqa`, `# type: ignore`, `eslint-disable` (no `-- reason`), `@ts-ignore` (no text after it) | R2 (`fail`) | silencing a lint without a reason | Fix the lint. If it must stay, same-line reason (`#[allow(x, reason = "…")]` with a non-empty reason, `# noqa: E501 — url literal`, `// eslint-disable-next-line no-console -- debug log`, `// @ts-expect-error: the bad input under test`). An empty reason is no reason. |
 | Edit a protected path: CI, gate scripts, agent docs | R2 (`fail`, `needs-human`) | editing CI, gate scripts or agent docs to get the gate green | Stop. A human decides. Never edit the gate to pass. No agent downgrade path. |
-| Test passes before the fix | R1 | no failing `test(red)` commit | Write the test first in a `test(red): …` commit. It must fail there for the ticket's reason. A test that pins existing behaviour passes before the fix by design: commit it after the `test(red)` commit. |
+| No test catches the change: every new or changed test passes on the base's code too | R1 | a production change no test catches | Write a test that fails on the base's code for the ticket's reason (writing it first is still the way). A test that pins existing behaviour passes on base by design: it is a guard and may sit beside it. Fix an R1 fail with a new commit; no history rewrite. |
 | Weak or missing assert: test still passes with the code broken, or no test reaches the changed line (python `no tests`, stryker `NoCoverage`) | R3 | MISSED mutant `<desc>` in `<file>` | Add the assert that kills the mutant, or the test that reaches the line. |
 | Flaky test: passes and fails on same code | R4 | flaky test `<name>` | Find the nondeterminism (time, order, shared state, sleep). Fix it. Never retry to green. |
 | Test asserts internals, mocks own code, bad name, logic in test | code review | n/a | Test through public interface. Mock only boundaries. Rename to the behaviour. Remove the logic. |
@@ -89,7 +89,7 @@ If a behaviour can be tested at unit level, test it there. Push e2e to the one p
 
 | Check | Enforces | Status |
 |---|---|---|
-| R1 red-first | First `test(red): …` commit in base..head touches no production file. Its new or changed tests fail there (build fails: `compile-red`, confirm). They pass at head. Agent branches only (`--head-branch` starts with the agent prefix), when production files changed. Runs in a worktree at the red commit. | implemented (#16) |
+| R1 red-first | The tests base..head adds or changes run on the base's production code (a worktree at the merge base with head's test-path files on top). At least one fails there (build fails: `compile-red`, confirm); the rest are guards. R4 runs them at head. Commit order and subjects do not matter, so a later commit fixes an R1 fail. A PR whose only new tests are files of another language under `test-paths` (a python PTY smoke in a rust crate) gets an agent-fixable fail per file with the route in the hint (a stack test; smoke-only logic moved into a testable fn). Agent branches only (`--head-branch` starts with the agent prefix), when production files changed. | implemented (#16; fails-on-base) |
 | R2 test-diff guard | Cheat rows above: removed tests (a rename with the same asserts is not a removal), new skip/ignore/xfail/only, `should_panic` added to an existing test (`confirm`), fewer asserts per surviving test fn, weakened or changed expected values (`confirm`), unreasoned suppressions, protected paths. No waiver in the PR body. | implemented (#13, #26, #27, review round 1) |
 
 R2 assert rules:
@@ -184,7 +184,7 @@ Stack examples for test paths: Python `tests/test_*.py`, TS `src/**/*.test.ts`.
 
 ## Before PR
 
-- `test(red)` commit exists, fails for the ticket's reason, before the fix.
+- At least one new or changed test fails on the base's code for the ticket's reason (R1), and passes at head.
 - No skip, ignore, only, or new suppression without reason.
 - No assert removed, moved out of its test, or weakened in place.
 - Expected values match the spec, not the output.
