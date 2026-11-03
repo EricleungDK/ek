@@ -1,8 +1,8 @@
 name: mech-review
 
-# Reusable. Callers pin an ek tag:
-#   uses: EricleungDK/ek/.github/workflows/mech-review.yml@v0.2.4
-# The ek scripts run at the SAME ref the caller pinned: job.workflow_sha / job.workflow_repository
+# Reusable. Callers follow the major tag, which each release moves (release.yml):
+#   uses: EricleungDK/ek/.github/workflows/mech-review.yml@v0
+# The ek scripts run at the SAME ref the caller called: job.workflow_sha / job.workflow_repository
 # are the called workflow file's commit and repo, so the guard, red-first, mutants and the poster are checked out from there.
 
 on:
