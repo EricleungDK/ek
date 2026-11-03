@@ -19,7 +19,12 @@ Adapter interface:
   suppressions(text) -> [Suppression(line, end_line, kind, lints, lint_text, reason)]
   suppression_text(sup) -> (problem, hint) of a suppression without a reason
   parse_error(text) -> None | (line, message): the file does not parse; the checks cannot read it
+  mutation_skips(text) -> [(line, end_line, marker)]: markers that hide code from the R3 tool (rust #[mutants::skip],
+      python `# pragma: no mutate`, ts `// Stryker disable`), in code, not strings; default none
+  mutation_config(path, load) -> None | what: this change edits the R3 tool's config (cargo-mutants mutants.toml,
+      [tool.mutmut], stryker config). load() -> (base text or None, head text or None), read only when needed
 """
+import configparser
 import ast
 import functools
 import io
@@ -185,6 +190,12 @@ class Adapter:
     def suppressions(self, text):
         raise NotImplementedError
 
+    def mutation_skips(self, text):
+        return []
+
+    def mutation_config(self, path, load):
+        return None
+
     def calls(self, text):
         raise NotImplementedError
 
@@ -342,6 +353,22 @@ class RustAdapter(Adapter):
             out.append(Suppression(m.count("\n", 0, a.start()) + 1, m.count("\n", 0, end) + 1, mm.group(1),
                                    norm(raw), " ".join(raw.split()), reason))
         return out
+
+    def mutation_skips(self, text):
+        """`#[mutants::skip]`, also inside cfg_attr, in code (masked: comments and strings do not count)."""
+        m = mask(text)
+        out = []
+        for a in ATTR_START.finditer(m):
+            br = a.end() - 1
+            end = close_of(m, br)
+            if re.search(r"\bmutants\s*::\s*skip\b", m[br + 1:end]):
+                out.append((m.count("\n", 0, a.start()) + 1, m.count("\n", 0, end) + 1,
+                            "#[" + " ".join(text[br + 1:end].split()) + "]"))
+        return out
+
+    def mutation_config(self, path, load):
+        """cargo-mutants reads .cargo/mutants.toml (exclude_globs, exclude_re, test args): any change to one."""
+        return "cargo-mutants config" if os.path.basename(path) == "mutants.toml" else None
 
     def suppression_text(self, sup):
         return (f"#[{sup.kind}({sup.lint_text})] added without a reason",
@@ -541,6 +568,40 @@ class PythonAdapter(Adapter):
     def suppression_text(self, sup):
         return (f"`{sup.lint_text}` added without a reason",
                 f"fix the lint, or give the suppression a reason after the codes: `{sup.lint_text} - why`")
+
+    def mutation_skips(self, text):
+        """`# pragma: no mutate` comments (mutmut skips the line)."""
+        try:
+            toks = list(tokenize.generate_tokens(io.StringIO(text).readline))
+        except (tokenize.TokenError, SyntaxError):
+            return []
+        return [(t.start[0], t.start[0], t.string.strip()) for t in toks
+                if t.type == tokenize.COMMENT and re.search(r"pragma\s*:\s*no\s+mutate\b", t.string)]
+
+    def mutation_config(self, path, load):
+        """mutmut reads [tool.mutmut] in pyproject.toml and [mutmut] in setup.cfg: a change to that table. Other edits to
+        those files (version, dependencies) are not a mutation config change. A file that does not parse counts when
+        either side mentions mutmut."""
+        name = os.path.basename(path)
+        if name not in ("pyproject.toml", "setup.cfg"):
+            return None
+        before, after = load()
+
+        def table(text):
+            if text is None:
+                return None
+            if name == "pyproject.toml":
+                import tomllib
+                return tomllib.loads(text).get("tool", {}).get("mutmut")
+            cp = configparser.ConfigParser(interpolation=None)
+            cp.read_string(text)
+            return dict(cp["mutmut"]) if cp.has_section("mutmut") else None
+
+        try:
+            changed = table(before) != table(after)
+        except Exception:
+            changed = "mutmut" in (before or "") + (after or "")
+        return ("[tool.mutmut]" if name == "pyproject.toml" else "[mutmut]") if changed else None
 
     def test_argv(self, cmd, path, name):
         """one named test. pytest: the nodeid (`path::Class::test`), which also runs unittest TestCase methods.
@@ -990,6 +1051,18 @@ class TsAdapter(Adapter):
 
     def ignored_text(self, name):
         return f"test `{name}` marked skipped (skip, todo or x-prefixed)"
+
+    def mutation_skips(self, text):
+        """`Stryker disable` comments (all, next-line, or named mutators), in comments only."""
+        _, comments, _, _, _, _ = _ts_parse(text)
+        return [(_line(text, start), _line(text, end), " ".join(body.split())) for start, end, body in comments
+                if re.match(r"\s*Stryker\s+disable\b", body)]
+
+    def mutation_config(self, path, load):
+        """Stryker's config file: stryker.conf.* / stryker.config.* (dot-prefixed too)."""
+        if re.fullmatch(r"\.?stryker\.(?:conf|config)\.(?:js|mjs|cjs|ts|mts|cts|json)", os.path.basename(path)):
+            return "Stryker config"
+        return None
 
     def test_cmd_in(self, crate):
         """vitest when package.json lists vitest (or lists neither), jest when it lists only jest. The runner runs from
