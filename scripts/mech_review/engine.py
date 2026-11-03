@@ -154,6 +154,14 @@ def r2(repo, mb, head, adapter, test_globs, protected_globs):
                                  f"protected path changed: {ch.new or ch.old}",
                                  "move this change to its own human-reviewed PR; a human decides",
                                  "editing CI, gate scripts or agent docs to get the gate green"))
+        cfg_path = ch.new or ch.old
+        what = adapter.mutation_config(cfg_path, lambda: (blob(repo, mb, ch.old) if ch.old else None,
+                                                          blob(repo, head, ch.new) if ch.new else None))
+        if what:
+            entries.append(entry("R2", cfg_path, 0, "mutation-config", "needs-human", "fail",
+                                 f"mutation config changed: {what} in {cfg_path}",
+                                 "move this change to its own human-reviewed PR; a person decides what R3 may leave out",
+                                 "hiding code from mutation testing (R3)"))
         # a source file renamed to a non-source path is a deletion; a non-source file renamed to source is an addition
         old = ch.old if ch.old and adapter.classify(ch.old, test_globs) is not None else None
         new = ch.new if ch.new and adapter.classify(ch.new, test_globs) is not None else None
@@ -303,6 +311,15 @@ def r2(repo, mb, head, adapter, test_globs, protected_globs):
                 problem, hint = adapter.suppression_text(sup)
                 entries.append(entry("R2", new, sup.line, sup.lints, "agent-fixable", "fail", problem, hint,
                                      "silencing a lint without a reason"))
+            if adapter.classify(new, test_globs) == "prod":
+                for line, end_line, marker in adapter.mutation_skips(after):
+                    if not any(ln in added_nums for ln in range(line, end_line + 1)):
+                        continue
+                    entries.append(entry("R2", new, line, "mutation-skip", "needs-human", "fail",
+                                         f"mutation skip added: `{marker}` hides this code from R3",
+                                         "remove it and add the test R3 asks for; if the code truly cannot be tested, "
+                                         "a person decides",
+                                         "hiding code from mutation testing (R3)"))
     return entries
 
 

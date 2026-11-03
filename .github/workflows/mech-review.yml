@@ -1,8 +1,8 @@
 name: mech-review
 
-# Reusable. Callers pin an ek tag:
-#   uses: EricleungDK/ek/.github/workflows/mech-review.yml@v0.2.4
-# The ek scripts run at the SAME ref the caller pinned: job.workflow_sha / job.workflow_repository
+# Reusable. Callers follow the major tag, which each release moves (release.yml):
+#   uses: EricleungDK/ek/.github/workflows/mech-review.yml@v0
+# The ek scripts run at the SAME ref the caller called: job.workflow_sha / job.workflow_repository
 # are the called workflow file's commit and repo, so the guard, red-first, mutants and the poster are checked out from there.
 
 on:
@@ -340,6 +340,12 @@ jobs:
           PROJECT_DIR: ${{ inputs.project-dir }}
         run: |
           set -uo pipefail
+          # rust: the toolchain action exports CARGO_INCREMENTAL=0, so each mutant rebuilt the whole crate from scratch.
+          # Incremental rebuilds, and no debug info (each mutant relinks every test binary): build time only, same tests.
+          if [ "$STACK" = "rust" ]; then
+            export CARGO_INCREMENTAL=1
+            export CARGO_PROFILE_DEV_DEBUG=0 CARGO_PROFILE_TEST_DEBUG=0
+          fi
           # the most shards: 4 (fewer when there are fewer mutants or files: no empty shard)
           args=(--repo "$GITHUB_WORKSPACE/caller" --base "$BASE_SHA" --head "$HEAD_SHA" --stack "$STACK"
                 --mutation-budget "$MUTATION_BUDGET" --project-dir "$PROJECT_DIR" --shards 4)
@@ -497,6 +503,12 @@ jobs:
           STRYKER_BIN: ${{ runner.temp }}/stryker/node_modules/.bin/stryker
         run: |
           set -uo pipefail
+          # rust: the toolchain action exports CARGO_INCREMENTAL=0, so each mutant rebuilt the whole crate from scratch.
+          # Incremental rebuilds, and no debug info (each mutant relinks every test binary): build time only, same tests.
+          if [ "$STACK" = "rust" ]; then
+            export CARGO_INCREMENTAL=1
+            export CARGO_PROFILE_DEV_DEBUG=0 CARGO_PROFILE_TEST_DEBUG=0
+          fi
           args=(--repo "$GITHUB_WORKSPACE/caller" --base "$BASE_SHA" --head "$HEAD_SHA" --stack "$STACK"
                 --shard "$SHARD/$SHARD_COUNT" --mutation-budget "$MUTATION_BUDGET" --project-dir "$PROJECT_DIR")
           if [ -n "$MUTANT_TIMEOUT" ]; then args+=(--mutant-timeout "$MUTANT_TIMEOUT"); fi

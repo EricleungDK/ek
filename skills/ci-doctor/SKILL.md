@@ -30,7 +30,7 @@ permissions:
   pull-requests: write
 jobs:
   mech-review:
-    uses: EricleungDK/ek/.github/workflows/mech-review.yml@<latest ek tag>
+    uses: EricleungDK/ek/.github/workflows/mech-review.yml@v0
     with:
       # every key in doctor's `inputs`
       protected-paths: |

@@ -15,7 +15,7 @@ Adopting or repairing: `/ek:ci-doctor` runs `mech-review.py doctor` and opens th
 
 ## Caller
 
-Add to your repo, pin an ek release tag (use the latest tag; `v0.2.4` shown):
+Add to your repo. Follow the major tag `v0`: each ek release moves it, so your repo never needs a bump PR:
 
 ```yaml
 name: mech-review
@@ -26,7 +26,7 @@ permissions:
   pull-requests: write
 jobs:
   mech-review:
-    uses: EricleungDK/ek/.github/workflows/mech-review.yml@v0.2.4
+    uses: EricleungDK/ek/.github/workflows/mech-review.yml@v0
     with:
       stack: rust
       test-paths: |
@@ -39,7 +39,12 @@ Python: the same, with `stack: python` and `test-paths: tests/**` (`tests/test_*
 
 TypeScript / JavaScript: `stack: ts` with `test-paths: src/**/*.test.ts` (or `tests/**`). `.ts .tsx .js .jsx .mjs .cjs` files are this stack; the project dir needs a `package.json`.
 
-The ek scripts run at the ref you pin (`job.workflow_sha` of the called file), not at your checkout. Bump the tag to upgrade.
+The ek scripts run at the ref you call (`job.workflow_sha` of the called file), not at your checkout.
+
+Releases: the plugin version in `.claude-plugin/plugin.json` is the source of truth. Tagging `vX.Y.Z` (it must match that
+version) runs `.github/workflows/release.yml`: ek's tests, then `scripts/move-major-tag.sh` moves `vX` to the release, forward
+only. A caller on `@v0` picks it up on its next PR run. To freeze a repo on one release, pin the exact tag (`@v0.2.4`)
+instead; then upgrading is a bump in that repo again.
 
 ## Inputs
 
@@ -156,6 +161,7 @@ What to do with the numbers, in this order:
 - `guard` decides from git diffs only. `red-first` compiles and runs the PR's tests (the code under review) with a job-level `contents: read` token and no other secrets.
 - R1 needs the branch name: the workflow passes `github.head_ref`. A run without it skips R1 and says so.
 - `baseline` (rust) and `mutants` run cargo-mutants, which builds and runs the PR's tests (once for the baseline, once per mutant), with a job-level `contents: read` token and no other secrets. The unmutated baseline runs once, in `baseline` (same token), not once per shard.
+- rust R3 builds: the baseline and shard steps export `CARGO_INCREMENTAL=1` (the toolchain action exports 0) and `CARGO_PROFILE_DEV_DEBUG=0 CARGO_PROFILE_TEST_DEBUG=0`. Build time only: the same tests run on the same mutants. Measured on Alfredo (#605's diff, one shard of 5 mutants, 4 cores, the shard argv): 654 s wall and 347 s of mutant builds before, 416 s and 148 s after, same verdicts (4 caught, 1 unviable).
 - cargo-mutants is pinned to 27.1.0 through `taiki-e/install-action` (pinned to a full SHA). If the install fails the step continues and R3 reports `n/a (env)`: a missing tool is never a pass and never a code failure.
 - ts: Stryker 10.0.0 is pinned in the workflow. The vitest and jest plugins, and the install scripts of the repo's dependencies, run PR code with a read-only token, as the tests do. Yarn berry (PnP, no `node_modules`) and `node --test` are not supported: the runner is `node_modules/.bin/vitest` or `jest`.
 - python: `mutmut` 3.8.1 is pinned in the venv. A repo that already has `[tool.mutmut]` in its `pyproject.toml` gets R3 `n/a (env)`: the runner needs `only_mutate` to limit the run to the changed files, and does not override the repo's table.
