@@ -15,7 +15,8 @@ if [[ " $* " == *" --mutate "* ]]; then
 fi
 pat=""; prev=""; for a in "$@"; do [[ "$prev" == "-t" ]] && pat="$a"; prev="$a"; done
 leaf="${pat#^}"; leaf="${leaf%\$}"; leaf="${leaf##* > }"
-o=$(awk -v n="$leaf" '$1 == n { print $2 }' outcomes 2>/dev/null); o="${o:-pass}"
+f=outcomes; [[ -f $f ]] || f=tests/outcomes.base  # R1's checkout: the base's code + the PR's test files
+o=$(awk -v n="$leaf" '$1 == n { print $2 }' "$f" 2>/dev/null); o="${o:-pass}"
 case "$o" in
   pass) cat "$MECH_FX/vitest/pass.txt"; exit 0 ;;
   fail) cat "$MECH_FX/vitest/fail.txt"; exit 1 ;;
@@ -58,17 +59,17 @@ eq "clean summary" "$(jq -r .summary <<<"$out")" "pass $CLEAN (0 fail, 0 confirm
 # 3. red-first: a red commit adds Calc > fresh; the replayed vitest run decides its outcome at red and at head
 git -C "$R" checkout -q -b agent/x "$BASE"
 printf 'import { describe, it, expect } from "vitest";\nimport { add } from "../src/calc";\n\ndescribe("Calc", () => {\n  it("adds", () => {\n    expect(add(0, 0)).toBe(0);\n  });\n  it("fresh", () => {\n    expect(add(1, 2)).toBe(3);\n  });\n});\n' > "$R/tests/calc.test.ts"
-printf 'fresh fail\nadds pass\n' > "$R/outcomes"; git -C "$R" add -A; git -C "$R" commit -qm "test(red): fresh"; RED=$(git -C "$R" rev-parse HEAD)
+printf 'fresh fail\nadds pass\n' > "$R/outcomes"; cp "$R/outcomes" "$R/tests/outcomes.base"; git -C "$R" add -A; git -C "$R" commit -qm "test(red): fresh"; RED=$(git -C "$R" rev-parse HEAD)
 printf 'fresh pass\nadds pass\n' > "$R/outcomes"; printf '\n// fixed\n' >> "$R/src/calc.ts"; git -C "$R" add -A; git -C "$R" commit -qm "feat: fresh"; HEADR=$(git -C "$R" rev-parse HEAD)
 out=$(MECH_TEST_STUB="$STUB" python3 "$MR" red --repo "$R" --base "$BASE" --head "$HEADR" --stack ts --test-paths 'tests/**' --head-branch agent/x); rc=$?
 eq "red-first exit" "$rc" 0
 eq "red-first R1" "$(jq -r .checks.R1.status <<<"$out")" pass
 eq "red-first summary" "$(jq -r .summary <<<"$out")" "pass $HEADR (0 fail, 0 confirm; ran: R1 R4; skipped: R2 R3)"
 printf 'fresh pass\nadds pass\n' > "$R/outcomes"; git -C "$R" checkout -q -b agent/y "$BASE"
-git -C "$R" checkout -q agent/x -- tests/calc.test.ts; printf 'fresh pass\nadds pass\n' > "$R/outcomes"; git -C "$R" add -A; git -C "$R" commit -qm "test(red): fresh passes"; RED2=$(git -C "$R" rev-parse HEAD); printf '\n// fixed\n' >> "$R/src/calc.ts"; git -C "$R" add -A; git -C "$R" commit -qm "feat: fix"; HEAD2=$(git -C "$R" rev-parse HEAD)
+git -C "$R" checkout -q agent/x -- tests/calc.test.ts; printf 'fresh pass\nadds pass\n' > "$R/outcomes"; cp "$R/outcomes" "$R/tests/outcomes.base"; git -C "$R" add -A; git -C "$R" commit -qm "test(red): fresh passes"; RED2=$(git -C "$R" rev-parse HEAD); printf '\n// fixed\n' >> "$R/src/calc.ts"; git -C "$R" add -A; git -C "$R" commit -qm "feat: fix"; HEAD2=$(git -C "$R" rev-parse HEAD)
 out=$(MECH_TEST_STUB="$STUB" python3 "$MR" red --repo "$R" --base "$BASE" --head "$HEAD2" --stack ts --test-paths 'tests/**' --head-branch agent/y); rc=$?
 eq "red passes at red exit" "$rc" 1
-eq "red passes at red names the test" "$(jq -r '.entries[0].problem' <<<"$out")" "new test \`Calc > fresh\` passes at the red commit"
+has "red passes at red names the test" "$(jq -r '.entries[0].problem' <<<"$out")" "no new or changed test fails without this PR's production change: \`Calc > fresh\`"
 
 # 4. mutation: head changes add and isPositive (the real Stryker fixture head); Stryker is replayed from the missed fixture
 git -C "$R" checkout -q -b mut "$BASE"

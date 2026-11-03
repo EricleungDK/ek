@@ -23,7 +23,8 @@ pat=""; prev=""
 for a in "$@"; do [[ "$prev" == "-t" ]] && pat="$a"; prev="$a"; done
 leaf="${pat#^}"; leaf="${leaf%\$}"; leaf="${leaf##* > }"; leaf="${leaf##* }"
 flavour=jest; [[ "$1" == "run" ]] && flavour=vitest
-o=$(awk -v n="$leaf" '$1 == n { print $2 }' outcomes 2>/dev/null); o="${o:-pass}"
+f=outcomes; [[ -f $f ]] || f=tests/outcomes.base  # R1's checkout: base code + the PR's test files
+o=$(awk -v n="$leaf" '$1 == n { print $2 }' "$f" 2>/dev/null); o="${o:-pass}"
 case "$o" in
   pass)  cat "$MECH_FX/$flavour/pass.txt"; exit 0 ;;
   fail)  cat "$MECH_FX/$flavour/fail.txt"; exit 1 ;;
@@ -166,6 +167,7 @@ describe("Calc", () => {
     expect(1).toBe(1);
 EOF
     printf 'fresh %s\nadds pass\n' "$red_out" > "$R/outcomes"
+    cp "$R/outcomes" "$R/tests/outcomes.base"
   fi
   if [[ -n "${RED_PROD-}" ]]; then printf '// red\n' >> "$R/src/calc.ts"; fi
   RED=$(commit "$R" "${RED_SUBJECT:-test(red): fresh}")
@@ -191,8 +193,8 @@ has "$(cat "$MECH_STUB_LOG")" "run tests/calc.test.ts -t ^Calc > fresh$" "ts vit
 
 RED_OUT=pass agent_repo passes
 out=$(red "$R" "$B" "$H" --head-branch agent/x); rc=$?
-eq "$rc" 1 "ts red passes at the red commit: exit 1"
-eq "$(jq -r '.entries[0].problem' <<<"$out")" "new test \`Calc > fresh\` passes at the red commit" "ts red-pass names the test"
+eq "$rc" 1 "ts: no new test fails on the base's code: exit 1"
+has "$(jq -r '.entries[0].problem' <<<"$out")" "no new or changed test fails without this PR's production change: \`Calc > fresh\`" "ts red-pass names the test"
 eq "$(jq -r '.entries[0].class' <<<"$out")" agent-fixable "ts red-pass class agent-fixable"
 
 RED_OUT=build agent_repo nobuild
@@ -208,8 +210,8 @@ has "$(jq -r '.entries[0].problem' <<<"$out")" "cannot be proven red" "ts none a
 
 RED_PROD=1 agent_repo prodred
 out=$(red "$R" "$B" "$H" --head-branch agent/x); rc=$?
-eq "$rc" 1 "ts red commit touching production: exit 1"
-has "$(jq -r '.entries[0].problem' <<<"$out")" "touches production path src/calc.ts" "ts red touches production named"
+eq "$rc" 0 "ts: tests and production in one commit: exit 0 (order does not matter)"
+eq "$(jq -r .checks.R1.status <<<"$out")" pass "ts: tests with production: R1 pass"
 
 RED_NOTEST=1 agent_repo notest
 out=$(red "$R" "$B" "$H" --head-branch agent/x); rc=$?
@@ -279,7 +281,7 @@ describe("Calc", () => {
   });
 });
 EOF
-printf 'fresh fail\nadds pass\n' > "$R/pkg/outcomes"; RED=$(commit "$R" "test(red): fresh")
+printf 'fresh fail\nadds pass\n' > "$R/pkg/outcomes"; cp "$R/pkg/outcomes" "$R/pkg/tests/outcomes.base"; RED=$(commit "$R" "test(red): fresh")
 printf 'fresh pass\nadds pass\n' > "$R/pkg/outcomes"
 put "$R" pkg/src/calc.ts <<'EOF'
 export function add(a: number, b: number): number {

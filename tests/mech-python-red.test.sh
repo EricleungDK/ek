@@ -20,7 +20,8 @@ cat > "$STUB" <<'SH'
 last="${*: -1}"
 name="${last##*::}"; name="${name##*.}"
 echo "$(pwd -P) | $*" >> "$MECH_STUB_LOG"
-o=$(awk -v n="$name" '$1 == n { print $2 }' outcomes 2>/dev/null)
+f=outcomes; [[ -f $f ]] || f=tests/outcomes.base  # R1's checkout: base code + the PR's test files
+o=$(awk -v n="$name" '$1 == n { print $2 }' "$f" 2>/dev/null)
 case "${o:-pass}" in
   pass)  printf '.\n1 passed in 0.01s\n'; exit 0 ;;
   fail)  printf 'FAILED tests/a.py::%s - assert 1 == 2\n1 failed in 0.01s\n' "$name"; exit 1 ;;
@@ -78,6 +79,7 @@ def test_adds(:
     assert add(2, 2) == 4
 EOF
     printf 'test_fresh %s\ntest_adds pass\n' "$red_out" > "$R/outcomes"
+    cp "$R/outcomes" "$R/tests/outcomes.base"
   fi
   if [[ -n "${RED_PROD-}" ]]; then printf '# red\n' >> "$R/src/calc.py"; fi
   RED=$(commit "$R" "${RED_SUBJECT:-test(red): fresh}")
@@ -155,8 +157,8 @@ has "$(cat "$MECH_STUB_LOG")" "-m pytest -q tests/test_a.py::test_fresh" "python
 
 RED_OUT=pass agent_repo passes
 out=$(red "$R" "$B" "$H" --head-branch agent/x); rc=$?
-eq "$rc" 1 "python red passes at the red commit: exit 1"
-eq "$(jq -r '.entries[0].problem' <<<"$out")" "new test \`test_fresh\` passes at the red commit" "python red-pass names the test"
+eq "$rc" 1 "python: no new test fails on the base's code: exit 1"
+has "$(jq -r '.entries[0].problem' <<<"$out")" "no new or changed test fails without this PR's production change: \`test_fresh\`" "python red-pass names the test"
 eq "$(jq -r '.entries[0].class' <<<"$out")" agent-fixable "python red-pass class agent-fixable"
 eq "$(jq -r '.entries[0].check' <<<"$out")" R1 "python red-pass check R1"
 
@@ -168,8 +170,8 @@ has "$(jq -r '.entries[0].problem' <<<"$out")" "compile-red" "python compile-red
 
 RED_PROD=1 agent_repo prodred
 out=$(red "$R" "$B" "$H" --head-branch agent/x); rc=$?
-eq "$rc" 1 "python red commit touching production: exit 1"
-has "$(jq -r '.entries[0].problem' <<<"$out")" "touches production path src/calc.py" "python red touches production named"
+eq "$rc" 0 "python: tests and production in one commit: exit 0 (order does not matter)"
+eq "$(jq -r .checks.R1.status <<<"$out")" pass "python: tests with production: R1 pass"
 
 RED_NOTEST=1 agent_repo notest
 out=$(red "$R" "$B" "$H" --head-branch agent/x); rc=$?
@@ -272,6 +274,7 @@ def test_fresh():
     assert add(1, 2) == 3
 EOF
   printf 'test_fresh %s\ntest_adds pass\n' "$red_out" > "$R/pkg/outcomes"
+  cp "$R/pkg/outcomes" "$R/pkg/tests/outcomes.base"
   RED=$(commit "$R" "test(red): fresh")
   printf 'test_fresh %s\ntest_adds pass\n' "$head_out" > "$R/pkg/outcomes"
   put "$R" pkg/calc/core.py <<'EOF'
