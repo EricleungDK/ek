@@ -48,6 +48,7 @@ def run_check(name, fn, detail=""):
 
 
 from mech_review import mutants as M  # noqa: E402
+from mech_review.gitio import Review  # noqa: E402
 from mech_review import merge  # noqa: E402
 from mech_review.stack import RustAdapter, PythonAdapter, TsAdapter  # noqa: E402
 
@@ -155,7 +156,7 @@ def fake(list_text=LIST15, list_rc=0, version_rc=0, fixture="baseline-ok", run_r
 def baseline(runner, shards=4, budget=10, adapter=A, stack_repo=None):
     r = stack_repo or REPO_DIR
     mb = BASE_SHA
-    return M.baseline(r, mb, HEAD_SHA, adapter, TG, cmd=None, budget_min=budget, shards=shards, project_dir=".", runner=runner)
+    return M.baseline(Review(r, mb, HEAD_SHA, adapter, TG), cmd=None, budget_min=budget, shards=shards, runner=runner)
 
 
 f_ok = fake()
@@ -250,14 +251,14 @@ for name in ("a.py", "b.py", "c.py", "d.py", "e.py"):
         f.write("def f():\n    return 2\n")
 subprocess.run(GIT + ["-C", PY_REPO, "commit", "-qam", "head"], check=True)
 PY_HEAD = subprocess.run(["git", "-C", PY_REPO, "rev-parse", "HEAD"], capture_output=True, text=True).stdout.strip()
-p_py = M.baseline(PY_REPO, PY_BASE, PY_HEAD, PythonAdapter(), ["test_*.py"], shards=4, runner=fake())
+p_py = M.baseline(Review(PY_REPO, PY_BASE, PY_HEAD, PythonAdapter(), ["test_*.py"]), shards=4, runner=fake())
 run_check("python: 5 changed files, 4 shards (min of 4 and the file count)", p_py["count"] == 4 and p_py["run"] is True,
           str(p_py))
 run_check("python: no timeout and no mutant count (mutmut counts its own)", p_py["timeout"] is None and p_py["mutants"] is None,
           str(p_py))
-p_py1 = M.baseline(PY_REPO, PY_BASE, PY_HEAD, PythonAdapter(), ["test_*.py"], shards=1, runner=fake())
+p_py1 = M.baseline(Review(PY_REPO, PY_BASE, PY_HEAD, PythonAdapter(), ["test_*.py"]), shards=1, runner=fake())
 run_check("python: a max of 1 gives one shard", p_py1["count"] == 1, str(p_py1))
-p_ts_none = M.baseline(PY_REPO, PY_HEAD, PY_HEAD, TsAdapter(), ["**/*.test.ts"], shards=4, runner=fake())
+p_ts_none = M.baseline(Review(PY_REPO, PY_HEAD, PY_HEAD, TsAdapter(), ["**/*.test.ts"]), shards=4, runner=fake())
 run_check("no production change: skipped, no shards", p_ts_none["check"]["status"] == "skipped" and p_ts_none["run"] is False,
           str(p_ts_none))
 
@@ -337,14 +338,14 @@ run_check("combine_timing: baseline seconds from the baseline, once, not summed 
 
 # ---- engine: the mutants argv (shards skip the baseline; auto keeps cargo-mutants' own inline baseline) ----
 mrun = fake()
-M.CargoMutants().check(REPO_DIR, BASE_SHA, HEAD_SHA, A, TG, None, 10, "1/2", 30, mrun, ".")
+M.CargoMutants().check(Review(REPO_DIR, BASE_SHA, HEAD_SHA, A, TG, "."), None, 10, "1/2", 30, mrun)
 shard_argv = next(a for a, _, _ in mrun.calls if "--in-diff" in a and "--list" not in a)
 run_check("shard with a timeout: baseline skipped", shard_argv[shard_argv.index("--baseline") + 1] == "skip", str(shard_argv))
 run_check("shard with a timeout: explicit --timeout N", shard_argv[shard_argv.index("--timeout") + 1] == "30", str(shard_argv))
 run_check("shard: round-robin so the shards are balanced and none is empty",
           shard_argv[shard_argv.index("--sharding") + 1] == "round-robin" and "--shard" in shard_argv, str(shard_argv))
 mrun = fake()
-M.CargoMutants().check(REPO_DIR, BASE_SHA, HEAD_SHA, A, TG, None, 10, None, None, mrun, ".")
+M.CargoMutants().check(Review(REPO_DIR, BASE_SHA, HEAD_SHA, A, TG, "."), None, 10, None, None, mrun)
 auto_argv = next(a for a, _, _ in mrun.calls if "--in-diff" in a and "--list" not in a)
 run_check("auto (no timeout): no --baseline skip, no --timeout (cargo-mutants' own inline baseline)",
           "--baseline" not in auto_argv and "--timeout" not in auto_argv, str(auto_argv))

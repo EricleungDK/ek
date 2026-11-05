@@ -8,7 +8,7 @@ checks stay skipped.
 import hashlib
 import json
 
-from .engine import CHECKS, entry, envelope, finalize
+from .report import CHECKS, entry, envelope, finalize
 from .mutants import partial_entry
 
 OWNS = {"r2": ("R2",), "red": ("R1", "R4"), "mutants": ("R3",)}

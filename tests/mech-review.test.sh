@@ -1566,7 +1566,7 @@ eq "$(jq -r '[.entries[].id]|unique|length' <<<"$out")" 2 "those entries have di
 eq "$(jq -r '.entries[0].id' <<<"$out")" "R2-$(printf '%s' 'R2tests/a.rsexpected:a|x' | sha1sum | cut -c1-8)" "first expected entry keeps the plain id"
 
 # #27 summary: `all pass <sha>` only when every check ran and passed with no entries; fail names counts and checks
-pyeng() { python3 -I -c "import sys; sys.path.insert(0, '$ROOT/scripts'); from mech_review import engine; print(engine.summarize('abc', $1, $2))"; }
+pyeng() { python3 -I -c "import sys; sys.path.insert(0, '$ROOT/scripts'); from mech_review import report; print(report.summarize('abc', $1, $2))"; }
 ALLPASS='{"R1":{"status":"pass"},"R2":{"status":"pass"},"R3":{"status":"pass"},"R4":{"status":"pass"}}'
 SKIP='{"R1":{"status":"skipped"},"R2":{"status":"pass"},"R3":{"status":"skipped"},"R4":{"status":"skipped"}}'
 ONEC='[{"severity":"confirm"}]'

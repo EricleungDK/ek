@@ -11,8 +11,9 @@ import shutil
 import subprocess
 import tempfile
 
-from .engine import changes, blob, entry, git
+from .gitio import blob, changes, git
 from .globs import any_glob
+from .report import entry
 
 TEST_RUNS = 5  # R4: each new or changed test, this many times at head
 TEST_TIMEOUT = 900  # seconds per run; a timeout is a verdict, not a crash
@@ -54,13 +55,14 @@ def check(status, note):
     return {"status": status, "note": note}
 
 
-def prod_changes(repo, a, b, adapter, test_globs):
-    """changes between a and b that touch a production file (a deleted one counts)."""
-    return [ch for ch in changes(repo, a, b) if adapter.classify(ch.new or ch.old, test_globs) == "prod"]
+def prod_changes(rv):
+    """changes between mb and head that touch a production file (a deleted one counts)."""
+    return [ch for ch in changes(rv.repo, rv.mb, rv.head) if rv.adapter.classify(ch.new or ch.old, rv.test_globs) == "prod"]
 
 
-def touched(repo, a, b, adapter, test_globs):
-    """[(path, name, line)] of #[test] fns new or changed between a (before) and b (after)."""
+def touched(rv):
+    """[(path, name, line)] of #[test] fns new or changed between mb (before) and head (after)."""
+    repo, a, b, adapter, test_globs, _ = rv
     out = []
     for ch in changes(repo, a, b):
         if ch.new is None or adapter.classify(ch.new, test_globs) is None:
@@ -77,8 +79,9 @@ def touched(repo, a, b, adapter, test_globs):
     return out
 
 
-def unparseable(repo, a, b, adapter, test_globs):
-    """R4 fail entries for changed files at b that the stack cannot parse: their tests cannot run."""
+def unparseable(rv):
+    """R4 fail entries for changed files at head that the stack cannot parse: their tests cannot run."""
+    repo, a, b, adapter, test_globs, _ = rv
     out = []
     for ch in changes(repo, a, b):
         if ch.new is None or adapter.classify(ch.new, test_globs) is None:
@@ -99,9 +102,10 @@ def run_named(runner, adapter, cmd, cwd, path, name):
     return adapter.outcome(rc, out), (lines[0][:200] if lines else "")
 
 
-def run_in(runner, adapter, cmd, wt, project_dir, path, name):
+def run_in(rv, runner, cmd, wt, path, name):
     """run_named in the crate dir. A dir missing in this commit is an error verdict (the test cannot run), not a missing toolchain.
     The test's path is given crate-relative (what pytest and unittest name tests by); the verdict is the same either way."""
+    adapter, project_dir = rv.adapter, rv.project_dir
     cwd = os.path.join(wt, project_dir)
     if not os.path.isdir(cwd):
         return "error", f"project dir {project_dir} not in this commit"
@@ -131,9 +135,10 @@ def absent(cmd, what, first=""):
     return f"toolchain absent: `{shlex.split(cmd)[0]}` not found (env): install it, or set setup-command ({what})"
 
 
-def overlay_tests(repo, wt, mb, head, test_globs):
+def overlay_tests(rv, wt):
     """In a worktree at mb, put head's version of every file under test_globs the PR changed (deleted ones go), so the
     PR's tests meet the base's production code. Returns the changed test-path files at head."""
+    repo, mb, head, _, test_globs, _ = rv
     out = []
     for ch in changes(repo, mb, head):
         if ch.old and any_glob(ch.old, test_globs) and ch.old != ch.new:
@@ -144,19 +149,20 @@ def overlay_tests(repo, wt, mb, head, test_globs):
     return out
 
 
-def r1(repo, mb, head, adapter, test_globs, head_branch, agent_prefix, cmd, runner, project_dir="."):
+def r1(rv, head_branch, agent_prefix, cmd, runner):
     """R1 red-first: the tests this PR adds or changes, run against the base's production code (a worktree at the merge
     base with head's test-path files on top), must catch the change: at least one fails there. Tests that pass there
     pin existing behaviour (guards) and are fine. Commit order does not matter, so a later commit can fix an R1 fail.
     R4 runs the same tests at head. Returns (check, entries)."""
+    repo, mb, head, adapter, test_globs, project_dir = rv
     if head_branch is None:
         return check("skipped", "no --head-branch: cannot tell an agent branch"), []
     if not head_branch.startswith(agent_prefix):
         return check("skipped", f"branch {head_branch} does not match the agent prefix {agent_prefix}"), []
-    if not prod_changes(repo, mb, head, adapter, test_globs):
+    if not prod_changes(rv):
         return check("skipped", "no production file changed"), []
     forbidden = "a production change no test catches"
-    tests = touched(repo, mb, head, adapter, test_globs)
+    tests = touched(rv)
     if not tests:
         # test-path files of another language (a python PTY smoke in a rust crate): R1 runs only this stack's tests and
         # cannot prove them red. A fail the agent can fix alone, with the route in the hint; not "no new test"
@@ -177,11 +183,11 @@ def r1(repo, mb, head, adapter, test_globs, head_branch, agent_prefix, cmd, runn
                   "add a test that fails without this PR's production change, for the ticket's reason", forbidden)]
     entries, red_count, compile_red, guards = [], 0, 0, []
     with worktree(repo, mb) as wt:
-        overlay_tests(repo, wt, mb, head, test_globs)
+        overlay_tests(rv, wt)
         adapter.worktree_setup(repo, wt, project_dir)
         cmd = cmd or adapter.test_cmd_in(os.path.join(wt, project_dir))
         for path, name, line in tests:
-            verdict, first = run_in(runner, adapter, cmd, wt, project_dir, path, name)
+            verdict, first = run_in(rv, runner, cmd, wt, path, name)
             if verdict == "env":
                 return check("n/a", absent(cmd, "tests on the base's production code", first)), []
             if verdict == "fail":
@@ -214,10 +220,11 @@ def r1(repo, mb, head, adapter, test_globs, head_branch, agent_prefix, cmd, runn
     return check("fail" if any(e["severity"] == "fail" for e in entries) else "pass", note), entries
 
 
-def r4(repo, mb, head, adapter, test_globs, cmd, runner, project_dir="."):
+def r4(rv, cmd, runner):
     """R4 determinism: each new or changed test runs TEST_RUNS times at head; any failing run is a fail. Returns (check, entries)."""
-    tests = touched(repo, mb, head, adapter, test_globs)
-    entries = unparseable(repo, mb, head, adapter, test_globs)
+    repo, mb, head, adapter, test_globs, project_dir = rv
+    tests = touched(rv)
+    entries = unparseable(rv)
     if not tests:
         if entries:
             return check("fail", "a changed file does not parse"), entries
@@ -228,7 +235,7 @@ def r4(repo, mb, head, adapter, test_globs, cmd, runner, project_dir="."):
         for path, name, line in tests:
             verdicts = []
             for _ in range(TEST_RUNS):
-                verdict, first = run_in(runner, adapter, cmd, wt, project_dir, path, name)
+                verdict, first = run_in(rv, runner, cmd, wt, path, name)
                 if verdict == "env":
                     return check("n/a", absent(cmd, "new or changed tests", first)), []
                 if verdict == "build":

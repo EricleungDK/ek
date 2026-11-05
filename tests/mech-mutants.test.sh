@@ -838,4 +838,30 @@ sys.exit(1 if FAILS else 0)
 PY
 eq "$?" 0 "combine: one entry per id; exact repeats collapse; distinct entries kept"
 
+# crate_check: the one crate-dir check every mutation tool runs in its worktree at head
+python3 -I - "$ROOT" <<'PY'
+import os
+import sys
+import tempfile
+sys.path.insert(0, sys.argv[1] + "/scripts")
+from mech_review import mutants as M  # noqa: E402
+from mech_review.gitio import Review  # noqa: E402
+from mech_review.stack import PythonAdapter, RustAdapter  # noqa: E402
+
+wt = tempfile.mkdtemp()
+rv = lambda a, d: Review("r", "m", "h", a, [], d)
+crate, bad = M.crate_check(rv(RustAdapter(), "x"), wt)
+assert crate == os.path.join(wt, "x"), crate
+assert bad[0] == {"status": "fail", "note": "project dir x not found at head: mutants not run"}, bad[0]
+assert [(e["check"], e["class"], e["file"], e["line"]) for e in bad[1]] == [("R3", "agent-fixable", "", 0)], bad[1]
+assert bad[1][0]["id"].startswith("R3-") and "_key" not in bad[1][0], bad[1]
+os.mkdir(os.path.join(wt, "x"))
+assert M.crate_check(rv(RustAdapter(), "x"), wt)[1] == ({"status": "n/a", "note": "no Cargo.toml in x: set project-dir"}, [])
+note = M.crate_check(rv(PythonAdapter(), "x"), wt)[1][0]["note"]
+assert note == "no pyproject.toml, setup.py or setup.cfg in x: set project-dir", note
+open(os.path.join(wt, "x", "Cargo.toml"), "w").close()
+assert M.crate_check(rv(RustAdapter(), "x"), wt) == (os.path.join(wt, "x"), None)
+PY
+eq "$?" 0 "crate_check: missing dir fails with one R3 entry; missing manifest n/a; ok crate passes"
+
 done_tests

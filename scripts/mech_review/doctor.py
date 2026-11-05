@@ -9,7 +9,7 @@ import os
 import re
 import shlex
 
-from . import engine, red
+from . import gitio, red, report
 from .globs import any_glob
 from .mutants import DEFAULT_CMD as RUST_MUTANTS
 from .stack import ADAPTERS
@@ -131,12 +131,12 @@ def _missing(name, want, have, paths):
 
 def caller_entries(callers, inputs, paths):
     if not callers:
-        return [engine.entry("doctor", ".github/workflows/mech-review.yml", 0, "no-caller", "needs-human", "fail",
+        return [report.entry("doctor", ".github/workflows/mech-review.yml", 0, "no-caller", "needs-human", "fail",
                              "no mech-review caller workflow",
                              "add a caller with `uses: " + CALLER + "v0` and these inputs: " + json.dumps(inputs),
                              NOT_YOURS)]
     path, have = callers[0]
-    return [engine.entry("doctor", path, 0, name, "needs-human", "fail", f"caller input {name} missing or wrong",
+    return [report.entry("doctor", path, 0, name, "needs-human", "fail", f"caller input {name} missing or wrong",
                          f"set {name}: {want}", NOT_YOURS)
             for name, want in inputs.items() if _missing(name, want, have, paths)]
 
@@ -153,16 +153,16 @@ def trial(repo, head, stack, project_dir, runner):
             verdict = adapter.outcome(rc, out)
             tool = MUTATION_TOOL[stack]
             tool_rc, _ = runner(shlex.split(tool) + ["--version"], crate)
-    except engine.Die as e:  # read-only .git (sandbox): the static findings still stand
+    except gitio.Die as e:  # read-only .git (sandbox): the static findings still stand
         reason = str(e).splitlines()[-1]  # git's last line is the cause
-        return {"tests": "unavailable"}, [engine.entry("doctor", "", 0, "trial", "env", "fail", f"trial could not run: {reason}",
+        return {"tests": "unavailable"}, [report.entry("doctor", "", 0, "trial", "env", "fail", f"trial could not run: {reason}",
                                                        "fix that cause (sandbox: rerun outside it); --no-trial reads the tree only",
                                                        NOT_SKIP)]
     state = "absent" if tool_rc is None else "present" if tool_rc == 0 else "broken"  # absent is fine: CI installs it
     result = {"tests": verdict, "command": cmd, "mutation_tool": state}
     entries = []
     if state == "broken":
-        entries.append(engine.entry("doctor", "", 0, "mutation-tool", "env", "fail", f"`{tool} --version` failed ({tool_rc})",
+        entries.append(report.entry("doctor", "", 0, "mutation-tool", "env", "fail", f"`{tool} --version` failed ({tool_rc})",
                                     "repair the install; in CI, set setup-command", NOT_SKIP))
     return result, _test_entries(verdict, cmd, out) + entries
 
@@ -171,12 +171,12 @@ def _test_entries(verdict, cmd, out):
     if verdict in ("pass", "none"):
         return []
     if verdict == "env":
-        return [engine.entry("doctor", "", 0, "toolchain", "env", "fail", f"`{shlex.split(cmd)[0]}` not found",
+        return [report.entry("doctor", "", 0, "toolchain", "env", "fail", f"`{shlex.split(cmd)[0]}` not found",
                              "install it, or set setup-command in the caller", NOT_SKIP)]
     if SANDBOX.search(out):
-        return [engine.entry("doctor", "", 0, "sandbox", "env", "fail", "tests need a sandbox the runner blocks",
+        return [report.entry("doctor", "", 0, "sandbox", "env", "fail", "tests need a sandbox the runner blocks",
                              f"set {SANDBOX_INPUTS}", NOT_SKIP)]
-    return [engine.entry("doctor", "", 0, "tests", "env", "fail", f"tests fail at head ({verdict}): `{cmd}`",
+    return [report.entry("doctor", "", 0, "tests", "env", "fail", f"tests fail at head ({verdict}): `{cmd}`",
                          "fix them, or set setup-command for what they need; rerun doctor", NOT_SKIP)]
 
 
@@ -185,7 +185,7 @@ def _channel(repo, head, project_dir, paths):
     for name in ("rust-toolchain.toml", "rust-toolchain"):
         for path in (name, f"{project_dir}/{name}"):
             if path in paths:
-                text = engine.blob(repo, head, path)
+                text = gitio.blob(repo, head, path)
                 m = CHANNEL.search(text) if name.endswith(".toml") else re.match(r"\s*([\w.\-]+)", text)
                 if m:
                     return m.group(1)
@@ -194,11 +194,11 @@ def _channel(repo, head, project_dir, paths):
 
 def run(repo, head_ref="HEAD", stack=None, project_dir=None, run_trial=True, runner=None):
     try:
-        engine.git(repo, "rev-parse", "--git-dir")
-    except engine.Die:
-        raise engine.Die(f"not a git repo: {repo}")
-    head = engine.resolve(repo, head_ref)
-    paths = engine.git(repo, "ls-tree", "-r", "--name-only", head).splitlines()
+        gitio.git(repo, "rev-parse", "--git-dir")
+    except gitio.Die:
+        raise gitio.Die(f"not a git repo: {repo}")
+    head = gitio.resolve(repo, head_ref)
+    paths = gitio.git(repo, "ls-tree", "-r", "--name-only", head).splitlines()
     found = [c for c in candidates(paths) if (not stack or c[0] == stack) and (not project_dir or c[1] == project_dir)]
     if project_dir and stack and not found:
         found = [(stack, project_dir)]
@@ -207,23 +207,23 @@ def run(repo, head_ref="HEAD", stack=None, project_dir=None, run_trial=True, run
     if len(found) != 1:
         if found:
             names = ", ".join(f"{s} in {d}" for s, d in found)
-            entries.append(engine.entry("doctor", "", 0, "ambiguous", "needs-human", "fail", f"several projects: {names}",
+            entries.append(report.entry("doctor", "", 0, "ambiguous", "needs-human", "fail", f"several projects: {names}",
                                         "pick one with --stack and --project-dir", "guessing the project"))
         elif stack or project_dir:
             asked = " in ".join(x for x in (stack, project_dir) if x)
             names = ", ".join(f"{s} in {d}" for s, d in candidates(paths)) or "none"
-            entries.append(engine.entry("doctor", "", 0, "no-match", "needs-human", "fail", f"no project found for {asked}",
+            entries.append(report.entry("doctor", "", 0, "no-match", "needs-human", "fail", f"no project found for {asked}",
                                         f"projects here: {names}; passing both --stack and --project-dir overrides detection",
                                         "guessing the project"))
         else:
-            entries.append(engine.entry("doctor", "", 0, "no-project", "needs-human", "fail",
+            entries.append(report.entry("doctor", "", 0, "no-project", "needs-human", "fail",
                                         "no project found: no " + ", ".join(m for a in ADAPTERS.values() for m in a.manifests),
                                         "pass --stack and --project-dir", "guessing the project"))
     else:
         stack, project_dir = found[0]
         detected = {"stack": stack, "project_dir": project_dir}
         flows = sorted(p for p in paths if WORKFLOW.match(p))
-        texts = {p: engine.blob(repo, head, p) for p in flows}
+        texts = {p: gitio.blob(repo, head, p) for p in flows}
         callers = [(p, caller_inputs(t)) for p, t in texts.items() if is_caller(t)]
         ci = read_ci(t for p, t in texts.items() if not is_caller(t))
         inputs = wanted_inputs(stack, project_dir, ci, _channel(repo, head, project_dir, paths))
@@ -231,7 +231,7 @@ def run(repo, head_ref="HEAD", stack=None, project_dir=None, run_trial=True, run
         if run_trial:
             tried, trial_entries = trial(repo, head, stack, project_dir, runner or red.default_runner())
             entries = trial_entries + entries
-    entries = engine.finalize(entries)
+    entries = report.finalize(entries)
     summary = f"fail {head} ({len(entries)} problems)" if entries else f"ok {head}"
-    return {"ekit": engine.ekit_version(), "head": head, "detected": detected, "inputs": inputs, "trial": tried,
+    return {"ekit": report.ekit_version(), "head": head, "detected": detected, "inputs": inputs, "trial": tried,
             "entries": entries, "summary": summary}

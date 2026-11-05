@@ -5,7 +5,7 @@ import re
 import signal
 import sys
 
-from . import doctor, engine, merge
+from . import doctor, engine, gitio, merge
 from .stack import ADAPTERS
 
 
@@ -153,7 +153,7 @@ def _plan(parser, args):
         parser.error("--shards N: want N >= 1")
     try:
         out = engine.plan(args.repo, args.base, args.head, args.stack, args.test_paths, shards)
-    except engine.Die as e:
+    except gitio.Die as e:
         print(f"mech-review: {e}", file=sys.stderr)
         return 2
     print(json.dumps(out))
@@ -171,7 +171,7 @@ def _baseline(parser, args):
     try:
         env = engine.baseline(args.repo, args.base, args.head, args.stack, args.test_paths, args.mutants_cmd,
                               args.mutation_budget, shards, project_dir=args.project_dir)
-    except engine.Die as e:
+    except gitio.Die as e:
         print(f"mech-review: {e}", file=sys.stderr)
         return 2
     print(json.dumps(env, indent=2))
@@ -180,7 +180,7 @@ def _baseline(parser, args):
 
 def _sha(repo, ref):
     """A full SHA is taken as is (the merge job has no checkout); any other ref is resolved in repo."""
-    return ref if re.fullmatch(r"[0-9a-f]{40}", ref) else engine.resolve(repo, ref)
+    return ref if re.fullmatch(r"[0-9a-f]{40}", ref) else gitio.resolve(repo, ref)
 
 
 def _merge(parser, args):
@@ -191,7 +191,7 @@ def _merge(parser, args):
     try:
         base = _sha(args.repo, args.base)
         head = _sha(args.repo, args.head)
-    except engine.Die as e:
+    except gitio.Die as e:
         print(f"mech-review: {e}", file=sys.stderr)
         return 2
     baseline, reason = None, args.baseline_reason
@@ -240,7 +240,7 @@ def _doctor(argv):
     signal.signal(signal.SIGTERM, stop)
     try:
         env = doctor.run(args.repo, stack=args.stack, project_dir=args.project_dir, run_trial=not args.no_trial)
-    except engine.Die as e:
+    except gitio.Die as e:
         print(f"mech-review: {e}", file=sys.stderr)
         return 2
     except KeyboardInterrupt:
@@ -272,7 +272,7 @@ def main(argv):
                          test_cmd=args.test_cmd, mutants_cmd=args.mutants_cmd,
                          mutation_budget=args.mutation_budget, shard=args.shard, mutant_timeout=args.mutant_timeout,
                          project_dir=args.project_dir)
-    except engine.Die as e:
+    except gitio.Die as e:
         print(f"mech-review: {e}", file=sys.stderr)
         return 2
     if args.format == "json":
