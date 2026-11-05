@@ -23,6 +23,9 @@ Adapter interface:
       python `# pragma: no mutate`, ts `// Stryker disable`), in code, not strings; default none
   mutation_config(path, load) -> None | what: this change edits the R3 tool's config (cargo-mutants mutants.toml,
       [tool.mutmut], stryker config). load() -> (base text or None, head text or None), read only when needed
+
+Keep this interface narrow: a new check rule needs new data (a marker, an assertion kind) from these methods, not a
+new method for its message text.
 """
 import configparser
 import ast

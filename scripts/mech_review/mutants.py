@@ -36,7 +36,8 @@ import time
 import tomllib
 
 from . import red
-from .engine import added_lines, entry, finalize, git
+from .gitio import added_lines, git
+from .report import entry, finalize
 from .stack import ts_runner
 
 DEFAULT_CMD = "cargo mutants"
@@ -56,6 +57,20 @@ def _load(path):
             return json.load(f)
     except (OSError, ValueError):
         return None
+
+
+def crate_check(rv, wt):
+    """(crate dir, None) when the worktree wt has the project dir and a manifest of the stack; else (crate dir, (check,
+    entries)) to return as the tool's result: a missing dir is a fail (the agent sets project-dir), a missing manifest n/a."""
+    crate = os.path.join(wt, rv.project_dir)
+    if not os.path.isdir(crate):
+        note = f"project dir {rv.project_dir} not found at head: mutants not run"
+        return crate, (_check("fail", note), finalize([entry("R3", "", 0, "project-dir", "agent-fixable", "fail", note,
+                                                             "set project-dir to the crate dir under the repo root, present at head",
+                                                             "a mutation check that did not run")]))
+    if not any(os.path.isfile(os.path.join(crate, m)) for m in rv.adapter.manifests):
+        return crate, (_check("n/a", f"no {red.manifest_label(rv.adapter)} in {rv.project_dir}: set project-dir"), [])
+    return crate, None
 
 
 def _first_line(text):
@@ -330,7 +345,8 @@ class CargoMutants:
     baseline runs unlimited. A number sends --timeout N, which also caps the baseline (cargo-mutants 27.1.0)."""
     default_cmd = DEFAULT_CMD
 
-    def check(self, repo, mb, head, adapter, test_globs, cmd, budget_min, shard, mutant_timeout, runner, project_dir="."):
+    def check(self, rv, cmd, budget_min, shard, mutant_timeout, runner):
+        repo, mb, head, adapter, test_globs, project_dir = rv
         cmd = cmd or self.default_cmd
         rc, text = runner(shlex.split(cmd) + ["--version"], repo, PROBE_TIMEOUT)
         if rc != 0 or not text.startswith("cargo-mutants"):
@@ -350,15 +366,9 @@ class CargoMutants:
             if shard:
                 argv += ["--sharding", "round-robin", "--shard", shard]
             with red.worktree(repo, head) as wt:
-                crate = os.path.join(wt, project_dir)
-                if not os.path.isdir(crate):
-                    return _check("fail", f"project dir {project_dir} not found at head: mutants not run"), [
-                        finalize([entry("R3", "", 0, "project-dir", "agent-fixable", "fail",
-                                        f"project dir {project_dir} not found at head: mutants not run",
-                                        "set project-dir to the crate dir under the repo root, present at head",
-                                        "a mutation check that did not run")])[0]]
-                if not os.path.isfile(os.path.join(crate, "Cargo.toml")):
-                    return _check("n/a", f"no Cargo.toml in {project_dir}: set project-dir"), []
+                crate, bad = crate_check(rv, wt)
+                if bad:
+                    return bad
                 t0 = time.monotonic()
                 rc, text = runner(argv, crate, budget)
                 wall = time.monotonic() - t0
@@ -371,11 +381,12 @@ class CargoMutants:
         finally:
             shutil.rmtree(tmp, ignore_errors=True)
 
-    def baseline(self, repo, mb, head, adapter, test_globs, cmd, budget_min, shards, project_dir=".", runner=None):
+    def baseline(self, rv, cmd, budget_min, shards, runner=None):
         """The baseline step (rust, once per PR, #46): cargo-mutants' own unmutated run, which the shards then skip. The
         mutant list comes from `--list --json`. One mutant is run with `--build-timeout 0`, so its build is killed at once
         and the baseline is the only work (the build limit does not reach the baseline). No --timeout: the baseline is
         bounded by mutation-budget. Shards = min(shards, mutants): round-robin over the list, none empty."""
+        repo, mb, head, adapter, test_globs, project_dir = rv
         cmd = cmd or self.default_cmd
         runner = runner or default_runner()
         rc, text = runner(shlex.split(cmd) + ["--version"], repo, PROBE_TIMEOUT)
@@ -392,16 +403,9 @@ class CargoMutants:
                             *relative, mb, head))
             out_parent = os.path.join(tmp, "out")
             with red.worktree(repo, head) as wt:
-                crate = os.path.join(wt, project_dir)
-                if not os.path.isdir(crate):
-                    return _payload(False, 0, None, None, _check("fail", f"project dir {project_dir} not found at head: "
-                                                                         "mutants not run"), [
-                        finalize([entry("R3", "", 0, "project-dir", "agent-fixable", "fail",
-                                        f"project dir {project_dir} not found at head: mutants not run",
-                                        "set project-dir to the crate dir under the repo root, present at head",
-                                        "a mutation check that did not run")])[0]])
-                if not os.path.isfile(os.path.join(crate, "Cargo.toml")):
-                    return _payload(False, 0, None, None, _check("n/a", f"no Cargo.toml in {project_dir}: set project-dir"), [])
+                crate, bad = crate_check(rv, wt)
+                if bad:
+                    return _payload(False, 0, None, None, *bad)
                 lrc, ltext = runner(shlex.split(cmd) + ["--list", "--json", "--in-diff", diff_path, "--colors", "never"],
                                     crate, PROBE_TIMEOUT)
                 if lrc != 0:
@@ -659,11 +663,10 @@ def _crate_path(project_dir, path):
     return path if project_dir == "." else path[len(project_dir) + 1:]
 
 
-def _files_baseline(repo, mb, head, adapter, test_globs, project_dir, shards):
+def _files_baseline(rv, shards):
     """The baseline step for the file-sharded stacks (mutmut, Stryker, #46): one shard per changed production file, at most
     `shards`, so no shard is empty. Git only: no toolchain runs here."""
-    prod = sorted({ch.new for ch in red.prod_changes(repo, mb, head, adapter, test_globs)
-                   if ch.new and _under(ch.new, project_dir)})
+    prod = sorted({ch.new for ch in red.prod_changes(rv) if ch.new and _under(ch.new, rv.project_dir)})
     if not prod:
         return _payload(False, 0, None, None, _check("pass", "0 mutants in the diff (no changed production file)", 0, 0), [])
     count = min(max(1, shards), len(prod))
@@ -677,26 +680,21 @@ class Mutmut:
     in its output); the per-mutant timeout is mutmut's own (timeout_multiplier), so --mutant-timeout is not applied."""
     default_cmd = "mutmut"
 
-    def baseline(self, repo, mb, head, adapter, test_globs, cmd, budget_min, shards, project_dir=".", runner=None):
-        return _files_baseline(repo, mb, head, adapter, test_globs, project_dir, shards)
+    def baseline(self, rv, cmd, budget_min, shards, runner=None):
+        return _files_baseline(rv, shards)
 
-    def check(self, repo, mb, head, adapter, test_globs, cmd, budget_min, shard, mutant_timeout, runner, project_dir="."):
+    def check(self, rv, cmd, budget_min, shard, mutant_timeout, runner):
+        repo, mb, head, adapter, test_globs, project_dir = rv
         cmd = cmd or self.default_cmd
-        prod = sorted({ch.new for ch in red.prod_changes(repo, mb, head, adapter, test_globs)
+        prod = sorted({ch.new for ch in red.prod_changes(rv)
                        if ch.new and _under(ch.new, project_dir)})
         files = shard_files(prod, shard)
         changed = added_lines(repo, mb, head)
         budget = None if budget_min is None else budget_min * 60
         with red.worktree(repo, head) as wt:
-            crate = os.path.join(wt, project_dir)
-            if not os.path.isdir(crate):
-                return _check("fail", f"project dir {project_dir} not found at head: mutants not run"), [
-                    finalize([entry("R3", "", 0, "project-dir", "agent-fixable", "fail",
-                                    f"project dir {project_dir} not found at head: mutants not run",
-                                    "set project-dir to the crate dir under the repo root, present at head",
-                                    "a mutation check that did not run")])[0]]
-            if not any(os.path.isfile(os.path.join(crate, m)) for m in adapter.manifests):
-                return _check("n/a", f"no {red.manifest_label(adapter)} in {project_dir}: set project-dir"), []
+            crate, bad = crate_check(rv, wt)
+            if bad:
+                return bad
             if not files:
                 return _check("pass", "0 mutants in the diff (no changed production file in this shard)", 0, 0), []
             if not _write_config(crate, [_crate_path(project_dir, f) for f in files]):
@@ -883,26 +881,21 @@ class Stryker:
     no report, so a budget hit is partial with the mutant count from Stryker's log and no tested count."""
     default_cmd = "node_modules/.bin/stryker"
 
-    def baseline(self, repo, mb, head, adapter, test_globs, cmd, budget_min, shards, project_dir=".", runner=None):
-        return _files_baseline(repo, mb, head, adapter, test_globs, project_dir, shards)
+    def baseline(self, rv, cmd, budget_min, shards, runner=None):
+        return _files_baseline(rv, shards)
 
-    def check(self, repo, mb, head, adapter, test_globs, cmd, budget_min, shard, mutant_timeout, runner, project_dir="."):
+    def check(self, rv, cmd, budget_min, shard, mutant_timeout, runner):
+        repo, mb, head, adapter, test_globs, project_dir = rv
         cmd = cmd or self.default_cmd
-        prod = sorted({ch.new for ch in red.prod_changes(repo, mb, head, adapter, test_globs)
+        prod = sorted({ch.new for ch in red.prod_changes(rv)
                        if ch.new and _under(ch.new, project_dir)})
         files = shard_files(prod, shard)
         changed = added_lines(repo, mb, head)
         budget = None if budget_min is None else budget_min * 60
         with red.worktree(repo, head) as wt:
-            crate = os.path.join(wt, project_dir)
-            if not os.path.isdir(crate):
-                return _check("fail", f"project dir {project_dir} not found at head: mutants not run"), [
-                    finalize([entry("R3", "", 0, "project-dir", "agent-fixable", "fail",
-                                    f"project dir {project_dir} not found at head: mutants not run",
-                                    "set project-dir to the crate dir under the repo root, present at head",
-                                    "a mutation check that did not run")])[0]]
-            if not any(os.path.isfile(os.path.join(crate, m)) for m in adapter.manifests):
-                return _check("n/a", f"no {red.manifest_label(adapter)} in {project_dir}: set project-dir"), []
+            crate, bad = crate_check(rv, wt)
+            if bad:
+                return bad
             if not files:
                 return _check("pass", "0 mutants in the diff (no changed production file in this shard)", 0, 0), []
             adapter.worktree_setup(repo, wt, project_dir)
@@ -1011,25 +1004,23 @@ class Stryker:
 TOOLS = {"rust": CargoMutants(), "python": Mutmut(), "ts": Stryker()}
 
 
-def baseline(repo, mb, head, adapter, test_globs, cmd=None, budget_min=None, shards=4, project_dir=".", runner=None):
+def baseline(rv, cmd=None, budget_min=None, shards=4, runner=None):
     """The baseline step for mb..head (#46): run the shards or not, how many, the per-mutant timeout derived from the
     measured baseline, and R3 when it ends the check (fail, n/a, or no mutant). Skipped without a production change.
     Returns {run, count, mutants, timeout, check, entries}."""
-    if not red.prod_changes(repo, mb, head, adapter, test_globs):
+    if not red.prod_changes(rv):
         return _payload(False, 0, 0, None, _check("skipped", "no production file changed"), [])
-    return TOOLS[adapter.name].baseline(repo, mb, head, adapter, test_globs, cmd, budget_min, shards, project_dir, runner)
+    return TOOLS[rv.adapter.name].baseline(rv, cmd, budget_min, shards, runner)
 
 
-def run(repo, mb, head, adapter, test_globs, cmd=None, budget_min=None, shard=None,
-        mutant_timeout=None, runner=None, project_dir="."):
+def run(rv, cmd=None, budget_min=None, shard=None, mutant_timeout=None, runner=None):
     """R3 for mb..head. Returns (check, entries). Skipped without a production change; n/a without the tool.
     mutant_timeout None is auto (see CargoMutants). The stack's tool runs in the crate dir of a worktree at head
     (the caller's checkout does not move)."""
     runner = runner or default_runner()
-    if not red.prod_changes(repo, mb, head, adapter, test_globs):
+    if not red.prod_changes(rv):
         return _check("skipped", "no production file changed"), []
-    check, ents = TOOLS[adapter.name].check(repo, mb, head, adapter, test_globs, cmd, budget_min, shard,
-                                            mutant_timeout, runner, project_dir)
+    check, ents = TOOLS[rv.adapter.name].check(rv, cmd, budget_min, shard, mutant_timeout, runner)
     if check["status"] == "partial":
         ents = ents + [partial_entry(check)]
     return check, ents
